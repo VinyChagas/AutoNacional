@@ -1,0 +1,29 @@
+# Python
+Backend/.venv/
+Backend/__pycache__/
+Backend/*.pyc
+Backend/*.pyo
+Backend/*.egg-info/
+Backend/.pytest_cache/
+Backend/*.log
+
+# Node / Angular
+Frontend/node_modules/
+Frontend/dist/
+Frontend/.angular/
+Frontend/*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
