@@ -1,6 +1,6 @@
 # AutoNacional
 
-Projeto com Frontend em Angular + Tailwind e Backend em Python + Selenium.
+Projeto com Frontend em Angular + Tailwind e Backend em Python + Playwright.
 
 ---
 
@@ -30,7 +30,7 @@ cd AutoNacional
 <details>
 <summary><strong>🐧 Linux (Ubuntu/Debian)</strong></summary>
 
-### Backend (Python + Selenium)
+### Backend (Python + Playwright)
 
 ```bash
 # Instalar Python 3 e pip (se não estiver instalado)
@@ -46,8 +46,11 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Instalar navegador Chromium do Playwright
+playwright install chromium
+
 # Validar instalação
-python -c "import selenium; print('Selenium:', selenium.__version__)"
+python -c "from playwright.sync_api import sync_playwright; print('✅ Playwright instalado')"
 ```
 
 ### Frontend (Angular + Tailwind)
@@ -74,7 +77,7 @@ Acesse: **http://localhost:1234**
 <details>
 <summary><strong>🪟 Windows</strong></summary>
 
-### Backend (Python + Selenium)
+### Backend (Python + Playwright)
 
 ```powershell
 # Baixe e instale Python 3.14 em https://www.python.org/downloads/
@@ -93,8 +96,11 @@ python -m venv .venv
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Instalar navegador Chromium do Playwright
+playwright install chromium
+
 # Validar instalação
-python -c "import selenium; print('Selenium:', selenium.__version__)"
+python -c "from playwright.sync_api import sync_playwright; print('✅ Playwright instalado')"
 ```
 
 ### Frontend (Angular + Tailwind)
@@ -118,7 +124,7 @@ Acesse: **http://localhost:1234**
 <details>
 <summary><strong>🍎 macOS</strong></summary>
 
-### Backend (Python + Selenium)
+### Backend (Python + Playwright)
 
 ```bash
 # Instalar Python 3.14 (via Homebrew ou Python.org)
@@ -136,8 +142,11 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Instalar navegador Chromium do Playwright
+playwright install chromium
+
 # Validar instalação
-python -c "import selenium; print('Selenium:', selenium.__version__)"
+python -c "from playwright.sync_api import sync_playwright; print('✅ Playwright instalado')"
 ```
 
 ### Frontend (Angular + Tailwind)
@@ -209,7 +218,7 @@ AutoNacional/
 ## 🛠️ Tecnologias Utilizadas
 
 - **Frontend**: Angular 17, Tailwind CSS
-- **Backend**: Python 3.14, Selenium 4.36
+- **Backend**: Python 3.14, Playwright 1.46+
 - **Ferramentas**: Node.js, npm, venv
 
 ---

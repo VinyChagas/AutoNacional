@@ -1,15 +1,22 @@
-attrs==25.4.0
-certifi==2025.10.5
-h11==0.16.0
-idna==3.10
-outcome==1.3.0.post0
-PySocks==1.7.1
-selenium==4.36.0
-sniffio==1.3.1
-sortedcontainers==2.4.0
-trio==0.31.0
-trio-websocket==0.12.2
-typing_extensions==4.15.0
-urllib3==2.5.0
-websocket-client==1.9.0
-wsproto==1.2.0
+# Core - API Web
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Configuração e Ambiente
+python-dotenv>=1.0.0
+
+# Banco de Dados (opcional - se usar PostgreSQL)
+psycopg[binary]>=3.2.0
+
+# Segurança e Autenticação
+python-jose[cryptography]>=3.3.0
+
+# HTTP Client
+httpx>=0.27.0
+
+# Certificados e Criptografia
+cryptography>=43.0.0
+pyopenssl>=24.3.0
+
+# Automação de Navegador
+playwright>=1.46.0
