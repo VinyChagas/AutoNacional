@@ -1,62 +1,274 @@
-<div class="container mx-auto p-6 max-w-2xl">
-  <h2 class="text-2xl font-bold mb-6">Upload de Certificado Digital</h2>
-  
-  <form [formGroup]="certForm" (ngSubmit)="onSubmit()" class="space-y-4">
-    <div>
-      <label for="cnpj" class="block text-sm font-medium mb-2">CNPJ</label>
-      <input
-        id="cnpj"
-        type="text"
-        formControlName="cnpj"
-        class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-        placeholder="00.000.000/0000-00"
-      />
-      @if (certForm.get('cnpj')?.invalid && certForm.get('cnpj')?.touched) {
-        <p class="text-red-500 text-sm mt-1">CNPJ é obrigatório</p>
+<div class="w-full py-8">
+  <div class="container mx-auto px-4 max-w-7xl">
+    <!-- Header -->
+    <div class="mb-10">
+      <h2 class="text-4xl md:text-5xl font-bold mb-4 text-[#0C0D0A]">
+        Certificados Digitais
+      </h2>
+      <p class="text-lg md:text-xl text-[#1E2615] font-light">Gerencie seus certificados digitais de forma segura e eficiente</p>
+      <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
+    </div>
+
+    <!-- Botão de Upload em Lote -->
+    <div class="mb-8">
+      <label class="btn-futuristic inline-flex items-center px-8 py-4 rounded-xl cursor-pointer relative overflow-hidden group">
+        <svg class="w-6 h-6 mr-3 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+        </svg>
+        <span class="relative z-10 font-bold">Importar Certificados em Lote</span>
+        <input
+          type="file"
+          multiple
+          accept=".pfx,.p12"
+          (change)="onFilesSelected($event)"
+          class="hidden"
+        />
+      </label>
+      <p class="text-sm text-[#1E2615]/70 mt-3 ml-2">Selecione um ou mais arquivos .pfx ou .p12</p>
+    </div>
+
+    <!-- Filtros e Ordenação -->
+    <div class="glass-strong rounded-2xl p-6 mb-8 border">
+      <div class="flex flex-wrap gap-6 items-center">
+        <div class="flex items-center">
+          <input
+            type="checkbox"
+            id="filtroVencidos"
+            [(ngModel)]="filtroVencidos"
+            (change)="onFiltroVencidosChange()"
+            class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
+          />
+          <label for="filtroVencidos" class="ml-3 text-sm font-semibold text-[#1E2615]">
+            Mostrar apenas vencidos
+          </label>
+        </div>
+
+        <div class="flex items-center ml-auto">
+          <label for="ordenacao" class="mr-3 text-sm font-semibold text-[#1E2615]">Ordenar por:</label>
+          <select
+            id="ordenacao"
+            [(ngModel)]="ordenacao"
+            (change)="onOrdenacaoChange()"
+            class="px-4 py-2 glass border rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50"
+          >
+            <option value="proximidade">Proximidade de Validade</option>
+            <option value="maior_validade">Maior Validade</option>
+            <option value="alfabetica">Ordem Alfabética</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lista de Certificados -->
+    <div class="glass-strong rounded-2xl overflow-hidden border">
+      @if (certificadosFiltrados.length === 0) {
+        <div class="p-16 text-center">
+          <div class="relative inline-block mb-6">
+            <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-2xl"></div>
+            <svg class="w-20 h-20 mx-auto text-[#8BCB70] relative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+            </svg>
+          </div>
+          <p class="text-[#0C0D0A] text-xl font-semibold mb-2">Nenhum certificado cadastrado</p>
+          <p class="text-[#1E2615]/60 text-sm">Use o botão acima para importar certificados</p>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-[#7EBFB3]/20">
+            <thead class="bg-[#A9D9D4]/20">
+              <tr>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">CNPJ</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Arquivo</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Data de Upload</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Data de Validade</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Dias até Expiração</th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Status</th>
+                <th class="px-6 py-4 text-right text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Ações</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#7EBFB3]/10">
+              @for (certificado of certificadosFiltrados; track certificado.id) {
+                <tr class="hover:bg-[#A9D9D4]/10 transition-colors">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-bold text-[#0C0D0A]">{{ formatarCNPJ(certificado.cnpj) }}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-[#1E2615]">{{ certificado.nomeArquivo }}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-[#1E2615]">{{ certificado.dataUpload | date:'dd/MM/yyyy' }}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-[#1E2615]">
+                      {{ certificado.dataValidade ? (certificado.dataValidade | date:'dd/MM/yyyy') : 'Não informada' }}
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    @if (certificado.diasAteExpiracao !== null) {
+                      <div class="text-sm font-bold" [ngClass]="{
+                        'text-[#1E2615]': certificado.diasAteExpiracao < 0,
+                        'text-[#7EBFB3]': certificado.diasAteExpiracao >= 0 && certificado.diasAteExpiracao <= 30,
+                        'text-[#8BCB70]': certificado.diasAteExpiracao > 30
+                      }">
+                        {{ certificado.diasAteExpiracao }} dias
+                      </div>
+                    } @else {
+                      <div class="text-sm text-[#1E2615]/50">-</div>
+                    }
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-3 py-1.5 text-xs font-bold rounded-full border" [ngClass]="obterCorStatus(certificado.status)">
+                      {{ obterTextoStatus(certificado.status) }}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button
+                      (click)="removerCertificado(certificado.id)"
+                      class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors font-semibold"
+                    >
+                      Remover
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
       }
     </div>
 
-    <div>
-      <label for="senha" class="block text-sm font-medium mb-2">Senha do Certificado</label>
-      <input
-        id="senha"
-        type="password"
-        formControlName="senha"
-        class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-        placeholder="Digite a senha do certificado"
-      />
-      @if (certForm.get('senha')?.invalid && certForm.get('senha')?.touched) {
-        <p class="text-red-500 text-sm mt-1">Senha é obrigatória</p>
-      }
-    </div>
-
-    <div>
-      <label for="certificado" class="block text-sm font-medium mb-2">Arquivo do Certificado</label>
-      <input
-        id="certificado"
-        type="file"
-        accept=".pfx,.p12"
-        (change)="onFileSelected($event)"
-        class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      @if (selectedFile) {
-        <p class="text-sm text-gray-600 mt-2">Arquivo selecionado: {{ selectedFile.name }}</p>
-      }
-    </div>
-
-    <button
-      type="submit"
-      [disabled]="!certForm.valid || !selectedFile"
-      class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-    >
-      Enviar Certificado
-    </button>
-  </form>
-
-  @if (mensagem) {
-    <div class="mt-4 p-4 rounded-md" [ngClass]="mensagem.includes('Erro') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'">
-      {{ mensagem }}
-    </div>
-  }
+    <!-- Contador de Certificados Pendentes -->
+    @if (certificadosPendentes.length > 0) {
+      <div class="mt-4 glass-strong rounded-xl p-4 border border-[#7EBFB3]/50">
+        <p class="text-sm text-[#1E2615]">
+          <strong>{{ certificadosPendentes.length }}</strong> certificado(s) aguardando configuração
+        </p>
+      </div>
+    }
+  </div>
 </div>
 
+<!-- Modal para Inserção de Senha -->
+@if (modalAberto && certificadoAtual) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModal()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">Configurar Certificado</h3>
+        <button
+          (click)="fecharModal()"
+          class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors p-2 hover:bg-[#A9D9D4]/20 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-6">
+        <p class="text-sm text-[#1E2615] mb-3">
+          <strong class="text-[#0C0D0A]">Arquivo:</strong> {{ certificadoAtual.file.name }}
+        </p>
+        @if (!certificadoAtual.cnpj) {
+          <div class="mb-4">
+            <label for="cnpj" class="block text-sm font-semibold text-[#1E2615] mb-2">CNPJ</label>
+            <input
+              id="cnpj"
+              type="text"
+              formControlName="cnpj"
+              class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-[#0C0D0A] bg-white/50"
+              placeholder="00000000000000"
+              maxlength="14"
+            />
+            @if (senhaForm.get('cnpj')?.invalid && senhaForm.get('cnpj')?.touched) {
+              <p class="text-[#1E2615] text-sm mt-2">CNPJ deve conter 14 dígitos</p>
+            }
+          </div>
+        } @else {
+          <p class="text-sm text-[#1E2615] mb-4">
+            <strong class="text-[#0C0D0A]">CNPJ:</strong> {{ formatarCNPJ(certificadoAtual.cnpj) }}
+          </p>
+        }
+      </div>
+
+      <form [formGroup]="senhaForm" (ngSubmit)="validarSenha()" class="space-y-5">
+        <div>
+          <label for="senha" class="block text-sm font-semibold text-[#1E2615] mb-2">Senha do Certificado</label>
+          <input
+            id="senha"
+            type="password"
+            formControlName="senha"
+            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-[#0C0D0A] bg-white/50"
+            [ngClass]="{
+              'border-[#7EBFB3]/30 focus:ring-[#8BCB70]': senhaValida === null,
+              'border-[#8BCB70] focus:ring-[#8BCB70] bg-[#8BCB70]/10': senhaValida === true,
+              'border-[#1E2615] focus:ring-[#1E2615] bg-[#1E2615]/10': senhaValida === false
+            }"
+            placeholder="Digite a senha do certificado"
+          />
+          @if (senhaForm.get('senha')?.invalid && senhaForm.get('senha')?.touched) {
+            <p class="text-[#1E2615] text-sm mt-2">Senha é obrigatória</p>
+          }
+        </div>
+
+        <div>
+          <label for="dataValidade" class="block text-sm font-semibold text-[#1E2615] mb-2">Data de Validade (Opcional)</label>
+          <input
+            id="dataValidade"
+            type="date"
+            formControlName="dataValidade"
+            class="w-full px-4 py-3 glass border border-[#7EBFB3]/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-[#0C0D0A] bg-white/50"
+          />
+          <p class="text-xs text-[#1E2615]/60 mt-2">Informe a data de validade para calcular os dias até expiração</p>
+        </div>
+
+        <!-- Mensagem de Validação -->
+        @if (mensagemSenha) {
+          <div class="p-4 rounded-xl border" [ngClass]="{
+            'bg-[#8BCB70]/20 text-[#0C0D0A] border-[#8BCB70]/50': senhaValida === true,
+            'bg-[#1E2615]/20 text-[#0C0D0A] border-[#1E2615]/50': senhaValida === false
+          }">
+            <div class="flex items-center">
+              @if (senhaValida === true) {
+                <svg class="w-6 h-6 mr-3 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+              } @else {
+                <svg class="w-6 h-6 mr-3 text-[#1E2615]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+              }
+              <span class="text-sm font-semibold">{{ mensagemSenha }}</span>
+            </div>
+          </div>
+        }
+
+        <div class="flex gap-4 pt-4">
+          <button
+            type="button"
+            (click)="fecharModal()"
+            class="flex-1 px-6 py-3 glass border border-[#7EBFB3]/30 rounded-xl text-[#1E2615] hover:bg-[#A9D9D4]/20 hover:text-[#0C0D0A] transition-all font-semibold"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            [disabled]="!senhaForm.valid || validandoSenha"
+            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed transition-all font-bold"
+          >
+            @if (validandoSenha) {
+              <span class="flex items-center justify-center">
+                <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Validando...
+              </span>
+            } @else {
+              Validar e Salvar
+            }
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+}

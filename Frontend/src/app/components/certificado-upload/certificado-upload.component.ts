@@ -1,128 +1,279 @@
-import { Component } from '@angular/core';
-import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { CertificadoService } from '../../services/certificado.service';
+import { CertificadoService, Certificado } from '../../services/certificado.service';
+import { Subject, takeUntil } from 'rxjs';
+
+interface CertificadoPendente {
+  file: File;
+  cnpj: string;
+  id: string;
+}
 
 @Component({
   selector: 'app-certificado-upload',
   standalone: true,
-  imports: [ReactiveFormsModule, CommonModule],
+  imports: [ReactiveFormsModule, FormsModule, CommonModule],
   templateUrl: './certificado-upload.component.html',
   styleUrls: ['./certificado-upload.component.scss'],
 })
-export class CertificadoUploadComponent {
-  certForm: FormGroup;
-  selectedFile: File | null = null;
-  mensagem = '';
+export class CertificadoUploadComponent implements OnInit, OnDestroy {
+  certificados: Certificado[] = [];
+  certificadosFiltrados: Certificado[] = [];
+  certificadosPendentes: CertificadoPendente[] = [];
+  
+  // Filtros e ordenação
+  filtroVencidos = false;
+  ordenacao: 'proximidade' | 'maior_validade' | 'alfabetica' = 'proximidade';
+  
+  // Modal
+  modalAberto = false;
+  certificadoAtual: CertificadoPendente | null = null;
+  senhaForm: FormGroup;
+  validandoSenha = false;
+  senhaValida: boolean | null = null;
+  mensagemSenha = '';
+  
+  // Upload em lote
   carregando = false;
+  mensagem = '';
+  
+  private destroy$ = new Subject<void>();
 
   constructor(
     private fb: FormBuilder,
     private certificadoService: CertificadoService
   ) {
-    this.certForm = this.fb.group({
-      cnpj: ['', [Validators.required]],
+    this.senhaForm = this.fb.group({
       senha: ['', [Validators.required]],
+      dataValidade: ['']
     });
   }
 
-  onFileSelected(event: Event) {
+  ngOnInit() {
+    this.certificadoService.certificados$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(certificados => {
+        this.certificados = certificados;
+        this.aplicarFiltrosEOrdenacao();
+      });
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  onFilesSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
-      this.selectedFile = input.files[0];
+      const files = Array.from(input.files);
+      
+      files.forEach(file => {
+        // Extrai CNPJ do nome do arquivo (assumindo formato: CNPJ.pfx ou similar)
+        const nomeSemExtensao = file.name.replace(/\.(pfx|p12)$/i, '');
+        const cnpjLimpo = nomeSemExtensao.replace(/[^\d]/g, '');
+        
+        if (cnpjLimpo.length === 14) {
+          this.certificadosPendentes.push({
+            file,
+            cnpj: cnpjLimpo,
+            id: `${Date.now()}-${Math.random()}`
+          });
+        } else {
+          // Se não conseguir extrair CNPJ do nome, adiciona para inserção manual
+          this.certificadosPendentes.push({
+            file,
+            cnpj: '',
+            id: `${Date.now()}-${Math.random()}`
+          });
+        }
+      });
+      
+      // Abre modal para o primeiro certificado pendente
+      if (this.certificadosPendentes.length > 0) {
+        this.abrirModalSenha(this.certificadosPendentes[0]);
+      }
     }
   }
 
-  onSubmit() {
-    if (!this.certForm.valid || !this.selectedFile) return;
-
-    this.carregando = true;
-    this.mensagem = '';
-
-    const { cnpj, senha } = this.certForm.value;
-
-    this.certificadoService.uploadCertificado(cnpj, senha, this.selectedFile).subscribe({
-      next: (response: any) => {
-        console.log('📥 Resposta RAW do servidor:', response);
-        console.log('📥 Tipo da resposta:', typeof response);
-        console.log('📥 response.body:', response.body);
-        console.log('📥 response.status:', response.status);
-        
-        // Trata tanto resposta direta quanto HttpResponse
-        const data = response.body || response;
-        console.log('✅ Dados extraídos:', data);
-        console.log('✅ data.cnpj:', data?.cnpj);
-        console.log('✅ data.message:', data?.message);
-        console.log('✅ data.success:', data?.success);
-        
-        // Verifica se a resposta indica sucesso
-        if (data && (data.success !== false)) {
-          if (data.cnpj) {
-            this.mensagem = `✅ Certificado salvo com sucesso para o CNPJ ${data.cnpj}`;
-          } else if (data.message) {
-            this.mensagem = `✅ ${data.message}`;
-          } else {
-            this.mensagem = '✅ Certificado salvo com sucesso!';
-          }
-          
-          this.certForm.reset();
-          this.selectedFile = null;
-          this.carregando = false;
-        } else {
-          console.warn('⚠️ Resposta não indica sucesso:', data);
-          this.mensagem = '⚠️ Resposta inesperada do servidor. Verifique os logs.';
-          this.carregando = false;
-        }
-      },
-      error: (err: any) => {
-        console.error('❌ ERRO ao fazer upload:', err);
-        console.error('❌ err.status:', err.status);
-        console.error('❌ err.statusText:', err.statusText);
-        console.error('❌ err.error:', err.error);
-        console.error('❌ err.message:', err.message);
-        console.error('❌ err.name:', err.name);
-        console.error('❌ err completo:', JSON.stringify(err, null, 2));
-        
-        let mensagemErro = 'Erro ao salvar certificado';
-        
-        // Verifica se é um erro de rede (sem resposta do servidor)
-        if (!err.status && !err.error) {
-          console.error('❌ Erro de conexão detectado - sem status e sem error');
-          mensagemErro = 'Erro de conexão. Verifique se o servidor está rodando em http://localhost:8000';
-        } else if (err.status === 0) {
-          console.error('❌ Status 0 - erro de CORS ou conexão');
-          mensagemErro = 'Erro de conexão ou CORS. Verifique se o servidor está rodando e se CORS está configurado.';
-        } else if (err.status >= 200 && err.status < 300) {
-          // Status 2xx não deveria entrar aqui, mas vamos tratar
-          console.warn('⚠️ Status 2xx no error handler, pode ser um falso positivo');
-          this.mensagem = 'Operação concluída, mas resposta inesperada. Verifique os logs.';
-          this.carregando = false;
-          return;
-        } else if (err.error) {
-          // Tenta diferentes formatos de erro
-          if (err.error.detail) {
-            mensagemErro = err.error.detail;
-          } else if (err.error.message) {
-            mensagemErro = err.error.message;
-          } else if (typeof err.error === 'string') {
-            mensagemErro = err.error;
-          } else if (err.error.errors && Array.isArray(err.error.errors)) {
-            // Erros de validação do FastAPI
-            const erros = err.error.errors.map((e: any) => `${e.field}: ${e.message}`).join(', ');
-            mensagemErro = `Erro de validação: ${erros}`;
-          }
-        } else if (err.message) {
-          mensagemErro = err.message;
-        }
-        
-        // Adiciona informações de debug
-        if (err.status) {
-          mensagemErro += ` (Status: ${err.status})`;
-        }
-        
-        this.mensagem = mensagemErro;
-        this.carregando = false;
+  abrirModalSenha(certificado: CertificadoPendente) {
+    this.certificadoAtual = certificado;
+    this.senhaForm.patchValue({ senha: '', dataValidade: '' });
+    this.senhaValida = null;
+    this.mensagemSenha = '';
+    this.modalAberto = true;
+    
+    // Se CNPJ não foi extraído, permite edição
+    if (!certificado.cnpj) {
+      this.senhaForm.addControl('cnpj', this.fb.control('', [Validators.required, Validators.pattern(/^\d{14}$/)]));
+    } else {
+      if (this.senhaForm.get('cnpj')) {
+        this.senhaForm.removeControl('cnpj');
       }
-    });
+    }
+  }
+
+  fecharModal() {
+    this.modalAberto = false;
+    this.certificadoAtual = null;
+    this.senhaValida = null;
+    this.mensagemSenha = '';
+    this.validandoSenha = false;
+  }
+
+  async validarSenha() {
+    if (!this.certificadoAtual || !this.senhaForm.valid) return;
+
+    this.validandoSenha = true;
+    this.senhaValida = null;
+    this.mensagemSenha = '';
+
+    if (!this.certificadoAtual) {
+      this.senhaValida = false;
+      this.mensagemSenha = 'Erro: certificado não encontrado';
+      this.validandoSenha = false;
+      return;
+    }
+
+    const senha = this.senhaForm.get('senha')?.value;
+    const cnpj = this.certificadoAtual.cnpj || this.senhaForm.get('cnpj')?.value;
+    const dataValidadeStr = this.senhaForm.get('dataValidade')?.value;
+
+    try {
+      // Valida a senha fazendo upload
+      await new Promise((resolve, reject) => {
+        this.certificadoService.uploadCertificado(
+          cnpj,
+          senha,
+          this.certificadoAtual!.file
+        ).subscribe({
+          next: resolve,
+          error: reject
+        });
+      });
+
+      // Se chegou aqui, senha é válida
+      this.senhaValida = true;
+      this.mensagemSenha = 'Senha válida!';
+
+      // Cria objeto de certificado
+      const dataValidade = dataValidadeStr ? new Date(dataValidadeStr) : null;
+      const diasAteExpiracao = this.certificadoService.calcularDiasAteExpiracao(dataValidade);
+      const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
+
+      const novoCertificado: Certificado = {
+        id: this.certificadoAtual.id,
+        cnpj,
+        nomeArquivo: this.certificadoAtual.file.name,
+        dataUpload: new Date(),
+        dataValidade,
+        diasAteExpiracao,
+        status
+      };
+
+      this.certificadoService.adicionarCertificadoLocal(novoCertificado);
+
+      // Remove da lista de pendentes
+      this.certificadosPendentes = this.certificadosPendentes.filter(
+        c => c.id !== this.certificadoAtual!.id
+      );
+
+      // Aguarda um pouco para mostrar mensagem de sucesso
+      setTimeout(() => {
+        this.fecharModal();
+        
+        // Abre próximo certificado pendente se houver
+        if (this.certificadosPendentes.length > 0) {
+          setTimeout(() => {
+            this.abrirModalSenha(this.certificadosPendentes[0]);
+          }, 500);
+        }
+      }, 1000);
+
+    } catch (error: any) {
+      this.senhaValida = false;
+      if (error.error?.detail) {
+        this.mensagemSenha = error.error.detail;
+      } else if (error.message) {
+        this.mensagemSenha = error.message;
+      } else {
+        this.mensagemSenha = 'Senha inválida ou erro ao validar certificado';
+      }
+    } finally {
+      this.validandoSenha = false;
+    }
+  }
+
+  aplicarFiltrosEOrdenacao() {
+    let resultado = [...this.certificados];
+
+    // Filtro de vencidos
+    if (this.filtroVencidos) {
+      resultado = resultado.filter(c => c.status === 'vencido');
+    }
+
+    // Ordenação
+    switch (this.ordenacao) {
+      case 'proximidade':
+        resultado.sort((a, b) => {
+          const diasA = a.diasAteExpiracao ?? Infinity;
+          const diasB = b.diasAteExpiracao ?? Infinity;
+          return diasA - diasB;
+        });
+        break;
+      case 'maior_validade':
+        resultado.sort((a, b) => {
+          const diasA = a.diasAteExpiracao ?? -Infinity;
+          const diasB = b.diasAteExpiracao ?? -Infinity;
+          return diasB - diasA;
+        });
+        break;
+      case 'alfabetica':
+        resultado.sort((a, b) => a.cnpj.localeCompare(b.cnpj));
+        break;
+    }
+
+    this.certificadosFiltrados = resultado;
+  }
+
+  onFiltroVencidosChange() {
+    this.aplicarFiltrosEOrdenacao();
+  }
+
+  onOrdenacaoChange() {
+    this.aplicarFiltrosEOrdenacao();
+  }
+
+  removerCertificado(id: string) {
+    if (confirm('Tem certeza que deseja remover este certificado?')) {
+      this.certificadoService.removerCertificado(id);
+    }
+  }
+
+  formatarCNPJ(cnpj: string): string {
+    return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  }
+
+  obterCorStatus(status: string): string {
+    switch (status) {
+      case 'vencido':
+        return 'text-[#0C0D0A] bg-[#1E2615]/30 border-[#1E2615]/50';
+      case 'proximo_vencimento':
+        return 'text-[#0C0D0A] bg-[#7EBFB3]/30 border-[#7EBFB3]/50';
+      default:
+        return 'text-[#0C0D0A] bg-[#8BCB70]/30 border-[#8BCB70]/50';
+    }
+  }
+
+  obterTextoStatus(status: string): string {
+    switch (status) {
+      case 'vencido':
+        return 'Vencido';
+      case 'proximo_vencimento':
+        return 'Próximo do Vencimento';
+      default:
+        return 'Válido';
+    }
   }
 }

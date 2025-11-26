@@ -19,20 +19,37 @@ Este backend fornece:
 
 ### 2. Instalação
 
+#### 🐧 Linux / 🍎 macOS
+
 ```bash
 # Clone ou navegue até a pasta Backend
 cd Backend
 
 # Crie e ative o ambiente virtual
 python3 -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# ou
-.venv\Scripts\activate     # Windows
+source .venv/bin/activate
 
 # Instale as dependências
 pip install -r requirements.txt
 
 # Instale o navegador Chromium do Playwright
+playwright install chromium
+```
+
+#### 🪟 Windows
+
+```cmd
+REM Clone ou navegue até a pasta Backend
+cd Backend
+
+REM Crie e ative o ambiente virtual
+python -m venv .venv
+.venv\Scripts\activate
+
+REM Instale as dependências
+pip install -r requirements.txt
+
+REM Instale o navegador Chromium do Playwright
 playwright install chromium
 ```
 
@@ -57,8 +74,10 @@ Backend/
 │   │   └── credenciais.py   # Endpoints de credenciais
 │   ├── core/                 # Configurações core (db, security, env)
 │   └── repositories/         # Camada de acesso a dados
-├── executar_login.sh         # Script bash para executar login
-└── iniciar_backend.sh        # Script bash para iniciar API
+├── executar_login.sh         # Script bash para executar login (Linux/macOS)
+├── executar_login.bat        # Script batch para executar login (Windows)
+├── iniciar_backend.sh        # Script bash para iniciar API (Linux/macOS)
+└── iniciar_backend.bat       # Script batch para iniciar API (Windows)
 ```
 
 ## 🔐 Configuração
@@ -82,6 +101,8 @@ CNPJ_PADRAO=00000000000011
 
 ### 1. Executar Automação NFSe (Login Automático)
 
+#### 🐧 Linux / 🍎 macOS
+
 **Forma mais fácil (recomendada):**
 
 ```bash
@@ -95,11 +116,28 @@ source .venv/bin/activate
 python3 src/executar_login_nfse.py 00000000000011
 ```
 
+#### 🪟 Windows
+
+**Forma mais fácil (recomendada):**
+
+```cmd
+executar_login.bat 00000000000011
+```
+
+**Ou diretamente com Python:**
+
+```cmd
+.venv\Scripts\activate
+python src\executar_login_nfse.py 00000000000011
+```
+
 **Opções:**
 - `--headless`: Executa sem abrir navegador (modo invisível)
 - `--no-headless` ou `--visible`: Executa com navegador visível (padrão)
 
-**Exemplo:**
+**Exemplos:**
+
+**Linux/macOS:**
 ```bash
 # Com navegador visível (padrão)
 python3 src/executar_login_nfse.py 00000000000011
@@ -108,7 +146,18 @@ python3 src/executar_login_nfse.py 00000000000011
 python3 src/executar_login_nfse.py 00000000000011 --headless
 ```
 
+**Windows:**
+```cmd
+REM Com navegador visível (padrão)
+python src\executar_login_nfse.py 00000000000011
+
+REM Sem navegador (headless)
+python src\executar_login_nfse.py 00000000000011 --headless
+```
+
 ### 2. Iniciar API REST
+
+#### 🐧 Linux / 🍎 macOS
 
 ```bash
 ./iniciar_backend.sh
@@ -118,6 +167,19 @@ Ou manualmente:
 
 ```bash
 source .venv/bin/activate
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+#### 🪟 Windows
+
+```cmd
+iniciar_backend.bat
+```
+
+Ou manualmente:
+
+```cmd
+.venv\Scripts\activate
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -173,6 +235,30 @@ POST /api/nfse/{cnpj}/abrir?headless=false
 - **Cryptography** - Criptografia e validação de certificados
 - **Python-dotenv** - Gerenciamento de variáveis de ambiente
 - **Uvicorn** - Servidor ASGI de alta performance
+
+## 🪟 Guia Rápido Windows
+
+### Comandos Principais no Windows
+
+```cmd
+REM 1. Ativar ambiente virtual
+.venv\Scripts\activate
+
+REM 2. Executar automação (com navegador visível)
+python src\executar_login_nfse.py 00000000000011
+
+REM 3. Executar automação (sem navegador)
+python src\executar_login_nfse.py 00000000000011 --headless
+
+REM 4. Iniciar API
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Diferenças principais:**
+- Use `python` em vez de `python3`
+- Use `\` em vez de `/` nos caminhos
+- Use `.bat` em vez de `.sh` para scripts
+- Ative o venv com `.venv\Scripts\activate`
 
 ## 📝 Exemplos de Uso
 

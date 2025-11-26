@@ -1,3 +1,169 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Nova Paleta de Cores Ultra Futurista */
+:root {
+  --color-primary-light: #A9D9D4;
+  --color-secondary: #7EBFB3;
+  --color-accent: #8BCB70;
+  --color-depth: #1E2615;
+  --color-dark: #0C0D0A;
+  
+  /* Cores com transparência para glassmorphism */
+  --glass-primary: rgba(169, 217, 212, 0.15);
+  --glass-secondary: rgba(126, 191, 179, 0.2);
+  --glass-accent: rgba(139, 203, 112, 0.25);
+  --glass-dark: rgba(30, 38, 21, 0.4);
+}
+
+/* Estilos Globais Futuristas Minimalistas */
+* {
+  @apply transition-all duration-300;
+}
+
+body {
+  background: radial-gradient(circle at center, #ffffff 0%, #ffffff 90%, rgba(169, 217, 212, 0.1) 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: #0C0D0A;
+}
+
+html {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Efeitos de Brilho Sutil */
+@keyframes subtle-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(139, 203, 112, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(139, 203, 112, 0.4);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Glassmorphism Minimalista */
+.glass {
+  background: var(--glass-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(169, 217, 212, 0.3);
+}
+
+.glass-strong {
+  background: var(--glass-secondary);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(126, 191, 179, 0.4);
+}
+
+/* Botões Minimalistas Futuristas */
+.btn-futuristic {
+  @apply relative overflow-hidden;
+  background: linear-gradient(135deg, #8BCB70 0%, #7EBFB3 100%);
+  border: 1px solid rgba(139, 203, 112, 0.3);
+  box-shadow: 0 4px 20px rgba(139, 203, 112, 0.2);
+  color: #0C0D0A;
+  font-weight: 600;
+}
+
+.btn-futuristic::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.btn-futuristic:hover::before {
+  left: 100%;
+}
+
+.btn-futuristic:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 30px rgba(139, 203, 112, 0.4);
+  background: linear-gradient(135deg, #8BCB70 0%, #8BCB70 100%);
+}
+
+/* Cards Minimalistas Futuristas */
+.card-futuristic {
+  @apply relative overflow-hidden;
+  background: var(--glass-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(169, 217, 212, 0.3);
+  box-shadow: 0 4px 24px rgba(30, 38, 21, 0.1);
+  transition: all 0.3s ease;
+}
+
+.card-futuristic::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #8BCB70, transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.card-futuristic:hover::before {
+  opacity: 1;
+}
+
+.card-futuristic:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 40px rgba(139, 203, 112, 0.2);
+  border-color: rgba(139, 203, 112, 0.5);
+  background: var(--glass-secondary);
+}
+
+/* Scrollbar Minimalista */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(169, 217, 212, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #8BCB70, #7EBFB3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #7EBFB3, #8BCB70);
+}
+
+/* Animação shimmer para barras de progresso */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}

@@ -1,0 +1,125 @@
+<div class="relative w-full min-h-screen">
+  <!-- Navbar Superior Minimalista (Contêiner Centralizado) -->
+  <nav class="sticky top-4 z-50 w-full flex justify-center mb-8 px-4 pt-4">
+    <div class="nav-pill glass-strong px-4 py-2 shadow-lg border">
+      <div class="flex items-center justify-center gap-6 md:gap-8">
+        <!-- Ícone Home -->
+        <a 
+          routerLink="/home" 
+          routerLinkActive="active"
+          [routerLinkActiveOptions]="{exact: true}"
+          class="nav-icon group relative flex flex-col items-center transition-all duration-300"
+        >
+          <div class="relative">
+            <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <div class="relative p-2 rounded-lg transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70]/30 scale-105': currentRoute === 'home',
+                   'bg-transparent scale-100': currentRoute !== 'home'
+                 }">
+              <svg class="w-5 h-5 transition-all duration-300" 
+                   [ngClass]="{
+                     'text-[#8BCB70]': currentRoute === 'home',
+                     'text-[#1E2615]/60 group-hover:text-[#8BCB70]': currentRoute !== 'home'
+                   }"
+                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+              </svg>
+            </div>
+            <!-- Marcador ativo -->
+            <div class="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70] shadow-md shadow-[#8BCB70]/50 scale-125': currentRoute === 'home',
+                   'bg-transparent': currentRoute !== 'home'
+                 }"></div>
+          </div>
+          <span class="text-[10px] mt-1 font-medium transition-colors duration-300 leading-tight"
+                [ngClass]="{
+                  'text-[#8BCB70]': currentRoute === 'home',
+                  'text-[#1E2615]/60 group-hover:text-[#1E2615]': currentRoute !== 'home'
+                }">Home</span>
+        </a>
+
+        <!-- Ícone Certificados -->
+        <a 
+          routerLink="/certificados" 
+          routerLinkActive="active"
+          class="nav-icon group relative flex flex-col items-center transition-all duration-300"
+        >
+          <div class="relative">
+            <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <div class="relative p-2 rounded-lg transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70]/30 scale-105': currentRoute === 'certificados',
+                   'bg-transparent scale-100': currentRoute !== 'certificados'
+                 }">
+              <svg class="w-5 h-5 transition-all duration-300"
+                   [ngClass]="{
+                     'text-[#8BCB70]': currentRoute === 'certificados',
+                     'text-[#1E2615]/60 group-hover:text-[#8BCB70]': currentRoute !== 'certificados'
+                   }"
+                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+              </svg>
+            </div>
+            <!-- Marcador ativo -->
+            <div class="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70] shadow-md shadow-[#8BCB70]/50 scale-125': currentRoute === 'certificados',
+                   'bg-transparent': currentRoute !== 'certificados'
+                 }"></div>
+          </div>
+          <span class="text-[10px] mt-1 font-medium transition-colors duration-300 leading-tight"
+                [ngClass]="{
+                  'text-[#8BCB70]': currentRoute === 'certificados',
+                  'text-[#1E2615]/60 group-hover:text-[#1E2615]': currentRoute !== 'certificados'
+                }">Certificados</span>
+        </a>
+
+        <!-- Ícone Execução -->
+        <a 
+          routerLink="/execucao" 
+          routerLinkActive="active"
+          class="nav-icon group relative flex flex-col items-center transition-all duration-300"
+        >
+          <div class="relative">
+            <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <div class="relative p-2 rounded-lg transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70]/30 scale-105': currentRoute === 'execucao',
+                   'bg-transparent scale-100': currentRoute !== 'execucao'
+                 }">
+              <svg class="w-5 h-5 transition-all duration-300"
+                   [ngClass]="{
+                     'text-[#8BCB70]': currentRoute === 'execucao',
+                     'text-[#1E2615]/60 group-hover:text-[#8BCB70]': currentRoute !== 'execucao'
+                   }"
+                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+            </div>
+            <!-- Marcador ativo -->
+            <div class="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70] shadow-md shadow-[#8BCB70]/50 scale-125': currentRoute === 'execucao',
+                   'bg-transparent': currentRoute !== 'execucao'
+                 }"></div>
+          </div>
+          <span class="text-[10px] mt-1 font-medium transition-colors duration-300 leading-tight"
+                [ngClass]="{
+                  'text-[#8BCB70]': currentRoute === 'execucao',
+                  'text-[#1E2615]/60 group-hover:text-[#1E2615]': currentRoute !== 'execucao'
+                }">Execução</span>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Área de Conteúdo com Animação de Slide -->
+  <main class="relative w-full pb-8">
+    <div [@routeAnimations]="getRouteOutletState(outlet)" class="w-full">
+      <router-outlet #outlet="outlet"></router-outlet>
+    </div>
+  </main>
+</div>
+

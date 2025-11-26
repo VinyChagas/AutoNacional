@@ -1,0 +1,246 @@
+<div class="w-full py-8">
+  <div class="container mx-auto px-4 max-w-7xl">
+    <!-- Header -->
+    <div class="mb-10">
+      <h2 class="text-4xl md:text-5xl font-bold mb-4 text-[#0C0D0A]">
+        Execução de Processos
+      </h2>
+      <p class="text-lg md:text-xl text-[#1E2615] font-light">Acompanhe em tempo real a execução das automações NFSe</p>
+      <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
+    </div>
+
+    <!-- Controles Principais -->
+    <div class="glass-strong rounded-2xl p-8 mb-8 border">
+      <div class="flex flex-wrap gap-4 items-center justify-between">
+        <div class="flex items-center gap-4">
+          <button
+            (click)="carregarEmpresasValidadas()"
+            [disabled]="carregandoCertificados || certificadosValidos.length === 0"
+            class="btn-futuristic px-8 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center relative overflow-hidden group"
+          >
+            @if (carregandoCertificados) {
+              <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Carregando...
+            } @else {
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+              </svg>
+              Carregar Empresas Validadas
+            }
+          </button>
+
+          <button
+            (click)="executarTodos()"
+            [disabled]="executando || certificadosCarregados.length === 0"
+            class="btn-futuristic px-8 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
+          >
+            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Executar Todos
+          </button>
+
+          @if (execucoes.length > 0) {
+            <button
+              (click)="limparExecucoes()"
+              class="px-6 py-4 glass border border-[#1E2615]/30 text-[#1E2615] rounded-xl hover:bg-[#1E2615]/10 transition-all font-semibold"
+            >
+              Limpar Execuções
+            </button>
+          }
+        </div>
+
+        <div class="flex items-center">
+          <input
+            type="checkbox"
+            id="headless"
+            [(ngModel)]="headlessMode"
+            class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
+          />
+          <label for="headless" class="ml-3 text-sm font-semibold text-[#1E2615]">
+            Modo Headless
+          </label>
+        </div>
+      </div>
+
+      <!-- Informações -->
+      <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="glass rounded-xl p-6 border">
+          <div class="text-sm text-[#1E2615] font-semibold mb-2">Certificados Válidos</div>
+          <div class="text-4xl font-bold text-[#8BCB70]">{{ certificadosValidos.length }}</div>
+        </div>
+        <div class="glass rounded-xl p-6 border">
+          <div class="text-sm text-[#1E2615] font-semibold mb-2">Empresas Carregadas</div>
+          <div class="text-4xl font-bold text-[#8BCB70]">{{ certificadosCarregados.length }}</div>
+        </div>
+        <div class="glass rounded-xl p-6 border">
+          <div class="text-sm text-[#1E2615] font-semibold mb-2">Execuções</div>
+          <div class="text-4xl font-bold text-[#8BCB70]">{{ execucoes.length }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lista de Empresas Carregadas -->
+    @if (certificadosCarregados.length > 0) {
+      <div class="glass-strong rounded-2xl p-8 mb-8 border">
+        <h3 class="text-2xl font-bold text-[#0C0D0A] mb-6">Empresas Validadas</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          @for (certificado of certificadosCarregados; track certificado.id) {
+            <div class="card-futuristic rounded-xl p-6 border">
+              <div class="flex items-center justify-between mb-3">
+                <span class="font-bold text-[#0C0D0A]">{{ formatarCNPJ(certificado.cnpj) }}</span>
+                <span class="text-xs px-3 py-1 rounded-full bg-[#8BCB70]/20 text-[#0C0D0A] border border-[#8BCB70]/50 font-semibold">
+                  Válido
+                </span>
+              </div>
+              <div class="text-sm text-[#1E2615] mb-4">{{ certificado.nomeArquivo }}</div>
+              <button
+                (click)="executarCertificado(certificado)"
+                [disabled]="executando"
+                class="w-full px-4 py-3 btn-futuristic rounded-lg disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed text-sm font-bold transition-all"
+              >
+                Executar
+              </button>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Execuções em Andamento -->
+    @if (execucoes.length > 0) {
+      <div class="space-y-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">Status das Execuções</h3>
+        
+        @for (execucao of execucoes; track execucao.id) {
+          <div class="glass-strong rounded-2xl overflow-hidden border-2" [ngClass]="obterCorStatus(execucao.status)">
+            <!-- Header da Execução -->
+            <div class="p-4 border-b-2" [ngClass]="obterCorStatus(execucao.status)">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" [attr.d]="obterIconeStatus(execucao.status)"></path>
+                  </svg>
+                  <div>
+                    <div class="font-bold text-[#0C0D0A] text-lg">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                    <div class="text-sm opacity-75" [ngClass]="obterCorTextoStatus(execucao.status)">{{ obterTextoStatus(execucao.status) }}</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-4">
+                  <div class="text-right">
+                    <div class="text-lg font-bold" [ngClass]="obterCorTextoStatus(execucao.status)">{{ execucao.progresso }}%</div>
+                    <div class="text-xs opacity-75 text-[#1E2615]">
+                      @if (execucao.dataInicio) {
+                        Iniciado: {{ execucao.dataInicio | date:'HH:mm:ss' }}
+                      }
+                    </div>
+                  </div>
+                  <button
+                    (click)="removerExecucao(execucao.id)"
+                    class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors p-2 hover:bg-[#A9D9D4]/20 rounded-lg"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Barra de Progresso -->
+            <div class="px-6 pt-6">
+              <div class="w-full bg-[#A9D9D4]/30 rounded-full h-3 overflow-hidden">
+                <div
+                  class="h-3 rounded-full transition-all duration-500 relative overflow-hidden"
+                  [ngClass]="{
+                    'bg-[#8BCB70]': execucao.status === 'concluido',
+                    'bg-[#1E2615]': execucao.status === 'falhou',
+                    'bg-[#8BCB70] animate-pulse': execucao.status === 'em_execucao',
+                    'bg-[#7EBFB3]': execucao.status === 'pendente'
+                  }"
+                  [style.width.%]="execucao.progresso"
+                >
+                  @if (execucao.status === 'em_execucao') {
+                    <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+                  }
+                </div>
+              </div>
+            </div>
+
+            <!-- Mensagem Atual -->
+            <div class="px-6 py-4">
+              <p class="text-sm font-semibold text-[#1E2615]">{{ execucao.mensagem }}</p>
+            </div>
+
+            <!-- Logs -->
+            @if (execucao.logs.length > 0) {
+              <div class="px-6 pb-6">
+                <button
+                  (click)="execucao.mostrarLogs = !execucao.mostrarLogs"
+                  class="text-sm text-[#8BCB70] hover:text-[#7EBFB3] flex items-center gap-2 font-semibold transition-colors"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" [attr.d]="execucao.mostrarLogs ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'"></path>
+                  </svg>
+                  Ver Logs ({{ execucao.logs.length }})
+                </button>
+                
+                @if (execucao.mostrarLogs) {
+                  <div class="mt-4 bg-[#0C0D0A]/50 text-[#8BCB70] rounded-xl p-6 max-h-64 overflow-y-auto font-mono text-xs border border-[#8BCB70]/20">
+                    @for (log of execucao.logs; track $index) {
+                      <div class="mb-2 text-[#8BCB70]">{{ log }}</div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+
+            <!-- Informações Adicionais -->
+            @if (execucao.status === 'concluido' || execucao.status === 'falhou') {
+              <div class="px-6 pb-6 border-t-2 mt-4 pt-6" [ngClass]="obterCorStatus(execucao.status)">
+                @if (execucao.urlAtual) {
+                  <div class="text-sm mb-3">
+                    <strong class="text-[#0C0D0A]">URL:</strong> 
+                    <a [href]="execucao.urlAtual" target="_blank" class="text-[#8BCB70] hover:text-[#7EBFB3] hover:underline ml-2 transition-colors">
+                      {{ execucao.urlAtual }}
+                    </a>
+                  </div>
+                }
+                @if (execucao.titulo) {
+                  <div class="text-sm mb-3 text-[#1E2615]">
+                    <strong class="text-[#0C0D0A]">Título:</strong> {{ execucao.titulo }}
+                  </div>
+                }
+                @if (execucao.erro) {
+                  <div class="text-sm text-[#1E2615]">
+                    <strong class="text-[#0C0D0A]">Erro:</strong> {{ execucao.erro }}
+                  </div>
+                }
+                @if (execucao.dataFim) {
+                  <div class="text-sm mt-4 opacity-75 text-[#1E2615]">
+                    Finalizado: {{ execucao.dataFim | date:'dd/MM/yyyy HH:mm:ss' }}
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+      </div>
+    } @else {
+      <div class="glass-strong rounded-2xl p-16 text-center border">
+        <div class="relative inline-block mb-6">
+          <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-2xl"></div>
+          <svg class="w-20 h-20 mx-auto text-[#8BCB70] relative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <p class="text-[#0C0D0A] text-xl font-semibold mb-2">Nenhuma execução iniciada</p>
+        <p class="text-[#1E2615]/60 text-sm">Carregue as empresas validadas e inicie as execuções</p>
+      </div>
+    }
+  </div>
+</div>

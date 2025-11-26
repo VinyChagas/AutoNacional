@@ -1,0 +1,64 @@
+// Estilos específicos do componente Layout
+
+.nav-pill {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(169, 217, 212, 0.2);
+  border-color: rgba(126, 191, 179, 0.3);
+  transition: all 0.3s ease;
+  border-radius: 12px;
+  
+  &:hover {
+    border-color: rgba(139, 203, 112, 0.5);
+    box-shadow: 0 4px 24px rgba(139, 203, 112, 0.15);
+  }
+}
+
+.nav-icon {
+  cursor: pointer;
+  min-width: 50px;
+  
+  &:hover {
+    transform: translateY(-1px);
+  }
+  
+  // Garante que o ícone seja clicável mesmo com padding reduzido
+  & > div {
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  &.active {
+    .nav-icon-content {
+      transform: scale(1.05);
+    }
+  }
+}
+
+// Responsividade
+@media (max-width: 640px) {
+  .nav-pill {
+    padding: 0.5rem 0.75rem;
+    
+    .nav-icon {
+      min-width: 44px;
+      
+      & > div {
+        min-width: 32px;
+        min-height: 32px;
+      }
+      
+      svg {
+        width: 1.125rem;
+        height: 1.125rem;
+      }
+      
+      span {
+        font-size: 0.625rem;
+      }
+    }
+  }
+}
