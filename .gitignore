@@ -30,8 +30,24 @@ Thumbs.db
 
 CERTIFICADO e-CNPJ/
 
+<<<<<<< Updated upstream
 Backend/certificados_armazenados/
 
 Backend/src/routers/__pycache__/__init__.cpython-313.pyc
 
 Backend/src/routers/__pycache__/nfse.cpython-313.pyc
+=======
+Backend/src/routers/__pycache__/__init__.cpython-313.pyc
+
+Backend/src/routers/__pycache__/nfse.cpython-313.pyc
+
+Backend/00000000000011.pfx.enc
+
+Backend/00000000000011.pwd.enc
+
+Backend/certificados_armazenados/00000000000011.pfx.enc
+
+Backend/certificados_armazenados/00000000000011.pwd.enc
+
+Backend/src/__pycache__/playwright_nfse.cpython-313.pyc
+>>>>>>> Stashed changes
