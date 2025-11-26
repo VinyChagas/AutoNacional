@@ -27,34 +27,81 @@
       <p class="text-sm text-[#1E2615]/70 mt-3 ml-2">Selecione um ou mais arquivos .pfx ou .p12</p>
     </div>
 
-    <!-- Filtros e Ordenação -->
-    <div class="glass-strong rounded-2xl p-6 mb-8 border">
-      <div class="flex flex-wrap gap-6 items-center">
+    <!-- Botões de Exportação -->
+    <div class="flex justify-end gap-3 mb-4">
+      <button
+        (click)="exportToPDF()"
+        class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#1E2615] bg-[#1E2615] text-white font-semibold text-sm hover:bg-[#0C0D0A] hover:border-[#0C0D0A] transition-all duration-200 shadow-sm hover:shadow-md"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+        </svg>
+        Exportar PDF
+      </button>
+      <button
+        (click)="exportToExcel()"
+        class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#7EBFB3] bg-[#7EBFB3] text-[#0C0D0A] font-semibold text-sm hover:bg-[#8BCB70] hover:border-[#8BCB70] transition-all duration-200 shadow-sm hover:shadow-md"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+        </svg>
+        Exportar Excel
+      </button>
+    </div>
+
+    <!-- Barra de Busca e Filtro Vencidos -->
+    <div class="glass-strong rounded-2xl p-4 mb-6 border">
+      <div class="flex flex-wrap gap-4 items-center">
+        <!-- Dropdown de Coluna -->
         <div class="flex items-center">
-          <input
-            type="checkbox"
-            id="filtroVencidos"
-            [(ngModel)]="filtroVencidos"
-            (change)="onFiltroVencidosChange()"
-            class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
-          />
-          <label for="filtroVencidos" class="ml-3 text-sm font-semibold text-[#1E2615]">
-            Mostrar apenas vencidos
-          </label>
+          <select
+            [(ngModel)]="searchColumn"
+            (change)="onSearchColumnChange()"
+            class="px-3 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 font-semibold"
+          >
+            @for (col of searchColumns; track col.value) {
+              <option [value]="col.value">{{ col.label }}</option>
+            }
+          </select>
         </div>
 
-        <div class="flex items-center ml-auto">
-          <label for="ordenacao" class="mr-3 text-sm font-semibold text-[#1E2615]">Ordenar por:</label>
-          <select
-            id="ordenacao"
-            [(ngModel)]="ordenacao"
-            (change)="onOrdenacaoChange()"
-            class="px-4 py-2 glass border rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50"
-          >
-            <option value="proximidade">Proximidade de Validade</option>
-            <option value="maior_validade">Maior Validade</option>
-            <option value="alfabetica">Ordem Alfabética</option>
-          </select>
+        <!-- Campo de Busca -->
+        <div class="flex-1 min-w-[200px]">
+          <input
+            type="text"
+            [(ngModel)]="searchValue"
+            (input)="onSearchChange()"
+            placeholder="Digite para buscar..."
+            class="w-full px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 placeholder-[#1E2615]/50"
+          />
+        </div>
+
+        <!-- Switch Vencidos -->
+        <div class="flex items-center gap-2">
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              [(ngModel)]="filtroVencidos"
+              (change)="onFiltroVencidosChange()"
+              class="sr-only"
+            />
+            <div 
+              class="relative w-11 h-6 rounded-full transition-all duration-300 ease-in-out focus-within:outline-none focus-within:ring-2 focus-within:ring-[#8BCB70]"
+              [ngClass]="{
+                'bg-[#8BCB70]': filtroVencidos,
+                'bg-[#7EBFB3]/30': !filtroVencidos
+              }"
+            >
+              <div 
+                class="absolute top-[2px] w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ease-in-out"
+                [ngClass]="{
+                  'left-[20px]': filtroVencidos,
+                  'left-[2px]': !filtroVencidos
+                }"
+              ></div>
+            </div>
+            <span class="ml-3 text-sm font-semibold text-[#1E2615]">Vencidos</span>
+          </label>
         </div>
       </div>
     </div>
@@ -77,12 +124,102 @@
           <table class="min-w-full divide-y divide-[#7EBFB3]/20">
             <thead class="bg-[#A9D9D4]/20">
               <tr>
-                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">CNPJ</th>
-                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Arquivo</th>
-                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Data de Upload</th>
-                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Data de Validade</th>
-                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Dias até Expiração</th>
-                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Status</th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('cnpj'),
+                    'text-[#0C0D0A]': !isColumnSorted('cnpj')
+                  }"
+                  (click)="toggleSort('cnpj')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>CNPJ</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('cnpj'),
+                      'text-[#1E2615]/40': !isColumnSorted('cnpj')
+                    }">{{ getSortIcon('cnpj') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('nomeArquivo'),
+                    'text-[#0C0D0A]': !isColumnSorted('nomeArquivo')
+                  }"
+                  (click)="toggleSort('nomeArquivo')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Empresa</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('nomeArquivo'),
+                      'text-[#1E2615]/40': !isColumnSorted('nomeArquivo')
+                    }">{{ getSortIcon('nomeArquivo') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('dataUpload'),
+                    'text-[#0C0D0A]': !isColumnSorted('dataUpload')
+                  }"
+                  (click)="toggleSort('dataUpload')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Data de Upload</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('dataUpload'),
+                      'text-[#1E2615]/40': !isColumnSorted('dataUpload')
+                    }">{{ getSortIcon('dataUpload') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('dataValidade'),
+                    'text-[#0C0D0A]': !isColumnSorted('dataValidade')
+                  }"
+                  (click)="toggleSort('dataValidade')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Data de Validade</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('dataValidade'),
+                      'text-[#1E2615]/40': !isColumnSorted('dataValidade')
+                    }">{{ getSortIcon('dataValidade') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('diasAteExpiracao'),
+                    'text-[#0C0D0A]': !isColumnSorted('diasAteExpiracao')
+                  }"
+                  (click)="toggleSort('diasAteExpiracao')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Dias até Expiração</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('diasAteExpiracao'),
+                      'text-[#1E2615]/40': !isColumnSorted('diasAteExpiracao')
+                    }">{{ getSortIcon('diasAteExpiracao') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('status'),
+                    'text-[#0C0D0A]': !isColumnSorted('status')
+                  }"
+                  (click)="toggleSort('status')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Status</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('status'),
+                      'text-[#1E2615]/40': !isColumnSorted('status')
+                    }">{{ getSortIcon('status') }}</span>
+                  </div>
+                </th>
                 <th class="px-6 py-4 text-right text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Ações</th>
               </tr>
             </thead>
@@ -153,10 +290,10 @@
   <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModal()">
     <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
       <div class="flex items-center justify-between mb-6">
-        <h3 class="text-2xl font-bold text-[#0C0D0A]">Configurar Certificado</h3>
+        <h3 class="text-2xl font-bold text-white">Configurar Certificado</h3>
         <button
           (click)="fecharModal()"
-          class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors p-2 hover:bg-[#A9D9D4]/20 rounded-lg"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
         >
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -165,67 +302,40 @@
       </div>
 
       <div class="mb-6">
-        <p class="text-sm text-[#1E2615] mb-3">
-          <strong class="text-[#0C0D0A]">Arquivo:</strong> {{ certificadoAtual.file.name }}
+        <p class="text-sm text-white/90 mb-3">
+          <strong class="text-white">Arquivo:</strong> {{ certificadoAtual.file.name }}
         </p>
-        @if (!certificadoAtual.cnpj) {
-          <div class="mb-4">
-            <label for="cnpj" class="block text-sm font-semibold text-[#1E2615] mb-2">CNPJ</label>
-            <input
-              id="cnpj"
-              type="text"
-              formControlName="cnpj"
-              class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-[#0C0D0A] bg-white/50"
-              placeholder="00000000000000"
-              maxlength="14"
-            />
-            @if (senhaForm.get('cnpj')?.invalid && senhaForm.get('cnpj')?.touched) {
-              <p class="text-[#1E2615] text-sm mt-2">CNPJ deve conter 14 dígitos</p>
-            }
-          </div>
-        } @else {
-          <p class="text-sm text-[#1E2615] mb-4">
-            <strong class="text-[#0C0D0A]">CNPJ:</strong> {{ formatarCNPJ(certificadoAtual.cnpj) }}
-          </p>
-        }
+        <p class="text-xs text-white/70 mt-2">
+          O CNPJ e as informações da empresa serão extraídos automaticamente do certificado.
+        </p>
       </div>
 
       <form [formGroup]="senhaForm" (ngSubmit)="validarSenha()" class="space-y-5">
         <div>
-          <label for="senha" class="block text-sm font-semibold text-[#1E2615] mb-2">Senha do Certificado</label>
+          <label for="senha" class="block text-sm font-semibold text-white mb-2">Senha do Certificado</label>
           <input
             id="senha"
             type="password"
             formControlName="senha"
-            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-[#0C0D0A] bg-white/50"
+            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
             [ngClass]="{
-              'border-[#7EBFB3]/30 focus:ring-[#8BCB70]': senhaValida === null,
-              'border-[#8BCB70] focus:ring-[#8BCB70] bg-[#8BCB70]/10': senhaValida === true,
-              'border-[#1E2615] focus:ring-[#1E2615] bg-[#1E2615]/10': senhaValida === false
+              'border-[#7EBFB3]/50 focus:ring-[#8BCB70]': senhaValida === null,
+              'border-[#8BCB70] focus:ring-[#8BCB70] bg-[#8BCB70]/20': senhaValida === true,
+              'border-red-400 focus:ring-red-400 bg-red-400/20': senhaValida === false
             }"
             placeholder="Digite a senha do certificado"
+            [disabled]="importando"
           />
           @if (senhaForm.get('senha')?.invalid && senhaForm.get('senha')?.touched) {
-            <p class="text-[#1E2615] text-sm mt-2">Senha é obrigatória</p>
+            <p class="text-white/80 text-sm mt-2">Senha é obrigatória</p>
           }
-        </div>
-
-        <div>
-          <label for="dataValidade" class="block text-sm font-semibold text-[#1E2615] mb-2">Data de Validade (Opcional)</label>
-          <input
-            id="dataValidade"
-            type="date"
-            formControlName="dataValidade"
-            class="w-full px-4 py-3 glass border border-[#7EBFB3]/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-[#0C0D0A] bg-white/50"
-          />
-          <p class="text-xs text-[#1E2615]/60 mt-2">Informe a data de validade para calcular os dias até expiração</p>
         </div>
 
         <!-- Mensagem de Validação -->
         @if (mensagemSenha) {
           <div class="p-4 rounded-xl border" [ngClass]="{
-            'bg-[#8BCB70]/20 text-[#0C0D0A] border-[#8BCB70]/50': senhaValida === true,
-            'bg-[#1E2615]/20 text-[#0C0D0A] border-[#1E2615]/50': senhaValida === false
+            'bg-[#8BCB70]/30 text-white border-[#8BCB70]/50': senhaValida === true,
+            'bg-red-400/30 text-white border-red-400/50': senhaValida === false
           }">
             <div class="flex items-center">
               @if (senhaValida === true) {
@@ -233,7 +343,7 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
               } @else {
-                <svg class="w-6 h-6 mr-3 text-[#1E2615]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-6 h-6 mr-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                 </svg>
               }
@@ -246,25 +356,25 @@
           <button
             type="button"
             (click)="fecharModal()"
-            class="flex-1 px-6 py-3 glass border border-[#7EBFB3]/30 rounded-xl text-[#1E2615] hover:bg-[#A9D9D4]/20 hover:text-[#0C0D0A] transition-all font-semibold"
+            class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
           >
             Cancelar
           </button>
           <button
             type="submit"
-            [disabled]="!senhaForm.valid || validandoSenha"
-            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed transition-all font-bold"
+            [disabled]="!senhaForm.valid || importando"
+            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
           >
-            @if (validandoSenha) {
+            @if (importando) {
               <span class="flex items-center justify-center">
                 <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Validando...
+                Importando...
               </span>
             } @else {
-              Validar e Salvar
+              Importar Certificado
             }
           </button>
         </div>

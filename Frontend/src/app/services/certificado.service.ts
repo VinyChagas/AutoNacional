@@ -14,6 +14,14 @@ export interface Certificado {
   senha?: string; // Não armazenar em produção
 }
 
+export interface CertificadoImportado {
+  success: boolean;
+  empresa?: string;
+  cnpj?: string;
+  dataVencimento?: string;
+  message?: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -98,5 +106,26 @@ export class CertificadoService {
     if (diasAteExpiracao < 0) return 'vencido';
     if (diasAteExpiracao <= 30) return 'proximo_vencimento';
     return 'valido';
+  }
+
+  importarCertificado(file: File, senha: string): Observable<CertificadoImportado> {
+    const formData = new FormData();
+    formData.append('certificado', file);
+    formData.append('senha', senha);
+
+    return this.http.post<CertificadoImportado>(`${this.baseUrl}/certificados/importar`, formData).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ Erro HTTP na requisição:', error);
+        // Se o backend retornou um JSON com success: false, retorna ele
+        if (error.error && typeof error.error === 'object' && 'success' in error.error) {
+          return throwError(() => error.error as CertificadoImportado);
+        }
+        // Caso contrário, cria um objeto de erro padrão
+        return throwError(() => ({
+          success: false,
+          message: error.error?.message || error.message || 'Erro ao importar certificado'
+        } as CertificadoImportado));
+      })
+    );
   }
 }

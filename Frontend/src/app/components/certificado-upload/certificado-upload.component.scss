@@ -1,0 +1,49 @@
+// Estilos para cabeçalhos ordenáveis
+th[class*="cursor-pointer"] {
+  user-select: none;
+  transition: background-color 0.2s ease;
+  
+  &:active {
+    background-color: rgba(139, 203, 112, 0.2) !important;
+  }
+}
+
+// Animação suave para ícones de ordenação
+th span.text-\[10px\] {
+  transition: color 0.2s ease, transform 0.2s ease;
+  display: inline-block;
+}
+
+th:hover span.text-\[10px\] {
+  transform: scale(1.15);
+}
+
+// Estilo para coluna ordenada ativa
+th[class*="text-\[#8BCB70\]"] {
+  font-weight: 700;
+  
+  span.text-\[10px\] {
+    font-weight: 700;
+  }
+}
+
+// Estilos para switch toggle com animação suave
+label.cursor-pointer {
+  div.relative {
+    > div {
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                  box-shadow 0.3s ease,
+                  transform 0.3s ease;
+      
+      &:hover {
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        transform: scale(1.05);
+      }
+    }
+  }
+  
+  &:hover div.relative {
+    opacity: 0.9;
+  }
+}
+

@@ -29,3 +29,5 @@ Thumbs.db
 .env.local
 
 CERTIFICADO e-CNPJ/
+
+Backend/certificados_armazenados/
