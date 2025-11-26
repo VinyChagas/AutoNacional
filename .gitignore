@@ -31,3 +31,7 @@ Thumbs.db
 CERTIFICADO e-CNPJ/
 
 Backend/certificados_armazenados/
+
+Backend/src/routers/__pycache__/__init__.cpython-313.pyc
+
+Backend/src/routers/__pycache__/nfse.cpython-313.pyc
