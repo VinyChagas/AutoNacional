@@ -321,7 +321,10 @@ def abrir_dashboard_nfse(
             "url_atual": final_url,
             "titulo": final_title,
             "mensagem": mensagem,
-            "logs": logs
+            "logs": logs,
+            "page": page,
+            "context": context,
+            "browser": browser
         }
         
     except Exception as e:
