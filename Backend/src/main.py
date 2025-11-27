@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .core.env import CORS_ORIGINS
-from routers import empresas, credenciais, nfse
+from .infrastructure.config import CORS_ORIGINS
+from routers import empresas, credenciais, nfse, execucao
 
 app = FastAPI(
     title="AutoNacional API",
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(empresas.router)
 app.include_router(credenciais.router)
 app.include_router(nfse.router)
+app.include_router(execucao.router)
 
 @app.get("/", tags=["Health"])
 def health():

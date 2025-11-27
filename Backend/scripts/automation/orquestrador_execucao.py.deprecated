@@ -1,0 +1,453 @@
+"""
+Orquestrador de execução para automação do portal NFSe Nacional.
+
+Este módulo coordena a execução sequencial dos scripts de automação:
+1. Autenticação via playwright_nfse.py
+2. Processamento de notas via emitidas_automation.py
+3. Salvamento automático via salvamento.py (integrado)
+
+Características:
+- Gerencia fila de execuções por empresa
+- Garante que apenas uma execução ocorra por vez
+- Tratamento robusto de erros
+- Logs detalhados de cada etapa
+"""
+
+import os
+import sys
+import logging
+import threading
+from typing import Dict, Optional, Tuple
+from datetime import datetime
+from enum import Enum
+from queue import Queue, Empty
+
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Adiciona src ao path
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+src_path = os.path.join(backend_dir, "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
+# Import lazy - só importa quando necessário para não bloquear inicialização
+def _get_playwright_functions():
+    """Importa playwright_nfse apenas quando necessário."""
+    try:
+        from playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
+        return abrir_dashboard_nfse, NFSeAutenticacaoError
+    except ImportError as e:
+        raise ImportError(f"Não foi possível importar playwright_nfse: {str(e)}. Verifique se o playwright está instalado.")
+
+def _get_automation_functions():
+    """Importa funções de automação apenas quando necessário."""
+    try:
+        from emitidas_automation import executar_fluxo_emitidas, executar_fluxo_recebidas
+        return executar_fluxo_emitidas, executar_fluxo_recebidas
+    except ImportError as e:
+        raise ImportError(f"Não foi possível importar emitidas_automation: {str(e)}")
+
+
+class StatusExecucao(Enum):
+    """Status possíveis de uma execução."""
+    PENDENTE = "pendente"
+    EM_EXECUCAO = "em_execucao"
+    CONCLUIDO = "concluido"
+    FALHOU = "falhou"
+    CANCELADO = "cancelado"
+
+
+class EtapaExecucao(Enum):
+    """Etapas do fluxo de execução."""
+    INICIO = "inicio"
+    AUTENTICACAO = "autenticacao"
+    PROCESSAMENTO_EMITIDAS = "processamento_emitidas"
+    PROCESSAMENTO_RECEBIDAS = "processamento_recebidas"
+    FINALIZACAO = "finalizacao"
+
+
+class ExecucaoInfo:
+    """Informações sobre uma execução em andamento."""
+    
+    def __init__(self, empresa_id: str, cnpj: str, competencia: str, tipo: str = "ambas"):
+        self.empresa_id = empresa_id
+        self.cnpj = cnpj
+        self.competencia = competencia
+        self.tipo = tipo  # "emitidas", "recebidas" ou "ambas"
+        self.status = StatusExecucao.PENDENTE
+        self.etapa_atual = EtapaExecucao.INICIO
+        self.progresso = 0
+        self.logs: list[str] = []
+        self.mensagem = "Aguardando execução..."
+        self.data_inicio: Optional[datetime] = None
+        self.data_fim: Optional[datetime] = None
+        self.erro: Optional[str] = None
+        self.url_atual: Optional[str] = None
+        self.titulo: Optional[str] = None
+        
+        # Recursos do Playwright (para cleanup)
+        self.page = None
+        self.context = None
+        self.browser = None
+        self.playwright = None
+
+
+class OrquestradorExecucao:
+    """
+    Orquestrador que gerencia a fila de execuções e coordena os scripts.
+    
+    Garante execução sequencial (uma empresa por vez) para evitar conflitos
+    de certificados e sessões de navegador.
+    """
+    
+    def __init__(self):
+        self.fila_execucoes: Queue = Queue()
+        self.execucoes_ativas: Dict[str, ExecucaoInfo] = {}
+        self.thread_executora: Optional[threading.Thread] = None
+        self.rodando = False
+        self.lock = threading.Lock()
+    
+    def adicionar_execucao(
+        self,
+        empresa_id: str,
+        cnpj: str,
+        competencia: str,
+        tipo: str = "ambas",
+        headless: bool = False
+    ) -> str:
+        """
+        Adiciona uma execução à fila.
+        
+        Args:
+            empresa_id: ID da empresa no banco de dados
+            cnpj: CNPJ da empresa (14 dígitos)
+            competencia: Competência no formato MMAAAA (ex: "112025")
+            tipo: Tipo de notas ("emitidas", "recebidas" ou "ambas")
+            headless: Se True, executa navegador em modo headless
+            
+        Returns:
+            ID da execução (mesmo que empresa_id para rastreamento)
+        """
+        # Validações
+        if not empresa_id:
+            raise ValueError("empresa_id não pode ser None ou vazio")
+        if not cnpj:
+            raise ValueError("cnpj não pode ser None ou vazio")
+        if not competencia:
+            raise ValueError("competencia não pode ser None ou vazio")
+        
+        empresa_id = str(empresa_id)
+        cnpj = str(cnpj).strip()
+        competencia = str(competencia).strip()
+        
+        with self.lock:
+            # Cria informação da execução
+            execucao = ExecucaoInfo(empresa_id, cnpj, competencia, tipo)
+            execucao.headless = headless
+            
+            # Adiciona à fila
+            self.fila_execucoes.put(execucao)
+            self.execucoes_ativas[empresa_id] = execucao
+            
+            logger.info(f"📋 Execução adicionada à fila: Empresa {empresa_id} (CNPJ: {cnpj})")
+            
+            # Inicia thread executora se não estiver rodando
+            if not self.rodando:
+                self.rodando = True
+                self.thread_executora = threading.Thread(
+                    target=self._processar_fila,
+                    daemon=True
+                )
+                self.thread_executora.start()
+                logger.info("🚀 Thread executora iniciada")
+            
+            return empresa_id
+    
+    def obter_status(self, empresa_id: str) -> Optional[Dict]:
+        """
+        Obtém o status atual de uma execução.
+        
+        Args:
+            empresa_id: ID da empresa
+            
+        Returns:
+            Dicionário com status da execução ou None se não encontrada
+        """
+        with self.lock:
+            execucao = self.execucoes_ativas.get(empresa_id)
+            if not execucao:
+                return None
+            
+            return {
+                "empresa_id": str(execucao.empresa_id) if execucao.empresa_id else "",
+                "cnpj": str(execucao.cnpj) if execucao.cnpj else "",
+                "status": execucao.status.value if execucao.status else "pendente",
+                "etapa_atual": execucao.etapa_atual.value if execucao.etapa_atual else "inicio",
+                "progresso": execucao.progresso if execucao.progresso is not None else 0,
+                "logs": execucao.logs if execucao.logs else [],
+                "mensagem": str(execucao.mensagem) if execucao.mensagem else "Aguardando execução...",
+                "data_inicio": execucao.data_inicio.isoformat() if execucao.data_inicio else None,
+                "data_fim": execucao.data_fim.isoformat() if execucao.data_fim else None,
+                "erro": str(execucao.erro) if execucao.erro else None,
+                "url_atual": str(execucao.url_atual) if execucao.url_atual else None,
+                "titulo": str(execucao.titulo) if execucao.titulo else None,
+            }
+    
+    def _processar_fila(self):
+        """Processa a fila de execuções sequencialmente."""
+        logger.info("🔄 Iniciando processamento da fila de execuções")
+        
+        while True:
+            try:
+                # Pega próxima execução (bloqueia até ter uma)
+                logger.info(f"⏳ Aguardando próxima execução na fila... (fila tem {self.fila_execucoes.qsize()} itens)")
+                execucao = self.fila_execucoes.get(timeout=60)
+                logger.info(f"✅ Execução obtida da fila: Empresa {execucao.empresa_id}")
+                
+                # Processa a execução
+                logger.info(f"🚀 Iniciando processamento da execução para empresa {execucao.empresa_id}")
+                self._executar_fluxo_completo(execucao)
+                logger.info(f"✅ Execução concluída para empresa {execucao.empresa_id}")
+                
+                # Marca como concluída na fila
+                self.fila_execucoes.task_done()
+                
+            except Empty:
+                # Timeout - verifica se deve continuar
+                logger.info("⏱️  Timeout ao aguardar execução (60s)")
+                with self.lock:
+                    if self.fila_execucoes.empty():
+                        logger.info("⏸️  Fila vazia. Thread executora pausada.")
+                        self.rodando = False
+                        break
+                    else:
+                        logger.info(f"🔄 Fila ainda tem itens ({self.fila_execucoes.qsize()}), continuando...")
+            except Exception as e:
+                logger.error(f"❌ Erro no processamento da fila: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # Continua processando outras execuções mesmo com erro
+    
+    def _executar_fluxo_completo(self, execucao: ExecucaoInfo):
+        """
+        Executa o fluxo completo de automação para uma empresa.
+        
+        Etapas:
+        1. Autenticação (playwright_nfse.py)
+        2. Processamento de notas emitidas (emitidas_automation.py)
+        3. Processamento de notas recebidas (emitidas_automation.py)
+        4. Finalização e cleanup
+        """
+        execucao.data_inicio = datetime.now()
+        execucao.status = StatusExecucao.EM_EXECUCAO
+        
+        try:
+            # ETAPA 1: Autenticação
+            execucao.etapa_atual = EtapaExecucao.AUTENTICACAO
+            execucao.progresso = 10
+            execucao.mensagem = "Iniciando autenticação..."
+            
+            # Valida CNPJ antes de tentar autenticar
+            if not execucao.cnpj:
+                raise ValueError(f"CNPJ não pode ser None para empresa {execucao.empresa_id}")
+            
+            cnpj_str = str(execucao.cnpj).strip()
+            if not cnpj_str or len(cnpj_str) != 14:
+                raise ValueError(f"CNPJ inválido: {execucao.cnpj} (empresa {execucao.empresa_id})")
+            
+            self._adicionar_log(execucao, f"🔐 Etapa 1: Autenticação para CNPJ {cnpj_str}")
+            
+            # Importa funções do playwright apenas quando necessário
+            try:
+                abrir_dashboard_nfse, NFSeAutenticacaoError = _get_playwright_functions()
+                self._adicionar_log(execucao, "✅ Funções do Playwright importadas")
+            except Exception as e:
+                error_msg = f"Erro ao importar Playwright: {str(e)}"
+                self._adicionar_log(execucao, f"❌ {error_msg}")
+                raise ImportError(error_msg)
+            
+            self._adicionar_log(execucao, "🚀 Chamando abrir_dashboard_nfse...")
+            
+            try:
+                resultado_auth = abrir_dashboard_nfse(
+                    cnpj=cnpj_str,
+                    headless=getattr(execucao, 'headless', False),
+                    timeout=30000
+                )
+                self._adicionar_log(execucao, "✅ abrir_dashboard_nfse concluído")
+            except Exception as e:
+                error_msg = f"Erro ao executar abrir_dashboard_nfse: {str(e)}"
+                self._adicionar_log(execucao, f"❌ {error_msg}")
+                logger.error(f"Erro detalhado: {error_msg}")
+                import traceback
+                logger.error(traceback.format_exc())
+                raise
+            
+            if not resultado_auth.get("sucesso"):
+                raise NFSeAutenticacaoError(
+                    f"Falha na autenticação: {resultado_auth.get('mensagem', 'Erro desconhecido')}"
+                )
+            
+            # Armazena recursos do Playwright para cleanup posterior
+            execucao.page = resultado_auth.get("page")
+            execucao.context = resultado_auth.get("context")
+            execucao.browser = resultado_auth.get("browser")
+            execucao.playwright = resultado_auth.get("playwright")  # Adiciona playwright também
+            execucao.url_atual = resultado_auth.get("url_atual")
+            execucao.titulo = resultado_auth.get("titulo")
+            
+            # Adiciona logs da autenticação
+            for log_msg in resultado_auth.get("logs", []):
+                self._adicionar_log(execucao, log_msg)
+            
+            execucao.progresso = 30
+            execucao.mensagem = "Autenticação concluída com sucesso"
+            self._adicionar_log(execucao, "✅ Autenticação concluída")
+            
+            # Verifica se temos página válida
+            if not execucao.page:
+                raise Exception("Página do navegador não foi criada corretamente")
+            
+            # ETAPA 2: Processamento de Notas Emitidas
+            if execucao.tipo in ["emitidas", "ambas"]:
+                execucao.etapa_atual = EtapaExecucao.PROCESSAMENTO_EMITIDAS
+                execucao.progresso = 40
+                execucao.mensagem = "Processando notas emitidas..."
+                self._adicionar_log(execucao, "📄 Etapa 2: Processando notas emitidas")
+                
+                # Importa funções de automação apenas quando necessário
+                executar_fluxo_emitidas, _ = _get_automation_functions()
+                
+                try:
+                    executar_fluxo_emitidas(
+                        page=execucao.page,
+                        competencia=execucao.competencia,
+                        context=execucao.context
+                    )
+                    execucao.progresso = execucao.tipo == "ambas" and 70 or 90
+                    execucao.mensagem = "Notas emitidas processadas com sucesso"
+                    self._adicionar_log(execucao, "✅ Notas emitidas processadas")
+                except Exception as e:
+                    error_msg = f"Erro ao processar notas emitidas: {str(e)}"
+                    self._adicionar_log(execucao, f"❌ {error_msg}")
+                    logger.error(error_msg)
+                    # Continua mesmo com erro em uma etapa
+            
+            # ETAPA 3: Processamento de Notas Recebidas
+            if execucao.tipo in ["recebidas", "ambas"]:
+                execucao.etapa_atual = EtapaExecucao.PROCESSAMENTO_RECEBIDAS
+                execucao.progresso = execucao.tipo == "ambas" and 70 or 40
+                execucao.mensagem = "Processando notas recebidas..."
+                self._adicionar_log(execucao, "📥 Etapa 3: Processando notas recebidas")
+                
+                # Importa funções de automação apenas quando necessário
+                _, executar_fluxo_recebidas = _get_automation_functions()
+                
+                try:
+                    executar_fluxo_recebidas(
+                        page=execucao.page,
+                        competencia=execucao.competencia,
+                        context=execucao.context
+                    )
+                    execucao.progresso = 90
+                    execucao.mensagem = "Notas recebidas processadas com sucesso"
+                    self._adicionar_log(execucao, "✅ Notas recebidas processadas")
+                except Exception as e:
+                    error_msg = f"Erro ao processar notas recebidas: {str(e)}"
+                    self._adicionar_log(execucao, f"❌ {error_msg}")
+                    logger.error(error_msg)
+                    # Continua mesmo com erro em uma etapa
+            
+            # ETAPA 4: Finalização
+            execucao.etapa_atual = EtapaExecucao.FINALIZACAO
+            execucao.progresso = 100
+            execucao.status = StatusExecucao.CONCLUIDO
+            execucao.mensagem = "Execução concluída com sucesso"
+            execucao.data_fim = datetime.now()
+            self._adicionar_log(execucao, "🎉 Execução concluída com sucesso")
+            
+        except NFSeAutenticacaoError as e:
+            execucao.status = StatusExecucao.FALHOU
+            execucao.erro = f"Erro de autenticação: {str(e)}"
+            execucao.mensagem = execucao.erro
+            execucao.data_fim = datetime.now()
+            self._adicionar_log(execucao, f"❌ ERRO: {execucao.erro}")
+            logger.error(f"❌ Erro de autenticação para empresa {execucao.empresa_id}: {str(e)}")
+            
+        except Exception as e:
+            execucao.status = StatusExecucao.FALHOU
+            execucao.erro = f"Erro na etapa {execucao.etapa_atual.value}: {str(e)}"
+            execucao.mensagem = execucao.erro
+            execucao.data_fim = datetime.now()
+            self._adicionar_log(execucao, f"❌ ERRO: {execucao.erro}")
+            logger.error(f"❌ Erro na execução para empresa {execucao.empresa_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+        finally:
+            # Cleanup: fecha recursos do Playwright
+            self._limpar_recursos(execucao)
+    
+    def _adicionar_log(self, execucao: ExecucaoInfo, mensagem: str):
+        """Adiciona uma mensagem de log à execução."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_msg = f"[{timestamp}] {mensagem}"
+        execucao.logs.append(log_msg)
+        logger.info(f"Empresa {execucao.empresa_id}: {mensagem}")
+    
+    def _limpar_recursos(self, execucao: ExecucaoInfo):
+        """Limpa recursos do Playwright após execução."""
+        try:
+            headless = getattr(execucao, 'headless', False)
+            
+            if headless:
+                # Em modo headless, fecha tudo
+                if execucao.page:
+                    try:
+                        execucao.page.close()
+                    except:
+                        pass
+                
+                if execucao.context:
+                    try:
+                        execucao.context.close()
+                    except:
+                        pass
+                
+                if execucao.browser:
+                    try:
+                        execucao.browser.close()
+                    except:
+                        pass
+                
+                if execucao.playwright:
+                    try:
+                        execucao.playwright.stop()
+                    except:
+                        pass
+                
+                self._adicionar_log(execucao, "🧹 Recursos liberados (modo headless)")
+            else:
+                # Em modo visível, mantém navegador aberto
+                self._adicionar_log(execucao, "🌐 Navegador mantido aberto para visualização")
+                
+        except Exception as e:
+            logger.error(f"Erro ao limpar recursos: {str(e)}")
+
+
+# Instância global do orquestrador
+_orquestrador: Optional[OrquestradorExecucao] = None
+
+
+def obter_orquestrador() -> OrquestradorExecucao:
+    """Obtém a instância global do orquestrador (singleton)."""
+    global _orquestrador
+    if _orquestrador is None:
+        _orquestrador = OrquestradorExecucao()
+    return _orquestrador
+

@@ -54,16 +54,47 @@
           }
         </div>
 
-        <div class="flex items-center">
-          <input
-            type="checkbox"
-            id="headless"
-            [(ngModel)]="headlessMode"
-            class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
-          />
-          <label for="headless" class="ml-3 text-sm font-semibold text-[#1E2615]">
-            Modo Headless
-          </label>
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-2">
+            <label for="competencia" class="text-sm font-semibold text-[#1E2615]">
+              Competência:
+            </label>
+            <input
+              type="text"
+              id="competencia"
+              [(ngModel)]="competencia"
+              placeholder="MMAAAA"
+              maxlength="6"
+              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] w-24"
+            />
+          </div>
+          
+          <div class="flex items-center gap-2">
+            <label for="tipoNotas" class="text-sm font-semibold text-[#1E2615]">
+              Tipo:
+            </label>
+            <select
+              id="tipoNotas"
+              [(ngModel)]="tipoNotas"
+              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A]"
+            >
+              <option value="ambas">Ambas</option>
+              <option value="emitidas">Emitidas</option>
+              <option value="recebidas">Recebidas</option>
+            </select>
+          </div>
+
+          <div class="flex items-center">
+            <input
+              type="checkbox"
+              id="headless"
+              [(ngModel)]="headlessMode"
+              class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
+            />
+            <label for="headless" class="ml-3 text-sm font-semibold text-[#1E2615]">
+              Modo Headless
+            </label>
+          </div>
         </div>
       </div>
 

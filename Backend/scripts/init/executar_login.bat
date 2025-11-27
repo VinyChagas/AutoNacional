@@ -1,7 +1,8 @@
 @echo off
 REM Script para executar o login com certificado digital usando Playwright (Windows)
 
-cd /d "%~dp0"
+REM Navega para o diretório raiz do backend (dois níveis acima deste script)
+cd /d "%~dp0\..\.."
 
 REM Ativa o ambiente virtual
 if exist .venv\Scripts\activate.bat (
@@ -52,5 +53,5 @@ if "%1"=="" (
 )
 
 echo.
-python src\executar_login_nfse.py %DEFAULT_CNPJ%
+python scripts\automation\executar_login_nfse.py %DEFAULT_CNPJ%
 

@@ -32,16 +32,59 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Permite importar cert_storage independentemente de onde o script for executado
-backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, backend_dir)
+# Permite importar services independentemente de onde o script for executado
+# IMPORTANTE: Este código deve executar ANTES de qualquer import que dependa dele
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_src_path = os.path.join(_backend_dir, "src")
+
+# Adiciona backend_dir ao sys.path PRIMEIRO (para que src seja reconhecido como pacote)
+# Isso permite fazer "from src.services.certificate_service import ..."
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+# Depois adiciona src_path (para imports diretos de services quando src está no path)
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
+
+# Importa certificate_service - tenta múltiplas formas
+_certificate_service_imported = False
+_certificate_service_error = None
+_get_certificate_service_func = None
 
 try:
-    from cert_storage import carregar_certificado  # noqa: E402
-except ImportError:
-    # Fallback caso cert_storage esteja em outro local
-    sys.path.insert(0, os.path.join(backend_dir, 'Backend'))
-    from cert_storage import carregar_certificado  # noqa: E402
+    # Tentativa 1: Import usando src.services (quando backend_dir está no path)
+    from src.services.certificate_service import get_certificate_service  # noqa: E402
+    _get_certificate_service_func = get_certificate_service
+    _certificate_service_imported = True
+    logger.debug("✅ CertificateService importado via src.services")
+except ImportError as e1:
+    _certificate_service_error = f"src.services: {e1}"
+    try:
+        # Tentativa 2: Import direto de services (quando src está no path)
+        from services.certificate_service import get_certificate_service  # noqa: E402
+        _get_certificate_service_func = get_certificate_service
+        _certificate_service_imported = True
+        logger.debug("✅ CertificateService importado via services")
+    except ImportError as e2:
+        # Se ambas falharem, o erro será levantado quando tentar usar
+        _certificate_service_error = f"src.services: {e1}; services: {e2}"
+
+if not _certificate_service_imported:
+    # Se não conseguiu importar, levanta erro com detalhes
+    error_msg = (
+        f"Não foi possível importar certificate_service.\n"
+        f"  Erros: {_certificate_service_error}\n"
+        f"  Backend dir: {_backend_dir}\n"
+        f"  Src path: {_src_path}\n"
+        f"  Src existe: {os.path.exists(_src_path)}\n"
+        f"  Backend no path: {_backend_dir in sys.path}\n"
+        f"  Src no path: {_src_path in sys.path}\n"
+        f"  Sys.path (primeiros 3): {sys.path[:3]}"
+    )
+    logger.error(error_msg)
+    raise ImportError(error_msg)
+
+# Expõe a função para uso no módulo
+get_certificate_service = _get_certificate_service_func
 
 # URL base do portal NFSe Nacional
 BASE_URL = "https://www.nfse.gov.br/EmissorNacional/"
@@ -81,9 +124,10 @@ def criar_contexto_com_certificado(
     logger.info(f"🔐 Iniciando criação de contexto com certificado A1 para CNPJ: {cnpj}")
     
     try:
-        # Carrega o certificado e senha descriptografados
+        # Carrega o certificado e senha descriptografados usando o service
         logger.info("📥 Carregando certificado do armazenamento...")
-        conteudo_pfx, senha = carregar_certificado(cnpj)
+        certificate_service = get_certificate_service()
+        conteudo_pfx, senha = certificate_service.carregar_certificado(cnpj)
         logger.info("✅ Certificado carregado com sucesso")
         
     except FileNotFoundError as e:
@@ -114,7 +158,7 @@ def criar_contexto_com_certificado(
         logger.info("🔐 Configurando certificado cliente no contexto do navegador...")
         context = browser.new_context(
             ignore_https_errors=ignore_https_errors,
-            viewport={"width": 1920, "height": 1080},
+            viewport={"width": 1920, "height": 1080},  # Full HD 1920x1080p
             user_agent=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -176,7 +220,7 @@ def abrir_dashboard_nfse(
         NFSeAutenticacaoError: Se a autenticação falhar
     """
     logs = []
-    playwright = None
+    playwright_instance = None
     browser = None
     context = None
     page = None
@@ -192,7 +236,7 @@ def abrir_dashboard_nfse(
         
         # Cria contexto com certificado
         log("📋 Criando contexto do navegador com certificado A1...")
-        playwright, browser, context = criar_contexto_com_certificado(
+        playwright_instance, browser, context = criar_contexto_com_certificado(
             cnpj=cnpj,
             headless=headless,
             ignore_https_errors=True
@@ -202,15 +246,28 @@ def abrir_dashboard_nfse(
         # Cria uma nova página
         log("📄 Criando nova página...")
         page = context.new_page()
+        
+        # Maximiza a janela para fullscreen (1920x1080) quando não estiver em headless
+        if not headless:
+            try:
+                # Tenta maximizar a janela do navegador
+                page.set_viewport_size({"width": 1920, "height": 1080})
+                log("✅ Janela configurada para 1920x1080p (Full HD)")
+            except Exception as e:
+                log(f"⚠️  Não foi possível maximizar janela: {e}")
+        
         log("✅ Página criada")
         
         # Acessa a URL base do portal
         log(f"🌐 Acessando portal NFSe Nacional: {BASE_URL}")
-        page.goto(BASE_URL, wait_until="networkidle", timeout=timeout)
+        # Usa 'domcontentloaded' ao invés de 'networkidle' para ser mais rápido
+        # 'networkidle' espera por até 500ms sem requisições de rede, o que pode ser lento
+        page.goto(BASE_URL, wait_until="domcontentloaded", timeout=timeout)
         log(f"✅ Página carregada: {page.url}")
         
-        # Aguarda um pouco para a página processar
-        page.wait_for_timeout(2000)
+        # Aguarda apenas o necessário para elementos críticos carregarem
+        # Reduzido de 2000ms para 500ms - otimização de tempo
+        page.wait_for_timeout(500)
         
         # Tenta detectar se estamos na página de login ou já autenticados
         current_url = page.url
@@ -267,21 +324,25 @@ def abrir_dashboard_nfse(
                 login_element.click(timeout=5000)
                 log("✅ Clique no botão de certificado realizado")
                 
-                # Aguarda redirecionamento ou mudança na página
-                page.wait_for_timeout(3000)
-                
-                # Aguarda por elementos do dashboard ou mudança de URL
+                # Aguarda redirecionamento de forma mais eficiente
+                # Reduzido de 3000ms para espera condicional - otimização de tempo
                 try:
+                    # Espera por mudança de URL ou elementos do dashboard (mais rápido)
+                    page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    # Aguarda um pouco para JavaScript processar
+                    page.wait_for_timeout(500)
+                    
+                    # Verifica se dashboard apareceu
                     page.wait_for_selector(
                         'text=Dashboard',
-                        timeout=timeout,
+                        timeout=5000,
                         state="visible"
                     )
                     log("✅ Dashboard detectado após autenticação!")
                 except:
-                    # Tenta outros seletores
+                    # Fallback: aguarda carregamento completo se necessário
                     try:
-                        page.wait_for_load_state("networkidle", timeout=timeout)
+                        page.wait_for_load_state("load", timeout=5000)
                         log("✅ Página carregada completamente")
                     except:
                         pass
@@ -324,7 +385,8 @@ def abrir_dashboard_nfse(
             "logs": logs,
             "page": page,
             "context": context,
-            "browser": browser
+            "browser": browser,
+            "playwright": playwright_instance
         }
         
     except Exception as e:
@@ -357,9 +419,9 @@ def abrir_dashboard_nfse(
                 except:
                     pass
             
-            if playwright:
+            if playwright_instance:
                 try:
-                    playwright.stop()
+                    playwright_instance.stop()
                 except:
                     pass
             

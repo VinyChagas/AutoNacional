@@ -8,7 +8,35 @@ usando certificados A1 através do Playwright.
 from fastapi import APIRouter, HTTPException, status, Query
 from pydantic import BaseModel
 
-from ..playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
+# Import lazy - só importa quando necessário para não bloquear registro do router
+import sys
+import os
+
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_src_dir = os.path.dirname(_current_dir)
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+# Adiciona scripts/automation ao path
+import os
+import sys
+_backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_scripts_automation_path = os.path.join(_backend_dir, "scripts", "automation")
+if _scripts_automation_path not in sys.path:
+    sys.path.insert(0, _scripts_automation_path)
+
+# Função para importar playwright_nfse apenas quando necessário
+def _get_playwright_functions():
+    """Importa playwright_nfse apenas quando necessário."""
+    try:
+        from playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
+        return abrir_dashboard_nfse, NFSeAutenticacaoError
+    except ImportError:
+        # Se não conseguir importar, levanta erro apropriado
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Serviço de automação não disponível. Verifique se o playwright está instalado."
+        )
 
 router = APIRouter(prefix="/api/nfse", tags=["NFSe"])
 
@@ -57,6 +85,9 @@ def abrir_dashboard(
                 detail="CNPJ inválido. Deve conter 14 dígitos."
             )
         
+        # Importa funções do playwright apenas quando necessário
+        abrir_dashboard_nfse, NFSeAutenticacaoError = _get_playwright_functions()
+        
         # Executa a automação
         resultado = abrir_dashboard_nfse(
             cnpj=cnpj_limpo,
@@ -73,7 +104,15 @@ def abrir_dashboard(
             logs=resultado["logs"]
         )
         
-    except NFSeAutenticacaoError as e:
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Verifica se é erro de autenticação
+        if "NFSeAutenticacaoError" in str(type(e)) or "autenticação" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Falha na autenticação: {str(e)}"
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Falha na autenticação: {str(e)}"

@@ -20,6 +20,10 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   carregandoCertificados = false;
   executando = false;
   headlessMode = false;
+  competencia: string = ''; // Formato MMAAAA (ex: 112025)
+  tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
+  
+  private intervalosStatus: Map<string, any> = new Map();
   
   private destroy$ = new Subject<void>();
 
@@ -41,6 +45,10 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    // Limpa todos os intervalos de polling
+    this.intervalosStatus.forEach(intervalo => clearInterval(intervalo));
+    this.intervalosStatus.clear();
+    
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -96,24 +104,38 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     execucao.progresso = 5;
 
     try {
-      // Chama o backend
-      const response = await firstValueFrom(
-        this.execucaoService.executarNFSe(execucao.cnpj, this.headlessMode)
-      );
-
-      // Processa logs em tempo real
-      if (response && response.logs && response.logs.length > 0) {
-        await this.processarLogsEmTempoReal(execucao, response.logs);
+      // Valida competência
+      if (!this.competencia || this.competencia.length !== 6) {
+        throw new Error('Competência inválida. Use o formato MMAAAA (ex: 112025)');
       }
 
-      // Atualiza status final
-      execucao.status = response?.sucesso ? 'concluido' : 'falhou';
-      execucao.progresso = 100;
-      execucao.sucesso = response?.sucesso;
-      execucao.mensagem = response?.mensagem || 'Execução concluída';
-      execucao.urlAtual = response?.url_atual;
-      execucao.titulo = response?.titulo;
-      execucao.dataFim = new Date();
+      // Usa CNPJ como empresa_id (a rota aceita CNPJ também)
+      const empresaId = execucao.cnpj.replace(/[^\d]/g, '');
+
+      // Chama o backend com a nova rota
+      const response = await firstValueFrom(
+        this.execucaoService.executarEmpresa(
+          empresaId,
+          this.competencia,
+          this.tipoNotas,
+          this.headlessMode
+        )
+      );
+
+      // Atualiza execução com dados iniciais
+      execucao.empresa_id = response.empresa_id;
+      execucao.status = response.status as any;
+      execucao.progresso = response.progresso;
+      execucao.mensagem = response.mensagem;
+      execucao.logs = response.logs || [];
+      execucao.etapa_atual = response.etapa_atual;
+      if (response.data_inicio) {
+        execucao.dataInicio = new Date(response.data_inicio);
+      }
+
+      // Inicia polling de status usando o empresa_id retornado (ou CNPJ como fallback)
+      const idParaPolling = response.empresa_id || empresaId;
+      this.iniciarPollingStatus(execucao, idParaPolling);
 
     } catch (error: any) {
       execucao.status = 'falhou';
@@ -121,12 +143,98 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       execucao.mensagem = 'Erro na execução';
       execucao.erro = error.error?.detail || error.message || 'Erro desconhecido';
       execucao.dataFim = new Date();
+      
+      // Continua para próxima execução após um delay
+      setTimeout(() => {
+        this.executarSequencialmente(index + 1);
+      }, 1000);
+    }
+  }
+
+  private iniciarPollingStatus(execucao: ExecucaoStatus, empresaId: string) {
+    // Limpa intervalo anterior se existir
+    if (this.intervalosStatus.has(execucao.id)) {
+      clearInterval(this.intervalosStatus.get(execucao.id));
     }
 
-    // Aguarda um pouco antes de executar o próximo
-    setTimeout(() => {
-      this.executarSequencialmente(index + 1);
-    }, 1000);
+    let tentativasErro404 = 0;
+    const maxTentativas404 = 3; // Para após 3 tentativas de 404 consecutivas
+
+    // Polling a cada 2 segundos
+    const intervalo = setInterval(async () => {
+      try {
+        const status = await firstValueFrom(
+          this.execucaoService.obterStatusExecucao(empresaId)
+        );
+
+        // Reset contador de 404 se conseguir obter status
+        tentativasErro404 = 0;
+
+        // Atualiza execução
+        execucao.status = status.status as any;
+        execucao.progresso = status.progresso;
+        execucao.mensagem = status.mensagem;
+        execucao.logs = status.logs || [];
+        execucao.etapa_atual = status.etapa_atual;
+        execucao.urlAtual = status.url_atual;
+        execucao.titulo = status.titulo;
+        execucao.erro = status.erro;
+
+        if (status.data_inicio) {
+          execucao.dataInicio = new Date(status.data_inicio);
+        }
+        if (status.data_fim) {
+          execucao.dataFim = new Date(status.data_fim);
+        }
+
+        // Se concluído ou falhou, para o polling e continua para próxima
+        if (status.status === 'concluido' || status.status === 'falhou') {
+          clearInterval(intervalo);
+          this.intervalosStatus.delete(execucao.id);
+          
+          // Continua para próxima execução
+          const index = this.execucoes.findIndex(e => e.id === execucao.id);
+          if (index >= 0 && index < this.execucoes.length - 1) {
+            setTimeout(() => {
+              this.executarSequencialmente(index + 1);
+            }, 1000);
+          } else {
+            this.executando = false;
+          }
+        }
+      } catch (error: any) {
+        console.error('Erro ao obter status:', error);
+        
+        // Se for erro 404 (execução não encontrada), incrementa contador
+        if (error.status === 404 || error.statusCode === 404) {
+          tentativasErro404++;
+          
+          if (tentativasErro404 >= maxTentativas404) {
+            // Para o polling após várias tentativas de 404
+            clearInterval(intervalo);
+            this.intervalosStatus.delete(execucao.id);
+            
+            execucao.status = 'falhou';
+            execucao.mensagem = 'Execução não encontrada no servidor. Verifique se foi iniciada corretamente.';
+            execucao.erro = error.error?.detail || 'Execução não encontrada';
+            execucao.dataFim = new Date();
+            
+            // Continua para próxima execução
+            const index = this.execucoes.findIndex(e => e.id === execucao.id);
+            if (index >= 0 && index < this.execucoes.length - 1) {
+              setTimeout(() => {
+                this.executarSequencialmente(index + 1);
+              }, 1000);
+            } else {
+              this.executando = false;
+            }
+          }
+        }
+        // Para outros erros, continua tentando (mas com limite de tempo)
+      }
+    }, 2000);
+
+    this.intervalosStatus.set(execucao.id, intervalo);
   }
 
   private processarLogsEmTempoReal(execucao: ExecucaoStatus, logs: string[]): Promise<void> {
@@ -156,6 +264,12 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   executarCertificado(certificado: Certificado) {
     if (this.executando) {
       alert('Já existe uma execução em andamento.');
+      return;
+    }
+
+    // Valida competência
+    if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
+      alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
       return;
     }
 

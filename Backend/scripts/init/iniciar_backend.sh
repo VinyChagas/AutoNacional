@@ -1,7 +1,8 @@
 #!/bin/bash
 # Script para iniciar o backend com a chave Fernet correta
 
-cd "$(dirname "$0")"
+# Navega para o diretório raiz do backend (dois níveis acima deste script)
+cd "$(dirname "$0")/../.."
 
 # Ativa o ambiente virtual
 if [ -f .venv/bin/activate ]; then

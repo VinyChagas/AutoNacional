@@ -6,8 +6,10 @@ import { throwError } from 'rxjs';
 
 export interface ExecucaoStatus {
   id: string;
+  empresa_id?: string;
   cnpj: string;
   status: 'pendente' | 'em_execucao' | 'concluido' | 'falhou';
+  etapa_atual?: string;
   progresso: number; // 0-100
   logs: string[];
   mensagem: string;
@@ -28,6 +30,21 @@ export interface NFSeResponse {
   logs: string[];
 }
 
+export interface ExecucaoStatusResponse {
+  empresa_id: string;
+  cnpj: string;
+  status: string;
+  etapa_atual: string;
+  progresso: number;
+  logs: string[];
+  mensagem: string;
+  data_inicio?: string;
+  data_fim?: string;
+  erro?: string;
+  url_atual?: string;
+  titulo?: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -43,6 +60,34 @@ export class ExecucaoService {
     ).pipe(
       catchError((error) => {
         console.error('Erro ao executar NFSe:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  executarEmpresa(
+    empresaId: string,
+    competencia: string,
+    tipo: string = 'ambas',
+    headless: boolean = false
+  ): Observable<ExecucaoStatusResponse> {
+    return this.http.post<ExecucaoStatusResponse>(
+      `${this.baseUrl}/execucao/${empresaId}?competencia=${competencia}&tipo=${tipo}&headless=${headless}`,
+      {}
+    ).pipe(
+      catchError((error) => {
+        console.error('Erro ao executar empresa:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  obterStatusExecucao(empresaId: string): Observable<ExecucaoStatusResponse> {
+    return this.http.get<ExecucaoStatusResponse>(
+      `${this.baseUrl}/execucao/${empresaId}/status`
+    ).pipe(
+      catchError((error) => {
+        console.error('Erro ao obter status da execução:', error);
         return throwError(() => error);
       })
     );

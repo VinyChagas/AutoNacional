@@ -1,7 +1,8 @@
 #!/bin/bash
 # Script para executar o login com certificado digital usando Playwright
 
-cd "$(dirname "$0")"
+# Navega para o diretório raiz do backend (dois níveis acima deste script)
+cd "$(dirname "$0")/../.."
 
 # Ativa o ambiente virtual
 if [ -f .venv/bin/activate ]; then
@@ -57,5 +58,5 @@ else
 fi
 
 echo ""
-python3 src/executar_login_nfse.py "$DEFAULT_CNPJ"
+python3 scripts/automation/executar_login_nfse.py "$DEFAULT_CNPJ"
 

@@ -1,0 +1,4 @@
+"""
+Scripts auxiliares do backend.
+"""
+

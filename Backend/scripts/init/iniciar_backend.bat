@@ -3,7 +3,8 @@ REM Script para iniciar o backend com a chave Fernet correta (Windows)
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
-cd /d "%~dp0"
+REM Navega para o diretório raiz do backend (dois níveis acima deste script)
+cd /d "%~dp0\..\.."
 
 REM Verifica se o ambiente virtual existe
 if not exist .venv\Scripts\python.exe (

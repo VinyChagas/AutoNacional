@@ -106,18 +106,36 @@ def carregar_certificado(cnpj: str):
     """
     Lê e descriptografa o certificado e a senha para uso na automação.
     """
-    file_path = os.path.join(BASE_DIR, f"{cnpj}.pfx.enc")
-    pwd_path = os.path.join(BASE_DIR, f"{cnpj}.pwd.enc")
+    if not cnpj:
+        raise ValueError("CNPJ não pode ser None ou vazio")
+    
+    cnpj_str = str(cnpj).strip()
+    if not cnpj_str:
+        raise ValueError(f"CNPJ inválido: {cnpj}")
+    
+    file_path = os.path.join(BASE_DIR, f"{cnpj_str}.pfx.enc")
+    pwd_path = os.path.join(BASE_DIR, f"{cnpj_str}.pwd.enc")
 
     if not os.path.exists(file_path) or not os.path.exists(pwd_path):
-        raise FileNotFoundError("Certificado ou senha não encontrados para este CNPJ")
+        raise FileNotFoundError(f"Certificado ou senha não encontrados para CNPJ: {cnpj_str}")
 
-    with open(file_path, "rb") as f:
-        encrypted_pfx = f.read()
-    with open(pwd_path, "rb") as f:
-        encrypted_pwd = f.read()
+    try:
+        with open(file_path, "rb") as f:
+            encrypted_pfx = f.read()
+        with open(pwd_path, "rb") as f:
+            encrypted_pwd = f.read()
 
-    conteudo_pfx = fernet.decrypt(encrypted_pfx)
-    senha = fernet.decrypt(encrypted_pwd).decode()
+        conteudo_pfx = fernet.decrypt(encrypted_pfx)
+        senha_bytes = fernet.decrypt(encrypted_pwd)
+        
+        if senha_bytes is None:
+            raise ValueError(f"Senha descriptografada está None para CNPJ: {cnpj_str}")
+        
+        senha = senha_bytes.decode('utf-8')
+        
+        if not senha:
+            raise ValueError(f"Senha descriptografada está vazia para CNPJ: {cnpj_str}")
 
-    return conteudo_pfx, senha
+        return conteudo_pfx, senha
+    except Exception as e:
+        raise Exception(f"Erro ao carregar certificado para CNPJ {cnpj_str}: {str(e)}")

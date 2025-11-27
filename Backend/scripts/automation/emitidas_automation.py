@@ -4,7 +4,8 @@ def acessar_notas_recebidas(page):
         menu = page.locator("li:nth-of-type(4) img")
         # Clique com offset relativo informado
         menu.click(position={"x": 8.24, "y": 26.77})
-        page.wait_for_selector("table tbody tr", timeout=10000)
+        # Reduzido timeout de 10000ms para 8000ms - otimização
+        page.wait_for_selector("table tbody tr", timeout=8000)
         logging.info("Entrou em Notas Recebidas")
     except Exception as e:
         logging.error(f"Erro ao acessar Notas Recebidas: {e}")
@@ -28,9 +29,9 @@ def processar_tabela_recebidas(page, competencia, context):
                 try:
                     # Baixar XML
                     abrir_menu_acao_linha(page, linha)
-                    page.wait_for_timeout(200)
+                    # Removido wait_for_timeout fixo - abrir_menu_acao_linha já aguarda o menu
                     menu = linha.locator('.menu-suspenso-tabela')
-                    menu.wait_for(state='visible', timeout=5000)
+                    menu.wait_for(state='visible', timeout=3000)  # Reduzido de 5000ms para 3000ms
                     with page.expect_download() as download_info:
                         link_xml = menu.locator('a:has-text("XML")').first
                         link_xml.wait_for(state='visible', timeout=2000)
@@ -38,12 +39,12 @@ def processar_tabela_recebidas(page, competencia, context):
                     download = download_info.value
                     salvar_arquivo(download, competencia, empresa, "recebidas", f"{numero_nota}.xml")
 
-                    # Baixar PDF (DANFS-e) - robusto
+                    # Baixar PDF (DANFS-e) - robusto e otimizado
                     for tentativa in range(2):
                         abrir_menu_acao_linha(page, linha)
-                        page.wait_for_timeout(200)
+                        # Removido wait_for_timeout fixo - abrir_menu_acao_linha já aguarda o menu
                         menu = linha.locator('.menu-suspenso-tabela')
-                        menu.wait_for(state='visible', timeout=5000)
+                        menu.wait_for(state='visible', timeout=3000)  # Reduzido de 5000ms para 3000ms
                         link_pdf = menu.locator('a:has-text("DANFS-e")').first
                         if link_pdf.is_visible():
                             try:
@@ -56,7 +57,8 @@ def processar_tabela_recebidas(page, competencia, context):
                                 logging.error(f"Erro ao clicar no link DANFS-e da linha {i+1} (Recebidas): {e}")
                         else:
                             logging.warning(f"Link DANFS-e não visível na linha {i+1} (Recebidas), tentativa {tentativa+1}")
-                            page.wait_for_timeout(300)
+                            # Reduzido de 300ms para 200ms - otimização
+                            page.wait_for_timeout(200)
                     else:
                         logging.error(f"Não foi possível baixar o DANFS-e da linha {i+1} (Recebidas): link não ficou visível após 2 tentativas.")
                 except Exception as e:
@@ -96,7 +98,9 @@ def acessar_notas_emitidas(page):
     try:
         menu = page.locator("li:nth-of-type(3) img")
         menu.click()
-        page.wait_for_selector("table tbody tr", timeout=10000)
+        # Reduzido timeout de 10000ms para 8000ms - otimização
+        # A tabela geralmente carrega rapidamente
+        page.wait_for_selector("table tbody tr", timeout=8000)
         logging.info("Entrou em Notas Emitidas")
     except Exception as e:
         logging.error(f"Erro ao acessar Notas Emitidas: {e}")
@@ -107,7 +111,9 @@ def ordenar_por_competencia(page):
     try:
         th = page.locator("th.td-competencia")
         th.click()
-        page.wait_for_timeout(1000)
+        # Aguarda ordenação completar - reduzido de 1000ms para 500ms (otimização)
+        # A ordenação geralmente é instantânea, então 500ms é suficiente
+        page.wait_for_timeout(500)
     except Exception as e:
         logging.error(f"Erro ao ordenar por competência: {e}")
         raise
@@ -116,7 +122,15 @@ def abrir_menu_acao_linha(page, linha):
     try:
         acao = linha.locator("a:has(i)")
         acao.click()
-        page.wait_for_timeout(300)
+        # Aguarda menu aparecer de forma condicional ao invés de fixo
+        # Reduzido de 300ms para espera condicional - otimização de tempo
+        try:
+            # Tenta aguardar o menu aparecer (mais rápido se aparecer antes)
+            menu = linha.locator('.menu-suspenso-tabela')
+            menu.wait_for(state='visible', timeout=500)
+        except:
+            # Fallback: pequeno delay se necessário
+            page.wait_for_timeout(100)
     except Exception as e:
         logging.error(f"Erro ao abrir menu de ações: {e}")
         raise
@@ -143,7 +157,8 @@ def abrir_em_nova_aba(context, url):
 def navegar_proxima_pagina(page):
     try:
         page.locator("li:nth-of-type(8) i").click()
-        page.wait_for_selector("table tbody tr", timeout=10000)
+        # Reduzido timeout de 10000ms para 8000ms - otimização
+        page.wait_for_selector("table tbody tr", timeout=8000)
         logging.info("Navegou para próxima página")
     except Exception as e:
         logging.error(f"Erro ao navegar para próxima página: {e}")
@@ -167,9 +182,9 @@ def processar_tabela_emitidas(page, competencia, context):
                 try:
                     # Baixar XML
                     abrir_menu_acao_linha(page, linha)
-                    page.wait_for_timeout(200)
+                    # Removido wait_for_timeout fixo - abrir_menu_acao_linha já aguarda o menu
                     menu = linha.locator('.menu-suspenso-tabela')
-                    menu.wait_for(state='visible', timeout=5000)
+                    menu.wait_for(state='visible', timeout=3000)  # Reduzido de 5000ms para 3000ms
                     with page.expect_download() as download_info:
                         link_xml = menu.locator('a:has-text("XML")').first
                         link_xml.wait_for(state='visible', timeout=2000)
@@ -177,12 +192,12 @@ def processar_tabela_emitidas(page, competencia, context):
                     download = download_info.value
                     salvar_arquivo(download, competencia, empresa, "emitidas", f"{numero_nota}.xml")
 
-                    # Baixar PDF (DANFS-e) - robusto
+                    # Baixar PDF (DANFS-e) - robusto e otimizado
                     for tentativa in range(2):
                         abrir_menu_acao_linha(page, linha)
-                        page.wait_for_timeout(200)
+                        # Removido wait_for_timeout fixo - abrir_menu_acao_linha já aguarda o menu
                         menu = linha.locator('.menu-suspenso-tabela')
-                        menu.wait_for(state='visible', timeout=5000)
+                        menu.wait_for(state='visible', timeout=3000)  # Reduzido de 5000ms para 3000ms
                         link_pdf = menu.locator('a:has-text("DANFS-e")').first
                         if link_pdf.is_visible():
                             try:
@@ -195,7 +210,8 @@ def processar_tabela_emitidas(page, competencia, context):
                                 logging.error(f"Erro ao clicar no link DANFS-e da linha {i+1}: {e}")
                         else:
                             logging.warning(f"Link DANFS-e não visível na linha {i+1}, tentativa {tentativa+1}")
-                            page.wait_for_timeout(300)
+                            # Reduzido de 300ms para 200ms - otimização
+                            page.wait_for_timeout(200)
                     else:
                         logging.error(f"Não foi possível baixar o DANFS-e da linha {i+1}: link não ficou visível após 2 tentativas.")
                 except Exception as e:
