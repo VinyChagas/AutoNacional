@@ -1,0 +1,157 @@
+// Estilos específicos para o componente de Configurações
+
+// Animação suave para campos de input
+input[type="number"],
+input[type="text"],
+select {
+  transition: all 0.2s ease;
+
+  &:focus {
+    transform: translateY(-1px);
+  }
+}
+
+// Estilo para toggle switches customizados
+input[type="checkbox"]:checked + div {
+  box-shadow: 0 0 10px rgba(139, 203, 112, 0.4);
+}
+
+// Estilo para mensagens de erro
+.text-red-500 {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// Estilo para mensagem de feedback
+[class*="bg-green-100"],
+[class*="bg-red-100"] {
+  animation: slideDown 0.3s ease;
+  border-left: 4px solid;
+}
+
+[class*="bg-green-100"] {
+  border-left-color: #8BCB70;
+}
+
+[class*="bg-red-100"] {
+  border-left-color: #dc2626;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// Estilo para botões desabilitados
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  
+  &:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+}
+
+// Estilo para campos com erro
+input.border-red-500,
+select.border-red-500 {
+  animation: shake 0.3s ease;
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+// Melhorias visuais para os cards
+.card-futuristic {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
+// Estilo para labels
+label {
+  transition: color 0.2s ease;
+  
+  &:hover {
+    color: #0C0D0A;
+  }
+}
+
+// Estilo para o spinner de loading
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// Estilo para botões de seleção de pasta
+button[title="Selecionar pasta"] {
+  min-width: 48px;
+  transition: all 0.2s ease;
+
+  &:hover {
+    transform: scale(1.02);
+    box-shadow: 0 2px 8px rgba(139, 203, 112, 0.3);
+    background-color: rgba(139, 203, 112, 0.4) !important;
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
+
+  svg {
+    transition: transform 0.2s ease;
+  }
+
+  &:hover svg {
+    transform: rotate(5deg);
+  }
+}
+
+// Responsividade adicional
+@media (max-width: 768px) {
+  .grid.md\:grid-cols-2 {
+    grid-template-columns: 1fr;
+  }
+
+  button[title="Selecionar pasta"] {
+    min-width: 44px;
+    padding: 0.5rem;
+  }
+}
+

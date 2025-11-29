@@ -157,6 +157,8 @@ export class LayoutComponent {
           this.currentRoute = 'certificados';
         } else if (url.includes('/execucao')) {
           this.currentRoute = 'execucao';
+        } else if (url.includes('/configuracoes')) {
+          this.currentRoute = 'configuracoes';
         }
       });
   }

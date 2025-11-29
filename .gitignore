@@ -1,11 +1,18 @@
 # Python
 Backend/.venv/
 Backend/__pycache__/
+Backend/**/__pycache__/
 Backend/*.pyc
 Backend/*.pyo
 Backend/*.egg-info/
 Backend/.pytest_cache/
 Backend/*.log
+
+# Database files (SQLite) - Criados automaticamente
+Backend/db/*.db
+Backend/db/*.db-journal
+Backend/db/*.db-wal
+Backend/db/*.db-shm
 
 # Node / Angular
 Frontend/node_modules/
@@ -28,28 +35,13 @@ Thumbs.db
 .env
 .env.local
 
+# Certificados e arquivos sensíveis
 CERTIFICADO e-CNPJ/
-
-<<<<<<< Updated upstream
-Backend/certificados_armazenados/
-
-Backend/src/routers/__pycache__/__init__.cpython-313.pyc
-
-Backend/src/routers/__pycache__/nfse.cpython-313.pyc
-=======
-Backend/src/routers/__pycache__/__init__.cpython-313.pyc
-
-Backend/src/routers/__pycache__/nfse.cpython-313.pyc
-
-Backend/00000000000011.pfx.enc
-
-Backend/00000000000011.pwd.enc
-
-Backend/certificados_armazenados/00000000000011.pfx.enc
-
-Backend/certificados_armazenados/00000000000011.pwd.enc
-
-Backend/src/__pycache__/playwright_nfse.cpython-313.pyc
->>>>>>> Stashed changes
-
 CERTIFICADO e-CNPJ.zip
+certificados digitais/
+certificados digitais.zip
+Backend/certificados_armazenados/
+Backend/*.pfx.enc
+Backend/*.pwd.enc
+
+Backend/src/db/

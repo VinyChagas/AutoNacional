@@ -9,6 +9,9 @@ python-dotenv>=1.0.0
 # Banco de Dados (opcional - se usar PostgreSQL)
 psycopg[binary]>=3.2.0
 
+# ORM SQLAlchemy para persistência local de certificados
+sqlalchemy>=2.0.0
+
 # Segurança e Autenticação
 python-jose[cryptography]>=3.3.0
 

@@ -32,6 +32,15 @@ from src.infrastructure.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Inicializa banco de dados SQLite para certificados
+try:
+    from src.db.session import init_db
+    init_db()
+    logger.info("✅ Banco de dados de certificados inicializado")
+except Exception as e:
+    logger.warning(f"⚠️  Erro ao inicializar banco de dados de certificados: {e}")
+    logger.warning("   A aplicação continuará, mas funcionalidades de persistência podem não funcionar")
+
 # Cria a aplicação FastAPI
 app = FastAPI(
     title="AutoNacional Certificados API",
@@ -143,6 +152,9 @@ try:
     from src.routers.certificado import router as certificado_router
     logger.info("✅ Router Certificado importado")
     
+    from src.routers.settings import router as settings_router
+    logger.info("✅ Router Settings importado")
+    
     # Registra routers
     logger.info("🔄 Registrando routers na aplicação...")
     app.include_router(nfse_router)
@@ -150,6 +162,7 @@ try:
     app.include_router(empresas_router)
     app.include_router(credenciais_router)
     app.include_router(certificado_router)
+    app.include_router(settings_router)
     
     # Lista todas as rotas registradas para debug
     logger.info("📋 Rotas registradas na aplicação:")

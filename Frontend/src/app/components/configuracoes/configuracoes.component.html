@@ -1,0 +1,425 @@
+<div class="w-full py-12 px-4">
+  <div class="max-w-6xl mx-auto">
+    <!-- Header -->
+    <div class="text-center mb-12">
+      <h1 class="text-5xl md:text-6xl font-bold mb-4 text-[#0C0D0A]">
+        Configurações da Automação
+      </h1>
+      <p class="text-lg md:text-xl text-[#1E2615] font-light tracking-wide max-w-2xl mx-auto">
+        Parâmetros globais para controlar o comportamento da automação
+      </p>
+      <div class="mt-6 h-0.5 w-24 mx-auto bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div *ngIf="loading" class="flex justify-center items-center py-20">
+      <div class="relative">
+        <div class="w-16 h-16 border-4 border-[#8BCB70]/30 border-t-[#8BCB70] rounded-full animate-spin"></div>
+      </div>
+    </div>
+
+    <!-- Form -->
+    <form [formGroup]="settingsForm" *ngIf="!loading" (ngSubmit)="saveSettings()">
+      <div class="grid md:grid-cols-2 gap-8 mb-8">
+        <!-- Card 1: Execução Geral -->
+        <div class="card-futuristic rounded-2xl p-8">
+          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
+            <div class="w-2 h-2 bg-[#8BCB70] rounded-full mr-3"></div>
+            Execução Geral
+          </h2>
+          
+          <div class="space-y-6">
+            <!-- Headless Toggle -->
+            <div class="flex items-center justify-between">
+              <label class="text-[#1E2615] font-medium">Modo Headless</label>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" formControlName="headless" class="sr-only peer">
+                <div class="w-11 h-6 bg-[#1E2615]/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#8BCB70]"></div>
+              </label>
+            </div>
+
+            <!-- Company Timeout -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Timeout por Empresa (segundos)
+              </label>
+              <input
+                type="number"
+                formControlName="companyTimeoutSeconds"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('companyTimeoutSeconds')"
+              />
+              <p *ngIf="isFieldInvalid('companyTimeoutSeconds')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('companyTimeoutSeconds') }}
+              </p>
+            </div>
+
+            <!-- Max Retries -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Máximo de Tentativas por Etapa
+              </label>
+              <input
+                type="number"
+                formControlName="maxRetriesPerStep"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('maxRetriesPerStep')"
+              />
+              <p *ngIf="isFieldInvalid('maxRetriesPerStep')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('maxRetriesPerStep') }}
+              </p>
+            </div>
+
+            <!-- Min Action Delay -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Delay Mínimo entre Ações (ms)
+              </label>
+              <input
+                type="number"
+                formControlName="minActionDelayMs"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('minActionDelayMs')"
+              />
+              <p *ngIf="isFieldInvalid('minActionDelayMs')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('minActionDelayMs') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 2: Navegadores / Concorrência -->
+        <div class="card-futuristic rounded-2xl p-8">
+          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
+            <div class="w-2 h-2 bg-[#7EBFB3] rounded-full mr-3"></div>
+            Navegadores / Concorrência
+          </h2>
+          
+          <div class="space-y-6">
+            <!-- Max Concurrent Browsers -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Máximo de Navegadores Concorrentes
+              </label>
+              <input
+                type="number"
+                formControlName="maxConcurrentBrowsers"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('maxConcurrentBrowsers')"
+              />
+              <p *ngIf="isFieldInvalid('maxConcurrentBrowsers')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('maxConcurrentBrowsers') }}
+              </p>
+            </div>
+
+            <!-- Default Concurrent Browsers -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Navegadores Concorrentes Padrão
+              </label>
+              <input
+                type="number"
+                formControlName="defaultConcurrentBrowsers"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('defaultConcurrentBrowsers')"
+              />
+              <p *ngIf="isFieldInvalid('defaultConcurrentBrowsers')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('defaultConcurrentBrowsers') }}
+              </p>
+            </div>
+
+            <!-- Browser Launch Delay -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Delay entre Lançamentos (ms)
+              </label>
+              <input
+                type="number"
+                formControlName="browserLaunchDelayMs"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('browserLaunchDelayMs')"
+              />
+              <p *ngIf="isFieldInvalid('browserLaunchDelayMs')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('browserLaunchDelayMs') }}
+              </p>
+            </div>
+
+            <!-- Viewport Preset -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Preset de Viewport
+              </label>
+              <select
+                formControlName="viewportPreset"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+              >
+                <option value="HD">HD (1280x720)</option>
+                <option value="FULLHD">Full HD (1920x1080)</option>
+                <option value="QHD">QHD (2560x1440)</option>
+                <option value="CUSTOM">Personalizado</option>
+              </select>
+            </div>
+
+            <!-- Custom Viewport (condicional) -->
+            <div *ngIf="viewportPreset === 'CUSTOM'" class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-[#1E2615] font-medium mb-2">
+                  Largura (px)
+                </label>
+                <input
+                  type="number"
+                  formControlName="viewportWidth"
+                  class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                  [class.border-red-500]="isFieldInvalid('viewportWidth')"
+                />
+                <p *ngIf="isFieldInvalid('viewportWidth')" class="text-red-500 text-sm mt-1">
+                  {{ getFieldError('viewportWidth') }}
+                </p>
+              </div>
+              <div>
+                <label class="block text-[#1E2615] font-medium mb-2">
+                  Altura (px)
+                </label>
+                <input
+                  type="number"
+                  formControlName="viewportHeight"
+                  class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                  [class.border-red-500]="isFieldInvalid('viewportHeight')"
+                />
+                <p *ngIf="isFieldInvalid('viewportHeight')" class="text-red-500 text-sm mt-1">
+                  {{ getFieldError('viewportHeight') }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 3: Diretórios -->
+        <div class="card-futuristic rounded-2xl p-8">
+          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
+            <div class="w-2 h-2 bg-[#A9D9D4] rounded-full mr-3"></div>
+            Diretórios
+          </h2>
+          
+          <div class="space-y-6">
+            <!-- Downloads Base Path -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Caminho Base de Downloads
+              </label>
+              <div class="flex gap-0">
+                <input
+                  type="text"
+                  formControlName="downloadsBasePath"
+                  class="flex-1 px-4 py-2 rounded-l-lg rounded-r-none border border-r-0 border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                  [class.border-red-500]="isFieldInvalid('downloadsBasePath')"
+                />
+                <button
+                  type="button"
+                  (click)="selectDirectory('downloadsBasePath')"
+                  class="px-4 py-2 rounded-r-lg rounded-l-none border border-l-0 border-[#1E2615]/30 bg-[#8BCB70]/20 hover:bg-[#8BCB70]/30 text-[#0C0D0A] font-medium transition-all flex items-center justify-center"
+                  title="Selecionar pasta"
+                  [class.border-red-500]="isFieldInvalid('downloadsBasePath')"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                  </svg>
+                </button>
+              </div>
+              <p *ngIf="isFieldInvalid('downloadsBasePath')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('downloadsBasePath') }}
+              </p>
+            </div>
+
+            <!-- Downloads Pattern -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Padrão de Downloads
+              </label>
+              <input
+                type="text"
+                formControlName="downloadsPattern"
+                placeholder='Ex: "{cnpj}/{ano}/{mes}"'
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('downloadsPattern')"
+              />
+              <p *ngIf="isFieldInvalid('downloadsPattern')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('downloadsPattern') }}
+              </p>
+            </div>
+
+            <!-- Logs Path -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Caminho de Logs
+              </label>
+              <div class="flex gap-0">
+                <input
+                  type="text"
+                  formControlName="logsPath"
+                  class="flex-1 px-4 py-2 rounded-l-lg rounded-r-none border border-r-0 border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                  [class.border-red-500]="isFieldInvalid('logsPath')"
+                />
+                <button
+                  type="button"
+                  (click)="selectDirectory('logsPath')"
+                  class="px-4 py-2 rounded-r-lg rounded-l-none border border-l-0 border-[#1E2615]/30 bg-[#8BCB70]/20 hover:bg-[#8BCB70]/30 text-[#0C0D0A] font-medium transition-all flex items-center justify-center"
+                  title="Selecionar pasta"
+                  [class.border-red-500]="isFieldInvalid('logsPath')"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                  </svg>
+                </button>
+              </div>
+              <p *ngIf="isFieldInvalid('logsPath')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('logsPath') }}
+              </p>
+            </div>
+
+            <!-- Temp Path -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Caminho Temporário
+              </label>
+              <div class="flex gap-0">
+                <input
+                  type="text"
+                  formControlName="tempPath"
+                  class="flex-1 px-4 py-2 rounded-l-lg rounded-r-none border border-r-0 border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                  [class.border-red-500]="isFieldInvalid('tempPath')"
+                />
+                <button
+                  type="button"
+                  (click)="selectDirectory('tempPath')"
+                  class="px-4 py-2 rounded-r-lg rounded-l-none border border-l-0 border-[#1E2615]/30 bg-[#8BCB70]/20 hover:bg-[#8BCB70]/30 text-[#0C0D0A] font-medium transition-all flex items-center justify-center"
+                  title="Selecionar pasta"
+                  [class.border-red-500]="isFieldInvalid('tempPath')"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                  </svg>
+                </button>
+              </div>
+              <p *ngIf="isFieldInvalid('tempPath')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('tempPath') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 4: Logs & Relatórios -->
+        <div class="card-futuristic rounded-2xl p-8">
+          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
+            <div class="w-2 h-2 bg-[#8BCB70] rounded-full mr-3"></div>
+            Logs & Relatórios
+          </h2>
+          
+          <div class="space-y-6">
+            <!-- Log Level -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Nível de Log
+              </label>
+              <select
+                formControlName="logLevel"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+              >
+                <option value="ERROR">ERROR</option>
+                <option value="WARN">WARN</option>
+                <option value="INFO">INFO</option>
+                <option value="DEBUG">DEBUG</option>
+              </select>
+            </div>
+
+            <!-- Save Error Screenshots Toggle -->
+            <div class="flex items-center justify-between">
+              <label class="text-[#1E2615] font-medium">Salvar Screenshots de Erros</label>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" formControlName="saveErrorScreenshots" class="sr-only peer">
+                <div class="w-11 h-6 bg-[#1E2615]/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#8BCB70]"></div>
+              </label>
+            </div>
+
+            <!-- Generate PDF Report Toggle -->
+            <div class="flex items-center justify-between">
+              <label class="text-[#1E2615] font-medium">Gerar Relatório PDF</label>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" formControlName="generatePdfReport" class="sr-only peer">
+                <div class="w-11 h-6 bg-[#1E2615]/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#8BCB70]"></div>
+              </label>
+            </div>
+
+            <!-- Log Retention Days -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Retenção de Logs (dias)
+              </label>
+              <input
+                type="number"
+                formControlName="logRetentionDays"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('logRetentionDays')"
+              />
+              <p *ngIf="isFieldInvalid('logRetentionDays')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('logRetentionDays') }}
+              </p>
+            </div>
+
+            <!-- Max Errors in Panel -->
+            <div>
+              <label class="block text-[#1E2615] font-medium mb-2">
+                Máximo de Erros no Painel
+              </label>
+              <input
+                type="number"
+                formControlName="maxErrorsInPanel"
+                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
+                [class.border-red-500]="isFieldInvalid('maxErrorsInPanel')"
+              />
+              <p *ngIf="isFieldInvalid('maxErrorsInPanel')" class="text-red-500 text-sm mt-1">
+                {{ getFieldError('maxErrorsInPanel') }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mensagem de Feedback -->
+      <div *ngIf="saveMessage" class="mb-6 p-4 rounded-lg" 
+           [class.bg-green-100]="saveMessage.type === 'success'"
+           [class.bg-red-100]="saveMessage.type === 'error'"
+           [class.text-green-800]="saveMessage.type === 'success'"
+           [class.text-red-800]="saveMessage.type === 'error'">
+        {{ saveMessage.text }}
+      </div>
+
+      <!-- Botões de Ação -->
+      <div class="flex justify-center gap-4">
+        <button
+          type="button"
+          (click)="reloadDefaults()"
+          class="px-8 py-3 rounded-lg border-2 border-[#1E2615]/30 text-[#1E2615] font-semibold hover:bg-[#1E2615]/5 transition-all"
+          [disabled]="loading || saving"
+        >
+          Recarregar Padrões
+        </button>
+        <button
+          type="submit"
+          class="btn-futuristic px-8 py-3 rounded-lg font-semibold"
+          [disabled]="loading || saving || settingsForm.invalid"
+        >
+          <span *ngIf="!saving">Salvar</span>
+          <span *ngIf="saving" class="flex items-center">
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Salvando...
+          </span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
