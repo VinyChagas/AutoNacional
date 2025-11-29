@@ -92,13 +92,13 @@ def obter_status_execucao(empresa_id: str) -> ExecucaoStatusResponse:
         )
 
 
-@router.post("/{empresa_id}", response_model=ExecucaoStatusResponse, summary="Iniciar execução para uma empresa")
+@router.post("/{empresa_id}", summary="Iniciar execução para uma empresa")
 def iniciar_execucao(
     empresa_id: str,
     competencia: str = Query(..., description="Competência no formato MMAAAA (ex: 112025)"),
     tipo: str = Query("ambas", description="Tipo de notas: 'emitidas', 'recebidas' ou 'ambas'"),
     headless: bool = Query(False, description="Executar navegador em modo headless")
-) -> ExecucaoStatusResponse:
+):
     """
     Inicia uma execução orquestrada do fluxo completo de automação NFSe para uma empresa.
     
