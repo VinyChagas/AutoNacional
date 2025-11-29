@@ -6,21 +6,24 @@ setlocal enabledelayedexpansion
 REM Navega para o diretório raiz do backend (dois níveis acima deste script)
 cd /d "%~dp0\..\.."
 
-REM Ativa o ambiente virtual
-if exist .venv\Scripts\activate.bat (
-    call .venv\Scripts\activate.bat
-    echo [OK] Ambiente virtual ativado (.venv)
+REM Verifica se o ambiente virtual existe e usa o Python diretamente
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_CMD=.venv\Scripts\python.exe"
+    echo [OK] Ambiente virtual encontrado (.venv)
+    goto :env_check
 ) else (
-    echo [AVISO] Ambiente virtual nao encontrado em .venv\Scripts\activate.bat
+    echo [ERRO] Ambiente virtual nao encontrado em .venv\Scripts\
     echo         Certifique-se de que o ambiente virtual esta criado
+    echo         Execute: python -m venv .venv
     exit /b 1
 )
 
-REM Carrega a chave do .env se existir
-if exist .env (
-    REM Carrega todas as variáveis do .env (ignorando linhas comentadas)
-    for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
-        set "%%a=%%b"
+:env_check
+REM Carrega a chave do .env se existir usando PowerShell para lidar com BOM
+if exist ".env" (
+    REM Usa PowerShell para ler o arquivo .env e definir a variável (lida melhor com BOM)
+    for /f "delims=" %%i in ('powershell -Command "$content = Get-Content '.env' -Raw; if ($content -match 'FERNET_KEY=(.+)') { $matches[1] }"') do (
+        set "FERNET_KEY=%%i"
     )
     echo [OK] Chave FERNET_KEY carregada do .env
 ) else (
@@ -45,4 +48,4 @@ echo.
 
 REM Inicia o uvicorn usando Python do ambiente virtual
 REM A variável FERNET_KEY será herdada pelo processo Python
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+"!PYTHON_CMD!" -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
