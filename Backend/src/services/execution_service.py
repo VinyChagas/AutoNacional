@@ -10,9 +10,12 @@ Este service gerencia a fila de execuções e coordena os scripts de automação
 import os
 import sys
 import threading
+import asyncio
 from typing import Dict, Optional
 from datetime import datetime
 from queue import Queue, Empty
+from concurrent.futures import ThreadPoolExecutor
+import functools
 
 # Adiciona src e scripts/automation ao path para imports funcionarem ANTES de importar outros módulos
 backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -53,6 +56,9 @@ class ExecutionService:
         self.thread_executora: Optional[threading.Thread] = None
         self.rodando = False
         self.lock = threading.Lock()
+        # Executor separado para código síncrono do Playwright
+        # Isso garante que não há interferência do loop asyncio
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="playwright-exec")
     
     def adicionar_execucao(
         self,
@@ -113,12 +119,16 @@ class ExecutionService:
             # Inicia thread executora se não estiver rodando
             if not self.rodando:
                 self.rodando = True
+                # Cria uma nova thread sem contexto asyncio
+                # Isso garante que o Playwright Sync API não detecte o loop asyncio do FastAPI
                 self.thread_executora = threading.Thread(
-                    target=self._processar_fila,
-                    daemon=True
+                    target=self._processar_fila_isolada,
+                    daemon=True,
+                    name="PlaywrightExecutor"
                 )
+                # Garante que a thread não herda contexto asyncio
                 self.thread_executora.start()
-                logger.info("Thread executora iniciada")
+                logger.info("Thread executora iniciada (contexto isolado)")
             
             return empresa_id
     
@@ -152,9 +162,30 @@ class ExecutionService:
                 "titulo": str(execucao.titulo) if execucao.titulo else None,
             }
     
-    def _processar_fila(self):
-        """Processa a fila de execuções sequencialmente."""
-        logger.info("Iniciando processamento da fila de execuções")
+    def _processar_fila_isolada(self):
+        """
+        Processa a fila de execuções sequencialmente em um contexto isolado.
+        
+        Esta função garante que o código seja executado em um contexto completamente
+        isolado do loop asyncio do FastAPI, permitindo o uso do Playwright Sync API.
+        """
+        # Força a remoção de qualquer contexto asyncio da thread atual
+        # Isso é crítico para o Playwright Sync API funcionar
+        try:
+            # Tenta remover o loop atual
+            try:
+                loop = asyncio.get_event_loop()
+                if loop and loop.is_running():
+                    logger.warning("Loop asyncio rodando detectado. Tentando isolar contexto.")
+            except RuntimeError:
+                pass
+            
+            # Remove completamente o loop da thread atual
+            asyncio.set_event_loop(None)
+        except Exception as e:
+            logger.debug(f"Erro ao remover loop asyncio (pode ser normal): {e}")
+        
+        logger.info("Iniciando processamento da fila de execuções em contexto isolado")
         
         while True:
             try:
@@ -163,7 +194,7 @@ class ExecutionService:
                 execucao = self.fila_execucoes.get(timeout=QUEUE_TIMEOUT)
                 logger.info(f"Execução obtida da fila: Empresa {execucao.empresa_id}")
                 
-                # Processa a execução
+                # Processa a execução diretamente (já estamos em thread isolada)
                 logger.info(f"Iniciando processamento da execução para empresa {execucao.empresa_id}")
                 self._executar_fluxo_completo(execucao)
                 logger.info(f"Execução concluída para empresa {execucao.empresa_id}")
@@ -215,12 +246,28 @@ class ExecutionService:
             self._adicionar_log(execucao, f"Etapa 1: Autenticação para CNPJ {cnpj_str}")
             
             # Importa funções do playwright apenas quando necessário
+            # IMPORTANTE: Garante que não há contexto asyncio ativo antes de importar
             try:
+                # Tenta remover qualquer loop asyncio da thread atual
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Se há um loop rodando, isso é um problema
+                        # Mas não podemos fazer nada aqui, apenas logar
+                        logger.warning("Loop asyncio detectado antes de importar Playwright")
+                except RuntimeError:
+                    # Não há loop, tudo bem
+                    pass
+                
+                # Tenta importar o Playwright
                 from playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
                 self._adicionar_log(execucao, "Funções do Playwright importadas")
             except Exception as e:
                 error_msg = f"Erro ao importar Playwright: {str(e)}"
                 self._adicionar_log(execucao, f"❌ {error_msg}")
+                # Se o erro for relacionado a asyncio, tenta uma solução alternativa
+                if "asyncio" in str(e).lower() or "async" in str(e).lower():
+                    error_msg += " (Conflito com loop asyncio detectado. A thread executora deve estar isolada.)"
                 raise ImportError(error_msg)
             
             self._adicionar_log(execucao, "Chamando abrir_dashboard_nfse...")
@@ -265,55 +312,87 @@ class ExecutionService:
             if not execucao.page:
                 raise Exception("Página do navegador não foi criada corretamente")
             
-            # ETAPA 2: Processamento de Notas Emitidas
-            if execucao.tipo in ["emitidas", "ambas"]:
-                execucao.etapa_atual = EtapaExecucao.PROCESSAMENTO_EMITIDAS
-                execucao.progresso = 40
-                execucao.mensagem = "Processando notas emitidas..."
-                self._adicionar_log(execucao, "Etapa 2: Processando notas emitidas")
-                
-                # Importa funções de automação apenas quando necessário
-                from emitidas_automation import executar_fluxo_emitidas
-                
-                try:
-                    executar_fluxo_emitidas(
+            # ETAPA 2 e 3: Processamento de Notas (Emitidas e Recebidas)
+            # Usa a nova função processar_notas que processa ambas automaticamente
+            execucao.etapa_atual = EtapaExecucao.PROCESSAMENTO_EMITIDAS if execucao.tipo in ["emitidas", "ambas"] else EtapaExecucao.PROCESSAMENTO_RECEBIDAS
+            execucao.progresso = 40
+            execucao.mensagem = f"Processando notas ({execucao.tipo})..."
+            self._adicionar_log(execucao, f"Etapa 2-3: Processando notas ({execucao.tipo})")
+            
+            # Converte competência de MMAAAA para MM/AAAA
+            competencia_formatada = None
+            try:
+                if len(execucao.competencia) == 6 and execucao.competencia.isdigit():
+                    # Formato MMAAAA -> MM/AAAA
+                    mes = execucao.competencia[:2]
+                    ano = execucao.competencia[2:]
+                    competencia_formatada = f"{mes}/{ano}"
+                    self._adicionar_log(execucao, f"Competência convertida: {execucao.competencia} -> {competencia_formatada}")
+                else:
+                    # Se já estiver no formato MM/AAAA, usa diretamente
+                    competencia_formatada = execucao.competencia
+                    self._adicionar_log(execucao, f"Competência já no formato correto: {competencia_formatada}")
+            except Exception as e:
+                error_msg = f"Erro ao converter competência: {str(e)}"
+                self._adicionar_log(execucao, f"❌ {error_msg}")
+                raise ValueError(error_msg)
+            
+            # Importa função de processamento de notas
+            try:
+                from processar_notas_competencia_sync import processar_notas
+                self._adicionar_log(execucao, "Função processar_notas importada")
+            except Exception as e:
+                error_msg = f"Erro ao importar processar_notas: {str(e)}"
+                self._adicionar_log(execucao, f"❌ {error_msg}")
+                raise ImportError(error_msg)
+            
+            try:
+                # Processa notas emitidas e recebidas conforme o tipo
+                if execucao.tipo == "ambas":
+                    # A função processar_notas já processa ambas automaticamente
+                    processar_notas(
                         page=execucao.page,
-                        competencia=execucao.competencia,
-                        context=execucao.context
+                        competencia_alvo=competencia_formatada
                     )
-                    execucao.progresso = execucao.tipo == "ambas" and 70 or 90
+                    execucao.progresso = 90
+                    execucao.mensagem = "Notas emitidas e recebidas processadas com sucesso"
+                    self._adicionar_log(execucao, "✅ Notas emitidas e recebidas processadas")
+                elif execucao.tipo == "emitidas":
+                    # Processa apenas emitidas
+                    from processar_notas_competencia_sync import processar_tabela_emitidas
+                    # Acessa menu de emitidas
+                    menu_emitidas = execucao.page.locator("li:nth-of-type(3) img").first
+                    menu_emitidas.wait_for(state="visible", timeout=10000)
+                    menu_emitidas.click()
+                    execucao.page.wait_for_url("**/Notas/Emitidas", timeout=15000)
+                    execucao.page.wait_for_load_state("networkidle", timeout=15000)
+                    execucao.page.wait_for_selector("table tbody tr", timeout=10000)
+                    # Processa tabela
+                    processar_tabela_emitidas(execucao.page, competencia_formatada)
+                    execucao.progresso = 90
                     execucao.mensagem = "Notas emitidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas emitidas processadas")
-                except Exception as e:
-                    error_msg = f"Erro ao processar notas emitidas: {str(e)}"
-                    self._adicionar_log(execucao, f"❌ {error_msg}")
-                    logger.error(error_msg, exc_info=True)
-                    # Continua mesmo com erro em uma etapa
-            
-            # ETAPA 3: Processamento de Notas Recebidas
-            if execucao.tipo in ["recebidas", "ambas"]:
-                execucao.etapa_atual = EtapaExecucao.PROCESSAMENTO_RECEBIDAS
-                execucao.progresso = execucao.tipo == "ambas" and 70 or 40
-                execucao.mensagem = "Processando notas recebidas..."
-                self._adicionar_log(execucao, "Etapa 3: Processando notas recebidas")
-                
-                # Importa funções de automação apenas quando necessário
-                from emitidas_automation import executar_fluxo_recebidas
-                
-                try:
-                    executar_fluxo_recebidas(
-                        page=execucao.page,
-                        competencia=execucao.competencia,
-                        context=execucao.context
-                    )
+                elif execucao.tipo == "recebidas":
+                    # Processa apenas recebidas
+                    from processar_notas_competencia_sync import processar_tabela_recebidas
+                    # Acessa menu de recebidas
+                    menu_recebidas = execucao.page.locator("li:nth-of-type(4) img").first
+                    menu_recebidas.wait_for(state="visible", timeout=10000)
+                    menu_recebidas.click()
+                    execucao.page.wait_for_url("**/Notas/Recebidas", timeout=15000)
+                    execucao.page.wait_for_load_state("networkidle", timeout=15000)
+                    execucao.page.wait_for_selector("table tbody tr", timeout=10000)
+                    # Processa tabela
+                    processar_tabela_recebidas(execucao.page, competencia_formatada)
                     execucao.progresso = 90
                     execucao.mensagem = "Notas recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas recebidas processadas")
-                except Exception as e:
-                    error_msg = f"Erro ao processar notas recebidas: {str(e)}"
-                    self._adicionar_log(execucao, f"❌ {error_msg}")
-                    logger.error(error_msg, exc_info=True)
-                    # Continua mesmo com erro em uma etapa
+                    
+            except Exception as e:
+                error_msg = f"Erro ao processar notas: {str(e)}"
+                self._adicionar_log(execucao, f"❌ {error_msg}")
+                logger.error(error_msg, exc_info=True)
+                raise
             
             # ETAPA 4: Finalização
             execucao.etapa_atual = EtapaExecucao.FINALIZACAO
