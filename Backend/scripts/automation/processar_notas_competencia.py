@@ -6,10 +6,16 @@ competência específica, fazendo download de XML e DANFS-e (PDF) para notas vá
 """
 
 import logging
-import re
 from pathlib import Path
 from typing import Optional
-from playwright.async_api import Page, Download, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+
+# Importa o módulo de gerenciamento de downloads
+from .download_manager import (
+    set_downloads_base_path as set_base_path,
+    get_download_base_path,
+    salvar_download_direto
+)
 
 # Configuração de logging
 logging.basicConfig(
@@ -18,109 +24,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Variável global para armazenar o caminho base de downloads
-# Pode ser configurada externamente antes de chamar processar_notas
-_downloads_base_path: Optional[str] = None
-
 
 def set_downloads_base_path(path: str) -> None:
     """
     Define o caminho base para downloads.
     
+    Esta função é um wrapper que configura o caminho base no módulo download_manager.
+    
     Args:
         path: Caminho base para downloads
     """
-    global _downloads_base_path
-    _downloads_base_path = path
+    set_base_path(path)
 
 
-def get_download_base_path() -> Path:
-    """
-    Obtém o caminho base para downloads.
-    
-    Tenta usar o caminho configurado via set_downloads_base_path,
-    caso contrário usa o padrão './downloads'.
-    
-    Returns:
-        Path do diretório base de downloads
-    """
-    if _downloads_base_path:
-        return Path(_downloads_base_path)
-    return Path("./downloads")
-
-
-def formatar_competencia_para_pasta(competencia: str) -> str:
-    """
-    Formata a competência para uso como nome de pasta.
-    
-    Args:
-        competencia: Competência no formato "MM/AAAA" (ex: "10/2025")
-        
-    Returns:
-        Competência formatada para pasta (ex: "10-2025")
-    """
-    return competencia.replace("/", "-")
-
-
-def sanitizar_nome_pasta(nome: str) -> str:
-    """
-    Sanitiza o nome para uso como nome de pasta, removendo caracteres inválidos.
-    
-    Args:
-        nome: Nome da empresa
-        
-    Returns:
-        Nome sanitizado, sem caracteres problemáticos
-    """
-    nome = nome.strip()
-    # Remove caracteres que não são letras, números, espaços, underscore ou hífen
-    nome = re.sub(r"[^\w\s\-]", "", nome)
-    # Remove espaços múltiplos e substitui por espaço único
-    nome = re.sub(r"\s+", " ", nome)
-    return nome
-
-
-def montar_diretorio_download(competencia: str, nome_empresa: str, tipo_nota: str) -> Path:
-    """
-    Monta o diretório de download seguindo a hierarquia:
-    <downloads_base_path>/<competencia>/<nome_empresa>/<tipo_nota>/
-    
-    Cria o diretório se não existir.
-    
-    Args:
-        competencia: Competência no formato "MM/AAAA" (ex: "10/2025")
-        nome_empresa: Nome da empresa (será sanitizado)
-        tipo_nota: "Emitidas" ou "Recebidas"
-        
-    Returns:
-        Path do diretório de destino
-    """
-    base = get_download_base_path()
-    comp_folder = formatar_competencia_para_pasta(competencia)
-    empresa_folder = sanitizar_nome_pasta(nome_empresa)
-    destino = base / comp_folder / empresa_folder / tipo_nota
-    
-    # Cria o diretório e todos os pais se necessário
-    destino.mkdir(parents=True, exist_ok=True)
-    
-    return destino
-
-
-async def salvar_download(download: Download, destino_dir: Path) -> Path:
-    """
-    Salva um arquivo baixado no diretório de destino.
-    
-    Args:
-        download: Objeto Download do Playwright
-        destino_dir: Diretório de destino
-        
-    Returns:
-        Path do arquivo salvo
-    """
-    suggested_name = download.suggested_filename
-    destino_arquivo = destino_dir / suggested_name
-    await download.save_as(destino_arquivo)
-    return destino_arquivo
+# Nota: A função salvar_download foi movida para download_manager.py
+# Use salvar_download_direto() do módulo download_manager para salvar downloads
 
 
 async def verificar_nota_valida(row_locator) -> bool:
@@ -180,6 +98,9 @@ async def baixar_arquivos_da_linha(
     """
     Baixa XML e DANFS-e (PDF) de uma linha da tabela.
     
+    Esta função usa o módulo download_manager para interceptar, identificar
+    e salvar os downloads corretamente na estrutura de pastas configurada.
+    
     Args:
         page: Página do Playwright
         row_locator: Locator da linha da tabela
@@ -188,17 +109,38 @@ async def baixar_arquivos_da_linha(
         tipo_nota: "Emitidas" ou "Recebidas"
     """
     try:
+        # Obtém o caminho base configurado
+        base_path = get_download_base_path()
+        
         # Determina a coluna de ações baseado no tipo
         # Emitidas: coluna 7 (índice 6), Recebidas: coluna 6 (índice 5)
         tipo_interno = tipo_nota.lower().replace("s", "")  # "Emitidas" -> "emitida", "Recebidas" -> "recebida"
         coluna_acoes_idx = 6 if tipo_interno == "emitida" else 5
         
-        # Monta o diretório de destino
-        dest_dir = montar_diretorio_download(competencia_alvo, nome_empresa, tipo_nota)
-        logger.info(f"Diretório de destino: {dest_dir}")
+        # Extrai informações da linha para criar nomes de arquivo melhores
+        celulas = row_locator.locator("td")
+        
+        # Tenta extrair número da nota ou data de emissão da linha
+        numero_nota = None
+        try:
+            # Tenta várias colunas comuns onde pode estar o número da nota
+            for idx in [0, 1, 2, 3]:
+                try:
+                    texto_celula = await celulas.nth(idx).inner_text()
+                    texto_celula = texto_celula.strip()
+                    # Se contém números que parecem número de nota
+                    if texto_celula and any(c.isdigit() for c in texto_celula):
+                        numero_nota = texto_celula.replace("/", "-").replace("\\", "-").replace(" ", "_")
+                        # Limita tamanho do nome
+                        if len(numero_nota) > 50:
+                            numero_nota = numero_nota[:50]
+                        break
+                except:
+                    continue
+        except Exception as e:
+            logger.warning(f"Não foi possível extrair número da nota: {e}")
         
         # Clica no ícone de ações da nota
-        celulas = row_locator.locator("td")
         coluna_acoes = celulas.nth(coluna_acoes_idx)
         icone_acoes = coluna_acoes.locator("div a i, a i").first
         
@@ -210,12 +152,15 @@ async def baixar_arquivos_da_linha(
         menu_suspenso = row_locator.locator('.menu-suspenso-tabela')
         await menu_suspenso.wait_for(state='visible', timeout=3000)
         
-        # Baixa XML
+        # ============================================================
+        # BAIXA XML
+        # ============================================================
         try:
             logger.info(f"Baixando XML da nota {tipo_nota}...")
+            
+            # Intercepta o download
             async with page.expect_download() as download_info:
-                # Usa seletores baseados em texto/aria ao invés de IDs fixos
-                # Tenta primeiro pelo role, depois por texto
+                # Encontra o link de download XML
                 link_xml = None
                 try:
                     link_xml = page.get_by_role("link", name="Download XML").first
@@ -229,12 +174,23 @@ async def baixar_arquivos_da_linha(
                 await link_xml.click()
             
             download = await download_info.value
-            # Salva no diretório correto usando a função auxiliar
-            arquivo_xml = await salvar_download(download, dest_dir)
-            logger.info(f"✅ XML baixado: {download.suggested_filename} em {arquivo_xml}")
+            
+            # Usa o módulo download_manager para salvar corretamente
+            prefixo_nome = f"{numero_nota}_" if numero_nota else None
+            arquivo_xml = await salvar_download_direto(
+                download=download,
+                base_path=base_path,
+                competencia=competencia_alvo,
+                empresa=nome_empresa,
+                tipo_nota=tipo_nota,
+                nome_arquivo_prefixo=prefixo_nome
+            )
+            logger.info(f"✅ XML baixado e salvo em: {arquivo_xml}")
             
         except Exception as e:
             logger.error(f"Erro ao baixar XML: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
         
         # Fecha o menu e reabre para baixar o PDF
         await icone_acoes.click()  # Fecha o menu
@@ -244,11 +200,15 @@ async def baixar_arquivos_da_linha(
         await icone_acoes.click()
         await menu_suspenso.wait_for(state='visible', timeout=3000)
         
-        # Baixa DANFS-e (PDF)
+        # ============================================================
+        # BAIXA DANFS-e (PDF)
+        # ============================================================
         try:
             logger.info(f"Baixando DANFS-e (PDF) da nota {tipo_nota}...")
+            
+            # Intercepta o download
             async with page.expect_download() as download_info:
-                # Usa seletores baseados em texto/aria
+                # Encontra o link de download DANFS-e
                 link_danfse = None
                 try:
                     link_danfse = page.get_by_role("link", name="Download DANFS-e").first
@@ -262,12 +222,23 @@ async def baixar_arquivos_da_linha(
                 await link_danfse.click()
             
             download = await download_info.value
-            # Salva no diretório correto usando a função auxiliar
-            arquivo_pdf = await salvar_download(download, dest_dir)
-            logger.info(f"✅ DANFS-e baixado: {download.suggested_filename} em {arquivo_pdf}")
+            
+            # Usa o módulo download_manager para salvar corretamente
+            prefixo_nome = f"{numero_nota}_" if numero_nota else None
+            arquivo_pdf = await salvar_download_direto(
+                download=download,
+                base_path=base_path,
+                competencia=competencia_alvo,
+                empresa=nome_empresa,
+                tipo_nota=tipo_nota,
+                nome_arquivo_prefixo=prefixo_nome
+            )
+            logger.info(f"✅ DANFS-e baixado e salvo em: {arquivo_pdf}")
             
         except Exception as e:
             logger.error(f"Erro ao baixar DANFS-e: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
         
         # Fecha o menu novamente
         await icone_acoes.click()
@@ -275,6 +246,8 @@ async def baixar_arquivos_da_linha(
         
     except Exception as e:
         logger.error(f"Erro ao baixar arquivos da linha: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
 
 
 async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: str) -> None:

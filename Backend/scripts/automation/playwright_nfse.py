@@ -95,6 +95,8 @@ class NFSeAutenticacaoError(Exception):
     pass
 
 
+
+
 def criar_contexto_com_certificado(
     cnpj: str,
     headless: bool = True,
@@ -140,7 +142,6 @@ def criar_contexto_com_certificado(
         raise NFSeAutenticacaoError(error_msg)
     
     try:
-        # Inicia o Playwright
         logger.info("🚀 Iniciando Playwright...")
         playwright = sync_playwright().start()
         
@@ -148,6 +149,19 @@ def criar_contexto_com_certificado(
         logger.info("🌐 Lançando Chromium...")
         browser = playwright.chromium.launch(
             headless=headless,
+            args=[
+                # Desabilita avisos de segurança de download
+                "--disable-features=DownloadBubble,DownloadBubbleV2",
+                "--disable-features=SafeBrowsing",
+                "--safebrowsing-disable-auto-update",
+                "--safebrowsing-disable-download-protection",
+                # Permite downloads automáticos sem confirmação
+                "--disable-web-security",
+                "--allow-running-insecure-content",
+                # Desabilita notificações de download perigoso
+                "--disable-notifications",
+                "--disable-infobars",
+            ]
         )
         
         # Cria um contexto com certificado cliente configurado
@@ -164,6 +178,10 @@ def criar_contexto_com_certificado(
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
+            # Permite downloads automáticos sem validação de segurança
+            accept_downloads=True,
+            # Configura pasta de download padrão
+            # Os arquivos serão movidos para o destino correto após o download
             # Configuração de certificado cliente (suportado desde Playwright 1.46+)
             # O certificado será usado automaticamente para requisições HTTPS
             # ao domínio especificado, sem exibir popup de seleção

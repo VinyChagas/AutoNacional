@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .infrastructure.config import CORS_ORIGINS
+from .infrastructure.logger import get_logger
 from routers import empresas, credenciais, nfse, execucao
+
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="AutoNacional API",
@@ -28,6 +31,7 @@ app.include_router(empresas.router)
 app.include_router(credenciais.router)
 app.include_router(nfse.router)
 app.include_router(execucao.router)
+
 
 @app.get("/", tags=["Health"])
 def health():

@@ -337,6 +337,29 @@ class ExecutionService:
                 self._adicionar_log(execucao, f"❌ {error_msg}")
                 raise ValueError(error_msg)
             
+            # Configura caminho base de downloads antes de processar notas
+            try:
+                from ..db.session import get_db
+                from ..db.crud_settings import obter_configuracoes
+                from processar_notas_competencia_sync import set_downloads_base_path
+                
+                # Obtém configurações do banco de dados
+                db = next(get_db())
+                configuracoes = obter_configuracoes(db)
+                
+                if configuracoes and configuracoes.downloads_base_path:
+                    # Configura o caminho base usando o valor da tela de configurações
+                    set_downloads_base_path(configuracoes.downloads_base_path)
+                    self._adicionar_log(execucao, f"📁 Caminho de downloads configurado: {configuracoes.downloads_base_path}")
+                else:
+                    self._adicionar_log(execucao, "📁 Usando pasta Downloads padrão do sistema")
+                
+                db.close()
+            except Exception as e:
+                # Se não conseguir obter configurações, usa padrão (não é erro crítico)
+                logger.warning(f"Não foi possível obter configurações de downloads: {e}. Usando padrão.")
+                self._adicionar_log(execucao, "📁 Usando pasta Downloads padrão do sistema (configuração não encontrada)")
+            
             # Importa função de processamento de notas
             try:
                 from processar_notas_competencia_sync import processar_notas
@@ -346,13 +369,70 @@ class ExecutionService:
                 self._adicionar_log(execucao, f"❌ {error_msg}")
                 raise ImportError(error_msg)
             
+            # Obtém nome da empresa do certificado para usar na estrutura de pastas
+            nome_empresa = None
+            try:
+                from ..db.session import get_db
+                from ..db.crud_certificado import obter_certificado_por_cnpj
+                from ..services.certificate_service import get_certificate_service
+                
+                db = next(get_db())
+                certificado = obter_certificado_por_cnpj(db, cnpj_str)
+                
+                # Tenta obter nome da empresa do banco
+                if certificado and certificado.empresa and certificado.empresa.strip():
+                    nome_empresa = certificado.empresa.strip()
+                    self._adicionar_log(execucao, f"📋 Nome da empresa obtido do banco: {nome_empresa}")
+                else:
+                    # Se não tem no banco, tenta extrair diretamente do certificado
+                    logger.info(f"Nome da empresa não encontrado no banco. Tentando extrair do certificado...")
+                    try:
+                        cert_service = get_certificate_service()
+                        conteudo_pfx, senha = cert_service.carregar_certificado(cnpj_str)
+                        info_certificado = cert_service.validar_e_extrair_info(conteudo_pfx, senha)
+                        
+                        if info_certificado.empresa and info_certificado.empresa.strip():
+                            nome_empresa = info_certificado.empresa.strip()
+                            self._adicionar_log(execucao, f"📋 Nome da empresa extraído do certificado: {nome_empresa}")
+                            
+                            # Atualiza no banco para próxima vez
+                            if certificado:
+                                certificado.empresa = nome_empresa
+                                db.commit()
+                                logger.info(f"Nome da empresa atualizado no banco: {nome_empresa}")
+                        else:
+                            raise Exception("Nome da empresa não encontrado no certificado")
+                    except Exception as e2:
+                        logger.warning(f"Não foi possível extrair nome da empresa do certificado: {e2}")
+                        # Último recurso: usa CNPJ formatado
+                        nome_empresa = cnpj_str
+                        self._adicionar_log(execucao, f"⚠️ Usando CNPJ como identificador (nome não encontrado): {cnpj_str}")
+                
+                db.close()
+            except Exception as e:
+                # Se não conseguir obter nome, usa CNPJ
+                nome_empresa = cnpj_str
+                logger.warning(f"Não foi possível obter nome da empresa: {e}. Usando CNPJ.")
+                self._adicionar_log(execucao, f"⚠️ Usando CNPJ como identificador (erro ao obter nome): {cnpj_str}")
+            
+            # Garante que nome_empresa não seja None ou vazio
+            if not nome_empresa or not nome_empresa.strip():
+                nome_empresa = cnpj_str
+                logger.warning(f"Nome da empresa está vazio. Usando CNPJ: {cnpj_str}")
+                self._adicionar_log(execucao, f"⚠️ Nome da empresa vazio. Usando CNPJ: {cnpj_str}")
+            
+            # Log final do nome que será usado
+            logger.info(f"🏢 Nome da empresa que será usado para pastas: {nome_empresa}")
+            self._adicionar_log(execucao, f"🏢 Nome da empresa para estrutura de pastas: {nome_empresa}")
+            
             try:
                 # Processa notas emitidas e recebidas conforme o tipo
                 if execucao.tipo == "ambas":
                     # A função processar_notas já processa ambas automaticamente
                     processar_notas(
                         page=execucao.page,
-                        competencia_alvo=competencia_formatada
+                        competencia_alvo=competencia_formatada,
+                        nome_empresa=nome_empresa
                     )
                     execucao.progresso = 90
                     execucao.mensagem = "Notas emitidas e recebidas processadas com sucesso"
@@ -368,7 +448,7 @@ class ExecutionService:
                     execucao.page.wait_for_load_state("networkidle", timeout=15000)
                     execucao.page.wait_for_selector("table tbody tr", timeout=10000)
                     # Processa tabela
-                    processar_tabela_emitidas(execucao.page, competencia_formatada)
+                    processar_tabela_emitidas(execucao.page, competencia_formatada, nome_empresa)
                     execucao.progresso = 90
                     execucao.mensagem = "Notas emitidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas emitidas processadas")
@@ -383,7 +463,7 @@ class ExecutionService:
                     execucao.page.wait_for_load_state("networkidle", timeout=15000)
                     execucao.page.wait_for_selector("table tbody tr", timeout=10000)
                     # Processa tabela
-                    processar_tabela_recebidas(execucao.page, competencia_formatada)
+                    processar_tabela_recebidas(execucao.page, competencia_formatada, nome_empresa)
                     execucao.progresso = 90
                     execucao.mensagem = "Notas recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas recebidas processadas")
