@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CertificadoService, Certificado } from '../../services/certificado.service';
-import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse } from '../../services/execucao.service';
+import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest } from '../../services/execucao.service';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 
 @Component({
@@ -18,7 +18,6 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   execucoes: ExecucaoEmpresa[] = [];
   
   carregandoCertificados = false;
-  executando = false;
   headlessMode = false;
   competencia: string = ''; // Formato MMAAAA (ex: 112025)
   tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
@@ -70,6 +69,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return this.execucoes.filter(e => e.status === 'finalizado');
   }
 
+  // Getter para verificar se há execuções em andamento
+  get temExecucoesEmAndamento(): boolean {
+    return this.execucoes.some(e => e.status === 'executando' || e.status === 'fila');
+  }
+
   // Bloco de 30 CNPJs em foco
   get emFoco(): ExecucaoEmpresa[] {
     const emExecucaoOuFila = this.execucoes.filter(
@@ -99,117 +103,139 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return Math.round((this.empresasFinalizadas / this.totalEmpresas) * 100);
   }
 
-  carregarEmpresasValidadas() {
-    this.carregandoCertificados = true;
-    
-    // Simula um pequeno delay para feedback visual
-    setTimeout(() => {
-      this.certificadosCarregados = [...this.certificadosValidos];
-      this.carregandoCertificados = false;
-    }, 500);
-  }
-
-  executarTodos() {
-    if (this.certificadosCarregados.length === 0) {
-      alert('Por favor, carregue as empresas validadas primeiro.');
+  async carregarEmpresasValidadas() {
+    if (this.certificadosValidos.length === 0) {
+      alert('Nenhum certificado válido encontrado.');
       return;
     }
 
-    if (this.executando) {
-      alert('Já existe uma execução em andamento.');
-      return;
-    }
-
-    // Valida competência
+    // Valida competência antes de carregar
     if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
       alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
       return;
     }
 
-    this.executando = true;
+    this.carregandoCertificados = true;
+    
+    try {
+      // Prepara lista de empresas para adicionar à fila
+      const empresas = this.certificadosValidos
+        .filter(cert => cert.cnpj) // Filtra certificados sem CNPJ
+        .map(cert => {
+          const cnpjLimpo = cert.cnpj.replace(/[^\d]/g, '');
+          if (cnpjLimpo.length !== 14) {
+            console.warn(`CNPJ inválido para certificado: ${cert.cnpj} (limpo: ${cnpjLimpo})`);
+            return null;
+          }
+          return {
+            empresa_id: cnpjLimpo, // Usa CNPJ como ID temporário
+            cnpj: cnpjLimpo // CNPJ limpo
+          };
+        })
+        .filter(emp => emp !== null) as Array<{ empresa_id: string; cnpj: string }>; // Remove nulls
 
-    // Cria execuções na fila para cada certificado
-    this.execucoes = this.certificadosCarregados.map(cert => ({
-      id: `${Date.now()}-${cert.cnpj}`,
-      cnpj: cert.cnpj,
-      nomeEmpresa: cert.nomeArquivo,
-      status: 'fila' as StatusExecucao,
-      progresso: 0,
-      logs: [],
-      mensagem: 'Aguardando execução...',
-      dataInicio: new Date(),
-      mostrarLogs: false
-    }));
+      if (empresas.length === 0) {
+        alert('Nenhuma empresa válida encontrada. Verifique se os certificados têm CNPJ válido.');
+        this.carregandoCertificados = false;
+        return;
+      }
 
-    // Executa cada certificado sequencialmente
-    this.executarSequencialmente(0);
+      const request: MultiplasExecucoesRequest = {
+        empresas: empresas,
+        competencia: this.competencia,
+        tipo: this.tipoNotas,
+        headless: this.headlessMode
+      };
+
+      // Log para debug
+      console.log('Enviando requisição:', JSON.stringify(request, null, 2));
+
+      // Chama backend para adicionar todas à fila
+      const response = await firstValueFrom(
+        this.execucaoService.adicionarMultiplasExecucoes(request)
+      );
+
+      // Atualiza certificados carregados
+      this.certificadosCarregados = [...this.certificadosValidos];
+
+      // Cria um mapa de CNPJ para certificado para facilitar busca
+      const certMap = new Map<string, Certificado>();
+      this.certificadosValidos.forEach(cert => {
+        const cnpjLimpo = cert.cnpj.replace(/[^\d]/g, '');
+        certMap.set(cnpjLimpo, cert);
+      });
+
+      // Cria execuções na fila com os dados retornados do backend
+      // Usa CNPJ como chave para garantir correspondência correta
+      this.execucoes = response.execucoes.map((exec) => {
+        const cnpjLimpo = exec.cnpj || '';
+        const cert = certMap.get(cnpjLimpo);
+        
+        return {
+          id: `${Date.now()}-${exec.empresa_id}-${cnpjLimpo}`,
+          empresa_id: exec.empresa_id,
+          cnpj: cnpjLimpo,
+          nomeEmpresa: cert?.nomeArquivo || cnpjLimpo,
+          status: this.mapearStatusBackendParaFrontend(exec.status),
+          progresso: exec.progresso || 0,
+          logs: exec.logs || [],
+          mensagem: exec.mensagem || 'Aguardando execução...',
+          dataInicio: exec.data_inicio ? new Date(exec.data_inicio) : new Date(),
+          mostrarLogs: false
+        };
+      });
+
+      // Inicia polling para todas as execuções simultaneamente
+      this.execucoes.forEach((execucao) => {
+        const empresaId = execucao.empresa_id || execucao.cnpj;
+        this.iniciarPollingStatus(execucao, empresaId);
+      });
+
+      // Mostra mensagem de sucesso/erro
+      if (response.erros > 0) {
+        console.warn(`${response.erros} empresas falharam ao serem adicionadas à fila:`, response.detalhes_erros);
+        alert(`${response.sucesso} empresas adicionadas à fila. ${response.erros} empresas falharam.`);
+      } else {
+        console.log(`${response.sucesso} empresas adicionadas à fila com sucesso`);
+      }
+
+    } catch (error: any) {
+      console.error('Erro ao carregar empresas:', error);
+      alert(`Erro ao carregar empresas: ${error.error?.detail || error.message || 'Erro desconhecido'}`);
+    } finally {
+      this.carregandoCertificados = false;
+    }
   }
 
-  private async executarSequencialmente(index: number) {
-    if (index >= this.execucoes.length) {
-      this.executando = false;
+  executarTodos() {
+    // Verifica se há empresas carregadas
+    if (this.certificadosCarregados.length === 0) {
+      alert('Por favor, carregue as empresas validadas primeiro.');
       return;
     }
 
-    const execucao = this.execucoes[index];
-    this.atualizarStatusExecucao(execucao.id, {
-      status: 'executando',
-      mensagem: 'Iniciando execução...',
-      progresso: 5
-    });
-
-    try {
-      // Valida competência
-      if (!this.competencia || this.competencia.length !== 6) {
-        throw new Error('Competência inválida. Use o formato MMAAAA (ex: 112025)');
-      }
-
-      // Usa CNPJ como empresa_id (a rota aceita CNPJ também)
-      const empresaId = execucao.cnpj.replace(/[^\d]/g, '');
-
-      // Chama o backend com a nova rota
-      const response = await firstValueFrom(
-        this.execucaoService.executarEmpresa(
-          empresaId,
-          this.competencia,
-          this.tipoNotas,
-          this.headlessMode
-        )
-      );
-
-      // Atualiza execução com dados iniciais
-      this.atualizarStatusExecucao(execucao.id, {
-        empresa_id: response.empresa_id,
-        status: this.mapearStatusBackendParaFrontend(response.status),
-        progresso: response.progresso,
-        mensagem: response.mensagem,
-        logs: response.logs || [],
-        etapa_atual: response.etapa_atual,
-        dataInicio: response.data_inicio ? new Date(response.data_inicio) : new Date(),
-        qtdNotasEmitidas: response.qtd_notas_emitidas || 0,
-        qtdNotasRecebidas: response.qtd_notas_recebidas || 0,
-        resultadoFinal: response.resultado_final as ResultadoFinal | undefined
-      });
-
-      // Inicia polling de status usando o empresa_id retornado (ou CNPJ como fallback)
-      const idParaPolling = response.empresa_id || empresaId;
-      this.iniciarPollingStatus(execucao, idParaPolling);
-
-    } catch (error: any) {
-      this.atualizarStatusExecucao(execucao.id, {
-        status: 'falhou',
-        progresso: 100,
-        mensagem: 'Erro na execução',
-        erro: error.error?.detail || error.message || 'Erro desconhecido',
-        dataFim: new Date()
-      });
-      
-      // Continua para próxima execução após um delay
-      setTimeout(() => {
-        this.executarSequencialmente(index + 1);
-      }, 1000);
+    // Verifica se já há execuções em andamento
+    const executandoOuFila = this.execucoes.filter(
+      e => e.status === 'executando' || e.status === 'fila'
+    );
+    
+    if (executandoOuFila.length > 0) {
+      alert('Já existem execuções em andamento ou na fila. Aguarde a conclusão ou limpe as execuções.');
+      return;
     }
+
+    // Se não há execuções, carrega as empresas (que já adiciona à fila)
+    if (this.execucoes.length === 0) {
+      this.carregarEmpresasValidadas();
+      return;
+    }
+
+    // Se já há execuções na fila, apenas informa que estão sendo processadas
+    alert('As empresas já estão na fila e serão executadas automaticamente conforme o limite de concorrência.');
   }
+
+  // Método removido - não é mais necessário executar sequencialmente
+  // As execuções são adicionadas à fila e processadas simultaneamente pelo backend
 
   private iniciarPollingStatus(execucao: ExecucaoEmpresa, empresaId: string) {
     // Limpa intervalo anterior se existir
@@ -247,24 +273,14 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           dataFim: status.data_fim ? new Date(status.data_fim) : execucao.dataFim
         });
 
-        // Se concluído ou falhou, para o polling e continua para próxima
+        // Se concluído ou falhou, para o polling
         const statusMapeado = this.mapearStatusBackendParaFrontend(status.status);
         if (statusMapeado === 'finalizado' || statusMapeado === 'falhou') {
           clearInterval(intervalo);
           this.intervalosStatus.delete(execucao.id);
-          
-          // Continua para próxima execução
-          const index = this.execucoes.findIndex(e => e.id === execucao.id);
-          if (index >= 0 && index < this.execucoes.length - 1) {
-            setTimeout(() => {
-              this.executarSequencialmente(index + 1);
-            }, 1000);
-          } else {
-            this.executando = false;
-          }
         }
       } catch (error: any) {
-        console.error('Erro ao obter status:', error);
+        console.error(`Erro ao obter status para empresa ${empresaId}:`, error);
         
         // Se for erro 404 (execução não encontrada), incrementa contador
         if (error.status === 404 || error.statusCode === 404) {
@@ -281,16 +297,6 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
               erro: error.error?.detail || 'Execução não encontrada',
               dataFim: new Date()
             });
-            
-            // Continua para próxima execução
-            const index = this.execucoes.findIndex(e => e.id === execucao.id);
-            if (index >= 0 && index < this.execucoes.length - 1) {
-              setTimeout(() => {
-                this.executarSequencialmente(index + 1);
-              }, 1000);
-            } else {
-              this.executando = false;
-            }
           }
         }
       }
@@ -326,39 +332,61 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return mapeamento[statusBackend] || 'fila';
   }
 
-  executarCertificado(certificado: Certificado) {
-    if (this.executando) {
-      alert('Já existe uma execução em andamento.');
-      return;
-    }
-
+  async executarCertificado(certificado: Certificado) {
     // Valida competência
     if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
       alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
       return;
     }
 
-    this.executando = true;
+    try {
+      const empresaId = certificado.cnpj.replace(/[^\d]/g, '');
+      
+      // Chama o backend para adicionar à fila
+      const response = await firstValueFrom(
+        this.execucaoService.executarEmpresa(
+          empresaId,
+          this.competencia,
+          this.tipoNotas,
+          this.headlessMode
+        )
+      );
 
-    // Adiciona à lista de execuções se não existir
-    let execucaoExistente = this.execucoes.find(e => e.cnpj === certificado.cnpj);
-    if (!execucaoExistente) {
-      execucaoExistente = {
-        id: `${Date.now()}-${certificado.cnpj}`,
-        cnpj: certificado.cnpj,
-        nomeEmpresa: certificado.nomeArquivo,
-        status: 'fila',
-        progresso: 0,
-        logs: [],
-        mensagem: 'Aguardando execução...',
-        dataInicio: new Date(),
-        mostrarLogs: false
-      };
-      this.execucoes.push(execucaoExistente);
+      // Adiciona à lista de execuções se não existir
+      let execucaoExistente = this.execucoes.find(e => e.cnpj === certificado.cnpj);
+      if (!execucaoExistente) {
+        execucaoExistente = {
+          id: `${Date.now()}-${certificado.cnpj}`,
+          empresa_id: response.empresa_id,
+          cnpj: certificado.cnpj.replace(/[^\d]/g, ''),
+          nomeEmpresa: certificado.nomeArquivo,
+          status: this.mapearStatusBackendParaFrontend(response.status),
+          progresso: response.progresso,
+          logs: response.logs || [],
+          mensagem: response.mensagem,
+          dataInicio: response.data_inicio ? new Date(response.data_inicio) : new Date(),
+          mostrarLogs: false
+        };
+        this.execucoes.push(execucaoExistente);
+      } else {
+        // Atualiza execução existente
+        this.atualizarStatusExecucao(execucaoExistente.id, {
+          empresa_id: response.empresa_id,
+          status: this.mapearStatusBackendParaFrontend(response.status),
+          progresso: response.progresso,
+          mensagem: response.mensagem,
+          logs: response.logs || []
+        });
+      }
+
+      // Inicia polling
+      const idParaPolling = response.empresa_id || empresaId;
+      this.iniciarPollingStatus(execucaoExistente, idParaPolling);
+
+    } catch (error: any) {
+      console.error('Erro ao executar certificado:', error);
+      alert(`Erro ao executar: ${error.error?.detail || error.message || 'Erro desconhecido'}`);
     }
-
-    const index = this.execucoes.findIndex(e => e.id === execucaoExistente!.id);
-    this.executarSequencialmente(index);
   }
 
   limparExecucoes() {

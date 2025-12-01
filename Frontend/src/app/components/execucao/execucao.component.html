@@ -34,7 +34,7 @@
 
           <button
             (click)="executarTodos()"
-            [disabled]="executando || certificadosCarregados.length === 0"
+            [disabled]="temExecucoesEmAndamento || certificadosCarregados.length === 0"
             class="btn-futuristic px-8 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
           >
             <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">

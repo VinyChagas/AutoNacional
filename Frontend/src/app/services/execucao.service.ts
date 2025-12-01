@@ -77,6 +77,27 @@ export interface ResumoExecucoesResponse {
   }>;
 }
 
+export interface MultiplasExecucoesRequest {
+  empresas: Array<{
+    empresa_id: string;
+    cnpj: string;
+  }>;
+  competencia: string;
+  tipo: string;
+  headless: boolean;
+}
+
+export interface MultiplasExecucoesResponse {
+  sucesso: number;
+  erros: number;
+  execucoes: ExecucaoStatusResponse[];
+  detalhes_erros: Array<{
+    empresa_id: string;
+    cnpj: string;
+    erro: string;
+  }>;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -168,6 +189,20 @@ export class ExecucaoService {
     return this.http.get(url, { responseType: 'blob' }).pipe(
       catchError((error) => {
         console.error('Erro ao baixar CSV de resumo:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  adicionarMultiplasExecucoes(
+    request: MultiplasExecucoesRequest
+  ): Observable<MultiplasExecucoesResponse> {
+    return this.http.post<MultiplasExecucoesResponse>(
+      `${this.baseUrl}/execucao/multiplas`,
+      request
+    ).pipe(
+      catchError((error) => {
+        console.error('Erro ao adicionar múltiplas execuções:', error);
         return throwError(() => error);
       })
     );
