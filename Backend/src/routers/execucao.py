@@ -93,7 +93,7 @@ def obter_status_execucao(empresa_id: str) -> ExecucaoStatusResponse:
 
 
 @router.post("/{empresa_id}", summary="Iniciar execução para uma empresa")
-def iniciar_execucao(
+async def iniciar_execucao(
     empresa_id: str,
     competencia: str = Query(..., description="Competência no formato MMAAAA (ex: 112025)"),
     tipo: str = Query("ambas", description="Tipo de notas: 'emitidas', 'recebidas' ou 'ambas'"),
@@ -198,12 +198,12 @@ def iniciar_execucao(
                 detail="Empresa encontrada mas não possui ID válido"
             )
         
-        # Obtém service e adiciona execução à fila
+        # Obtém service e adiciona execução à fila (AGORA É ASYNC - usa await)
         execution_service = _get_execution_service()
         
         logger.info(f"Iniciando execução: empresa_id_real={empresa_id_real}, cnpj={cnpj_limpo}")
         
-        execucao_id = execution_service.adicionar_execucao(
+        execucao_id = await execution_service.adicionar_execucao(
             empresa_id=str(empresa_id_real),
             cnpj=cnpj_limpo,
             competencia=competencia,

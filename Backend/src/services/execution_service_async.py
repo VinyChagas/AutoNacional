@@ -15,7 +15,7 @@ import sys
 import asyncio
 from typing import Dict, Optional, List
 from datetime import datetime
-from asyncio import Queue
+from asyncio import Queue, Empty
 
 # Adiciona src e scripts/automation ao path para imports funcionarem ANTES de importar outros módulos
 backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,27 +56,14 @@ class ExecutionService:
     
     def __init__(self):
         """Inicializa o service de execução."""
-        # IMPORTANTE: asyncio.Queue() e asyncio.Lock() não podem ser criados no __init__
-        # porque precisam estar dentro de um evento loop. Serão criados na primeira chamada async.
-        self.fila_execucoes: Optional[Queue] = None
+        self.fila_execucoes: Queue = Queue()
         self.execucoes_ativas: Dict[str, ExecucaoInfo] = {}
         self.task_processadora: Optional[asyncio.Task] = None
         self.rodando = False
-        self.lock: Optional[asyncio.Lock] = None
+        self.lock = asyncio.Lock()
         # Semaphore para controlar concorrência de navegadores
         # O limite será configurado dinamicamente baseado no banco de dados
         self.semaphore: Optional[asyncio.Semaphore] = None
-    
-    async def _inicializar_recursos_async(self):
-        """
-        Inicializa recursos assíncronos que precisam estar dentro de um evento loop.
-        
-        Esta função deve ser chamada antes de usar qualquer recurso async.
-        """
-        if self.fila_execucoes is None:
-            self.fila_execucoes = Queue()
-        if self.lock is None:
-            self.lock = asyncio.Lock()
     
     async def _obter_limite_concorrencia(self) -> int:
         """
@@ -144,13 +131,6 @@ class ExecutionService:
         if headless is None:
             headless = PLAYWRIGHT_HEADLESS
         
-        # Inicializa recursos async se necessário
-        await self._inicializar_recursos_async()
-        
-        # Garante que lock está inicializado
-        if self.lock is None:
-            await self._inicializar_recursos_async()
-        
         async with self.lock:
             # Cria informação da execução
             execucao = ExecucaoInfo(
@@ -172,9 +152,7 @@ class ExecutionService:
                 # Isso garante que o sistema continue funcionando mesmo com problemas no banco
                 logger.warning(f"Erro ao criar registro de execução no banco: {e}. Continuando apenas em memória.")
             
-            # Adiciona à fila assíncrona (garante que está inicializada)
-            if self.fila_execucoes is None:
-                await self._inicializar_recursos_async()
+            # Adiciona à fila assíncrona
             await self.fila_execucoes.put(execucao)
             self.execucoes_ativas[empresa_id] = execucao
             
@@ -190,17 +168,8 @@ class ExecutionService:
                     logger.info(f"Semaphore inicializado com limite de {limite} navegadores simultâneos")
                 
                 # Cria task assíncrona para processar a fila
-                # Usa get_event_loop() para garantir que estamos no loop correto
-                try:
-                    loop = asyncio.get_running_loop()
-                    self.task_processadora = loop.create_task(self._processar_fila())
-                    logger.info("Task processadora iniciada (async)")
-                except RuntimeError:
-                    # Se não houver loop rodando, cria um novo
-                    logger.warning("Nenhum loop asyncio rodando. Criando task no próximo loop disponível.")
-                    # Tenta criar quando houver um loop disponível
-                    asyncio.ensure_future(self._processar_fila())
-                    logger.info("Task processadora agendada para execução")
+                self.task_processadora = asyncio.create_task(self._processar_fila())
+                logger.info("Task processadora iniciada (async)")
             
             return empresa_id
     
@@ -243,20 +212,13 @@ class ExecutionService:
         REFATORADO PARA ASYNC: Esta função agora roda em uma task asyncio,
         permitindo execução concorrente controlada via Semaphore.
         """
-        # Garante que recursos async estão inicializados
-        await self._inicializar_recursos_async()
-        
         logger.info("Iniciando processamento da fila de execuções (async)")
         
         while True:
             try:
                 # Pega próxima execução (bloqueia até ter uma)
-                fila_size = self.fila_execucoes.qsize() if self.fila_execucoes else 0
-                logger.info(f"Aguardando próxima execução na fila... (fila tem {fila_size} itens)")
+                logger.info(f"Aguardando próxima execução na fila... (fila tem {self.fila_execucoes.qsize()} itens)")
                 try:
-                    # Garante que fila está inicializada
-                    if self.fila_execucoes is None:
-                        await self._inicializar_recursos_async()
                     execucao = await asyncio.wait_for(
                         self.fila_execucoes.get(),
                         timeout=QUEUE_TIMEOUT
@@ -264,18 +226,13 @@ class ExecutionService:
                 except asyncio.TimeoutError:
                     # Timeout - verifica se deve continuar
                     logger.info(f"Timeout ao aguardar execução ({QUEUE_TIMEOUT}s)")
-                    await self._inicializar_recursos_async()
-                    # Garante que lock está inicializado
-                    if self.lock is None:
-                        await self._inicializar_recursos_async()
                     async with self.lock:
-                        if self.fila_execucoes and self.fila_execucoes.empty():
+                        if self.fila_execucoes.empty():
                             logger.info("Fila vazia. Task processadora pausada.")
                             self.rodando = False
                             break
                         else:
-                            fila_size = self.fila_execucoes.qsize() if self.fila_execucoes else 0
-                            logger.info(f"Fila ainda tem itens ({fila_size}), continuando...")
+                            logger.info(f"Fila ainda tem itens ({self.fila_execucoes.qsize()}), continuando...")
                             continue
                 
                 logger.info(f"Execução obtida da fila: Empresa {execucao.empresa_id}")
@@ -311,9 +268,8 @@ class ExecutionService:
             except Exception as e:
                 logger.error(f"Erro na execução para empresa {execucao.empresa_id}: {str(e)}", exc_info=True)
             finally:
-                # Marca como concluída na fila (se fila estiver inicializada)
-                if self.fila_execucoes is not None:
-                    self.fila_execucoes.task_done()
+                # Marca como concluída na fila
+                self.fila_execucoes.task_done()
     
     async def _executar_fluxo_completo(self, execucao: ExecucaoInfo):
         """

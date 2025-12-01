@@ -6,10 +6,11 @@ no navegador Chromium controlado pelo Playwright, sem exibir popups de seleção
 de certificado.
 
 Características:
-- Usa Playwright para controle completo do navegador
+- Usa Playwright Async API para integração correta com FastAPI e asyncio
 - Autenticação via certificado cliente (client_certificates)
 - Certificado A1 carregado e usado diretamente no contexto do navegador
 - Autenticação automática sem popups de seleção
+- Totalmente assíncrono para permitir execução concorrente
 """
 
 import os
@@ -17,8 +18,8 @@ import sys
 import logging
 from typing import Tuple
 
-from playwright.sync_api import (
-    sync_playwright,
+from playwright.async_api import (
+    async_playwright,
     Browser,
     BrowserContext,
     Page,
@@ -97,7 +98,7 @@ class NFSeAutenticacaoError(Exception):
 
 
 
-def criar_contexto_com_certificado(
+async def criar_contexto_com_certificado(
     cnpj: str,
     headless: bool = True,
     ignore_https_errors: bool = True
@@ -105,9 +106,12 @@ def criar_contexto_com_certificado(
     """
     Cria um contexto do navegador Chromium configurado para usar certificado A1.
     
+    REFATORADO PARA ASYNC: Esta função agora usa async_playwright para integração
+    correta com FastAPI e asyncio, permitindo execução concorrente.
+    
     Esta função:
     1. Carrega o certificado A1 (.pfx) e senha usando cert_storage
-    2. Inicia o Playwright e configura o Chromium para usar o certificado
+    2. Inicia o Playwright Async API e configura o Chromium para usar o certificado
     3. Usa a funcionalidade nativa do Playwright (client_certificates) para
        autenticação via certificado cliente sem popups de seleção
     4. Retorna o playwright, browser e context configurados
@@ -142,12 +146,12 @@ def criar_contexto_com_certificado(
         raise NFSeAutenticacaoError(error_msg)
     
     try:
-        logger.info("🚀 Iniciando Playwright...")
-        playwright = sync_playwright().start()
+        logger.info("🚀 Iniciando Playwright Async API...")
+        playwright = await async_playwright().start()
         
         # Lança o Chromium
         logger.info("🌐 Lançando Chromium...")
-        browser = playwright.chromium.launch(
+        browser = await playwright.chromium.launch(
             headless=headless,
             args=[
                 # Desabilita avisos de segurança de download
@@ -170,7 +174,7 @@ def criar_contexto_com_certificado(
         # Isso permite autenticação via certificado A1 sem popups de seleção
         
         logger.info("🔐 Configurando certificado cliente no contexto do navegador...")
-        context = browser.new_context(
+        context = await browser.new_context(
             ignore_https_errors=ignore_https_errors,
             viewport={"width": 1920, "height": 1080},  # Full HD 1920x1080p
             user_agent=(
@@ -204,7 +208,7 @@ def criar_contexto_com_certificado(
         raise NFSeAutenticacaoError(error_msg)
 
 
-def abrir_dashboard_nfse(
+async def abrir_dashboard_nfse(
     cnpj: str,
     headless: bool = False,
     timeout: int = 30000
@@ -254,7 +258,7 @@ def abrir_dashboard_nfse(
         
         # Cria contexto com certificado
         log("📋 Criando contexto do navegador com certificado A1...")
-        playwright_instance, browser, context = criar_contexto_com_certificado(
+        playwright_instance, browser, context = await criar_contexto_com_certificado(
             cnpj=cnpj,
             headless=headless,
             ignore_https_errors=True
@@ -263,13 +267,13 @@ def abrir_dashboard_nfse(
         
         # Cria uma nova página
         log("📄 Criando nova página...")
-        page = context.new_page()
+        page = await context.new_page()
         
         # Maximiza a janela para fullscreen (1920x1080) quando não estiver em headless
         if not headless:
             try:
                 # Tenta maximizar a janela do navegador
-                page.set_viewport_size({"width": 1920, "height": 1080})
+                await page.set_viewport_size({"width": 1920, "height": 1080})
                 log("✅ Janela configurada para 1920x1080p (Full HD)")
             except Exception as e:
                 log(f"⚠️  Não foi possível maximizar janela: {e}")
@@ -280,16 +284,16 @@ def abrir_dashboard_nfse(
         log(f"🌐 Acessando portal NFSe Nacional: {BASE_URL}")
         # Usa 'domcontentloaded' ao invés de 'networkidle' para ser mais rápido
         # 'networkidle' espera por até 500ms sem requisições de rede, o que pode ser lento
-        page.goto(BASE_URL, wait_until="domcontentloaded", timeout=timeout)
+        await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=timeout)
         log(f"✅ Página carregada: {page.url}")
         
         # Aguarda apenas o necessário para elementos críticos carregarem
         # Reduzido de 2000ms para 500ms - otimização de tempo
-        page.wait_for_timeout(500)
+        await page.wait_for_timeout(500)
         
         # Tenta detectar se estamos na página de login ou já autenticados
         current_url = page.url
-        page_title = page.title()
+        page_title = await page.title()
         
         log(f"📍 URL atual: {current_url}")
         log(f"📝 Título da página: {page_title}")
@@ -316,7 +320,7 @@ def abrir_dashboard_nfse(
         login_element = None
         for selector in login_selectors:
             try:
-                login_element = page.query_selector(selector)
+                login_element = await page.query_selector(selector)
                 if login_element:
                     log(f"🔍 Encontrado elemento de login: {selector}")
                     break
@@ -327,7 +331,7 @@ def abrir_dashboard_nfse(
         dashboard_element = None
         for selector in dashboard_selectors:
             try:
-                dashboard_element = page.query_selector(selector)
+                dashboard_element = await page.query_selector(selector)
                 if dashboard_element:
                     log(f"✅ Encontrado elemento de dashboard: {selector}")
                     break
@@ -339,19 +343,19 @@ def abrir_dashboard_nfse(
             log("🔐 Elemento de login encontrado - tentando autenticar...")
             try:
                 # Clica no botão de certificado
-                login_element.click(timeout=5000)
+                await login_element.click(timeout=5000)
                 log("✅ Clique no botão de certificado realizado")
                 
                 # Aguarda redirecionamento de forma mais eficiente
                 # Reduzido de 3000ms para espera condicional - otimização de tempo
                 try:
                     # Espera por mudança de URL ou elementos do dashboard (mais rápido)
-                    page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
                     # Aguarda um pouco para JavaScript processar
-                    page.wait_for_timeout(500)
+                    await page.wait_for_timeout(500)
                     
                     # Verifica se dashboard apareceu
-                    page.wait_for_selector(
+                    await page.wait_for_selector(
                         'text=Dashboard',
                         timeout=5000,
                         state="visible"
@@ -360,7 +364,7 @@ def abrir_dashboard_nfse(
                 except:
                     # Fallback: aguarda carregamento completo se necessário
                     try:
-                        page.wait_for_load_state("load", timeout=5000)
+                        await page.wait_for_load_state("load", timeout=5000)
                         log("✅ Página carregada completamente")
                     except:
                         pass
@@ -376,7 +380,7 @@ def abrir_dashboard_nfse(
         
         # Verifica URL final
         final_url = page.url
-        final_title = page.title()
+        final_title = await page.title()
         
         log(f"📍 URL final: {final_url}")
         log(f"📝 Título final: {final_title}")
@@ -421,25 +425,25 @@ def abrir_dashboard_nfse(
             # Limpa recursos apenas em modo headless
             if page:
                 try:
-                    page.close()
+                    await page.close()
                 except:
                     pass
             
             if context:
                 try:
-                    context.close()
+                    await context.close()
                 except:
                     pass
             
             if browser:
                 try:
-                    browser.close()
+                    await browser.close()
                 except:
                     pass
             
             if playwright_instance:
                 try:
-                    playwright_instance.stop()
+                    await playwright_instance.stop()
                 except:
                     pass
             

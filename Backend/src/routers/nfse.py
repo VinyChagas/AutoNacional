@@ -51,7 +51,7 @@ class NFSeAbrirResponse(BaseModel):
 
 
 @router.post("/{cnpj}/abrir", response_model=NFSeAbrirResponse, summary="Abrir dashboard NFSe")
-def abrir_dashboard(
+async def abrir_dashboard(
     cnpj: str,
     headless: bool = Query(default=False, description="Executar navegador em modo headless (padrão: False - navegador visível)")
 ) -> NFSeAbrirResponse:
@@ -88,8 +88,8 @@ def abrir_dashboard(
         # Importa funções do playwright apenas quando necessário
         abrir_dashboard_nfse, NFSeAutenticacaoError = _get_playwright_functions()
         
-        # Executa a automação
-        resultado = abrir_dashboard_nfse(
+        # Executa a automação (AGORA É ASYNC - usa await)
+        resultado = await abrir_dashboard_nfse(
             cnpj=cnpj_limpo,
             headless=headless,
             timeout=30000
