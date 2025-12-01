@@ -135,46 +135,148 @@ async def verificar_sem_registros(page: Page) -> bool:
 # Use salvar_download_direto() do módulo download_manager para salvar downloads
 
 
-async def verificar_nota_valida(row_locator) -> bool:
+async def verificar_nota_cancelada(row_locator) -> bool:
     """
-    Verifica se uma nota fiscal é válida baseado no ícone na coluna 6.
+    Verifica se uma nota fiscal está cancelada baseado em dois pontos:
+    1. XPath: /html/body/div[1]/table/tbody/tr[3]/td[5]/img (adaptado para a linha atual)
+    2. Elemento HTML: <img data-toggle="tooltip" src="/EmissorNacional\\img/tb-cancelada.svg" title="" data-original-title="NFS-e Cancelada">
     
     Args:
         row_locator: Locator da linha da tabela
         
     Returns:
-        True se a nota for válida, False caso contrário
+        True se a nota estiver cancelada, False caso contrário
     """
     try:
-        # Tenta encontrar o ícone na coluna 6 (índice 5, pois começa em 0)
-        # Para emitidas: coluna 6, para recebidas: coluna 6 também
+        # Método 1: Verifica pela coluna de status (coluna 5, índice 4 para recebidas, coluna 6, índice 5 para emitidas)
+        # Tenta ambas as colunas possíveis
         celulas = row_locator.locator("td")
-        coluna_status = celulas.nth(5)  # 6ª coluna (índice 5)
         
-        # Procura por imagem na coluna de status
-        img_status = coluna_status.locator("img")
+        # Verifica coluna 5 (índice 4) - comum para recebidas
+        coluna_status_5 = celulas.nth(4)
+        img_status_5 = coluna_status_5.locator("img")
         
-        if await img_status.count() > 0:
-            # Verifica atributos que indicam nota válida
-            alt_text = await img_status.get_attribute("alt")
-            src_text = await img_status.get_attribute("src")
-            class_text = await img_status.get_attribute("class")
-            
-            # Considera válida se não houver indicadores de inválida/cancelada
-            if alt_text:
-                alt_lower = alt_text.lower()
-                if any(palavra in alt_lower for palavra in ["cancelada", "cancel", "inválida", "invalid"]):
-                    return False
-            
+        if await img_status_5.count() > 0:
+            # Verifica atributo src para imagem de cancelada
+            src_text = await img_status_5.get_attribute("src")
             if src_text:
-                src_lower = src_text.lower()
-                if any(palavra in src_lower for palavra in ["cancel", "invalid"]):
-                    return False
+                # Verifica se contém o caminho da imagem de cancelada
+                if "tb-cancelada.svg" in src_text or "cancelada" in src_text.lower():
+                    logger.debug("Nota cancelada detectada via src da imagem na coluna 5")
+                    return True
             
-            # Se não encontrou indicadores negativos, assume válida
-            return True
+            # Verifica atributo data-original-title
+            data_original_title = await img_status_5.get_attribute("data-original-title")
+            if data_original_title:
+                if "cancelada" in data_original_title.lower() or "cancel" in data_original_title.lower():
+                    logger.debug("Nota cancelada detectada via data-original-title na coluna 5")
+                    return True
+            
+            # Verifica atributo title
+            title_text = await img_status_5.get_attribute("title")
+            if title_text:
+                if "cancelada" in title_text.lower() or "cancel" in title_text.lower():
+                    logger.debug("Nota cancelada detectada via title na coluna 5")
+                    return True
         
-        # Se não encontrou imagem, assume válida por padrão
+        # Verifica coluna 6 (índice 5) - comum para emitidas
+        coluna_status_6 = celulas.nth(5)
+        img_status_6 = coluna_status_6.locator("img")
+        
+        if await img_status_6.count() > 0:
+            # Verifica atributo src para imagem de cancelada
+            src_text = await img_status_6.get_attribute("src")
+            if src_text:
+                # Verifica se contém o caminho da imagem de cancelada
+                if "tb-cancelada.svg" in src_text or "cancelada" in src_text.lower():
+                    logger.debug("Nota cancelada detectada via src da imagem na coluna 6")
+                    return True
+            
+            # Verifica atributo data-original-title
+            data_original_title = await img_status_6.get_attribute("data-original-title")
+            if data_original_title:
+                if "cancelada" in data_original_title.lower() or "cancel" in data_original_title.lower():
+                    logger.debug("Nota cancelada detectada via data-original-title na coluna 6")
+                    return True
+            
+            # Verifica atributo title
+            title_text = await img_status_6.get_attribute("title")
+            if title_text:
+                if "cancelada" in title_text.lower() or "cancel" in title_text.lower():
+                    logger.debug("Nota cancelada detectada via title na coluna 6")
+                    return True
+        
+        # Método 2: Tenta encontrar usando XPath adaptado para a linha atual
+        # O XPath original é /html/body/div[1]/table/tbody/tr[3]/td[5]/img
+        # Adaptamos para usar o row_locator e verificar td[5] (índice 4)
+        try:
+            # Tenta encontrar img dentro de td[5] usando XPath relativo
+            img_xpath = row_locator.locator("xpath=./td[5]/img")
+            if await img_xpath.count() > 0:
+                src_xpath = await img_xpath.get_attribute("src")
+                if src_xpath and ("tb-cancelada.svg" in src_xpath or "cancelada" in src_xpath.lower()):
+                    logger.debug("Nota cancelada detectada via XPath td[5]/img")
+                    return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar XPath td[5]/img: {e}")
+        
+        # Não encontrou indicadores de cancelada
+        return False
+        
+    except Exception as e:
+        logger.warning(f"Erro ao verificar se nota está cancelada: {e}. Assumindo não cancelada.")
+        return False
+
+
+async def verificar_nota_valida(row_locator) -> bool:
+    """
+    Verifica se uma nota fiscal é válida (não cancelada) baseado no ícone na coluna de status.
+    
+    Esta função verifica se a nota está cancelada usando verificar_nota_cancelada.
+    Se estiver cancelada, retorna False (nota inválida para download).
+    Se não estiver cancelada, retorna True (nota válida para download).
+    
+    Args:
+        row_locator: Locator da linha da tabela
+        
+    Returns:
+        True se a nota for válida (não cancelada), False caso contrário
+    """
+    try:
+        # Primeiro verifica se está cancelada
+        if await verificar_nota_cancelada(row_locator):
+            logger.info("⚠️  Nota fiscal cancelada detectada. Não será baixada.")
+            return False
+        
+        # Se não está cancelada, verifica outros indicadores de validade
+        # Tenta encontrar o ícone na coluna de status
+        celulas = row_locator.locator("td")
+        
+        # Verifica coluna 5 (índice 4) e coluna 6 (índice 5)
+        for col_idx in [4, 5]:
+            try:
+                coluna_status = celulas.nth(col_idx)
+                img_status = coluna_status.locator("img")
+                
+                if await img_status.count() > 0:
+                    # Verifica atributos que indicam nota inválida (mas não cancelada)
+                    alt_text = await img_status.get_attribute("alt")
+                    src_text = await img_status.get_attribute("src")
+                    
+                    # Considera inválida se houver indicadores de inválida (mas não cancelada, já verificado acima)
+                    if alt_text:
+                        alt_lower = alt_text.lower()
+                        if any(palavra in alt_lower for palavra in ["inválida", "invalid"]) and "cancelada" not in alt_lower:
+                            return False
+                    
+                    if src_text:
+                        src_lower = src_text.lower()
+                        if any(palavra in src_lower for palavra in ["invalid"]) and "cancelada" not in src_lower:
+                            return False
+            except Exception:
+                continue
+        
+        # Se não encontrou indicadores negativos, assume válida
         return True
         
     except Exception as e:

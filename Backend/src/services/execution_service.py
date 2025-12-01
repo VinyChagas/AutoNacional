@@ -178,37 +178,37 @@ class ExecutionService:
                     await self._inicializar_recursos_async()
                 await self.fila_execucoes.put(execucao)
                 self.execucoes_ativas[empresa_id] = execucao
+            
+            logger.info(f"Execução adicionada à fila: Empresa {empresa_id} (CNPJ: {cnpj})")
+            
+            # Inicia task processadora se não estiver rodando
+            if not self.rodando:
+                self.rodando = True
+                # Inicializa semaphore se ainda não foi inicializado
+                if self.semaphore is None:
+                    limite = await self._obter_limite_concorrencia()
+                    self.semaphore = asyncio.Semaphore(limite)
+                    logger.info(f"Semaphore inicializado com limite de {limite} navegadores simultâneos")
                 
-                logger.info(f"Execução adicionada à fila: Empresa {empresa_id} (CNPJ: {cnpj})")
-                
-                # Inicia task processadora se não estiver rodando
-                if not self.rodando:
-                    self.rodando = True
-                    # Inicializa semaphore se ainda não foi inicializado
-                    if self.semaphore is None:
-                        limite = await self._obter_limite_concorrencia()
-                        self.semaphore = asyncio.Semaphore(limite)
-                        logger.info(f"Semaphore inicializado com limite de {limite} navegadores simultâneos")
-                    
-                    # Cria task assíncrona para processar a fila
-                    # IMPORTANTE: Estamos dentro de um endpoint async do FastAPI, então há um loop rodando
+                # Cria task assíncrona para processar a fila
+                # IMPORTANTE: Estamos dentro de um endpoint async do FastAPI, então há um loop rodando
+                try:
+                    loop = asyncio.get_running_loop()
+                    self.task_processadora = loop.create_task(self._processar_fila())
+                    logger.info("Task processadora iniciada (async)")
+                except RuntimeError as e:
+                    # Se não houver loop rodando, isso é um problema
+                    logger.error(f"Erro ao criar task processadora: {e}", exc_info=True)
+                    # Tenta usar ensure_future como fallback
                     try:
-                        loop = asyncio.get_running_loop()
-                        self.task_processadora = loop.create_task(self._processar_fila())
-                        logger.info("Task processadora iniciada (async)")
-                    except RuntimeError as e:
-                        # Se não houver loop rodando, isso é um problema
-                        logger.error(f"Erro ao criar task processadora: {e}", exc_info=True)
-                        # Tenta usar ensure_future como fallback
-                        try:
-                            self.task_processadora = asyncio.ensure_future(self._processar_fila())
-                            logger.info("Task processadora criada via ensure_future")
-                        except Exception as e2:
-                            logger.error(f"Erro ao criar task via ensure_future: {e2}", exc_info=True)
-                            # Se tudo falhar, marca como não rodando mas NÃO levanta exceção
-                            # A execução já foi adicionada à fila, então pode ser processada depois
-                            self.rodando = False
-                            logger.warning("Task processadora não pôde ser criada, mas execução foi adicionada à fila")
+                        self.task_processadora = asyncio.ensure_future(self._processar_fila())
+                        logger.info("Task processadora criada via ensure_future")
+                    except Exception as e2:
+                        logger.error(f"Erro ao criar task via ensure_future: {e2}", exc_info=True)
+                        # Se tudo falhar, marca como não rodando mas NÃO levanta exceção
+                        # A execução já foi adicionada à fila, então pode ser processada depois
+                        self.rodando = False
+                        logger.warning("Task processadora não pôde ser criada, mas execução foi adicionada à fila")
             
             return empresa_id
         except ValueError:
@@ -237,21 +237,21 @@ class ExecutionService:
         execucao = self.execucoes_ativas.get(empresa_id)
         if not execucao:
             return None
-        
-        return {
-            "empresa_id": str(execucao.empresa_id) if execucao.empresa_id else "",
-            "cnpj": str(execucao.cnpj) if execucao.cnpj else "",
-            "status": execucao.status.value if execucao.status else "pendente",
-            "etapa_atual": execucao.etapa_atual.value if execucao.etapa_atual else "inicio",
-            "progresso": execucao.progresso if execucao.progresso is not None else 0,
-            "logs": execucao.logs if execucao.logs else [],
-            "mensagem": str(execucao.mensagem) if execucao.mensagem else "Aguardando execução...",
-            "data_inicio": execucao.data_inicio.isoformat() if execucao.data_inicio else None,
-            "data_fim": execucao.data_fim.isoformat() if execucao.data_fim else None,
-            "erro": str(execucao.erro) if execucao.erro else None,
-            "url_atual": str(execucao.url_atual) if execucao.url_atual else None,
-            "titulo": str(execucao.titulo) if execucao.titulo else None,
-        }
+            
+            return {
+                "empresa_id": str(execucao.empresa_id) if execucao.empresa_id else "",
+                "cnpj": str(execucao.cnpj) if execucao.cnpj else "",
+                "status": execucao.status.value if execucao.status else "pendente",
+                "etapa_atual": execucao.etapa_atual.value if execucao.etapa_atual else "inicio",
+                "progresso": execucao.progresso if execucao.progresso is not None else 0,
+                "logs": execucao.logs if execucao.logs else [],
+                "mensagem": str(execucao.mensagem) if execucao.mensagem else "Aguardando execução...",
+                "data_inicio": execucao.data_inicio.isoformat() if execucao.data_inicio else None,
+                "data_fim": execucao.data_fim.isoformat() if execucao.data_fim else None,
+                "erro": str(execucao.erro) if execucao.erro else None,
+                "url_atual": str(execucao.url_atual) if execucao.url_atual else None,
+                "titulo": str(execucao.titulo) if execucao.titulo else None,
+            }
     
     async def _processar_fila(self):
         """
@@ -575,6 +575,15 @@ class ExecutionService:
                     execucao.progresso = 90
                     execucao.mensagem = "Notas emitidas e recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas emitidas e recebidas processadas")
+                    
+                    # Fecha o navegador após processar notas recebidas (quando tipo é "ambas")
+                    self._adicionar_log(execucao, "🔒 Fechando navegador após processamento de notas recebidas")
+                    await self._limpar_recursos(execucao)
+                    # Marca que recursos já foram fechados para evitar fechamento duplo no finally
+                    execucao.page = None
+                    execucao.context = None
+                    execucao.browser = None
+                    execucao.playwright = None
                 elif execucao.tipo == "emitidas":
                     # Processa apenas emitidas
                     from processar_notas_competencia import processar_tabela_emitidas
@@ -605,6 +614,15 @@ class ExecutionService:
                     execucao.progresso = 90
                     execucao.mensagem = "Notas recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas recebidas processadas")
+                    
+                    # Fecha o navegador após processar notas recebidas
+                    self._adicionar_log(execucao, "🔒 Fechando navegador após processamento de notas recebidas")
+                    await self._limpar_recursos(execucao)
+                    # Marca que recursos já foram fechados para evitar fechamento duplo no finally
+                    execucao.page = None
+                    execucao.context = None
+                    execucao.browser = None
+                    execucao.playwright = None
                     
             except Exception as e:
                 error_msg = f"Erro ao processar notas: {str(e)}"
@@ -652,7 +670,11 @@ class ExecutionService:
             
         finally:
             # Cleanup: fecha recursos do Playwright (async)
-            await self._limpar_recursos(execucao)
+            # IMPORTANTE: Só fecha recursos se ainda não foram fechados após processar recebidas
+            # (quando tipo é "recebidas" ou "ambas", os recursos já foram fechados acima)
+            if execucao.page is not None or execucao.context is not None or execucao.browser is not None:
+                # Se ainda houver recursos abertos, fecha
+                await self._limpar_recursos(execucao)
     
     def _adicionar_log(self, execucao: ExecucaoInfo, mensagem: str):
         """
