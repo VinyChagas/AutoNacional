@@ -22,6 +22,38 @@ export interface CertificadoImportado {
   message?: string;
 }
 
+export interface CertificadoValidacaoLoteItem {
+  nome_arquivo: string;
+  sucesso: boolean;
+  cnpj?: string;
+  empresa?: string;
+  data_vencimento?: string;
+  mensagem_erro?: string;
+}
+
+export interface CertificadoValidacaoLoteResponse {
+  total: number;
+  sucesso: number;
+  falha: number;
+  resultados: CertificadoValidacaoLoteItem[];
+}
+
+export interface CertificadoImportacaoLoteItem {
+  nome_arquivo: string;
+  sucesso: boolean;
+  cnpj?: string;
+  empresa?: string;
+  data_vencimento?: string;
+  mensagem_erro?: string;
+}
+
+export interface CertificadoImportacaoLoteResponse {
+  total: number;
+  sucesso: number;
+  falha: number;
+  resultados: CertificadoImportacaoLoteItem[];
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -125,6 +157,44 @@ export class CertificadoService {
           success: false,
           message: error.error?.message || error.message || 'Erro ao importar certificado'
         } as CertificadoImportado));
+      })
+    );
+  }
+
+  validarCertificadosLote(arquivos: File[], senha: string): Observable<CertificadoValidacaoLoteResponse> {
+    const formData = new FormData();
+    
+    // Adiciona todos os arquivos
+    arquivos.forEach(arquivo => {
+      formData.append('certificados', arquivo);
+    });
+    
+    // Adiciona a senha
+    formData.append('senha', senha);
+
+    return this.http.post<CertificadoValidacaoLoteResponse>(`${this.baseUrl}/certificados/validar-lote`, formData).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ Erro HTTP na requisição de validação em lote:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  importarCertificadosLote(arquivos: File[], senha: string): Observable<CertificadoImportacaoLoteResponse> {
+    const formData = new FormData();
+    
+    // Adiciona todos os arquivos
+    arquivos.forEach(arquivo => {
+      formData.append('certificados', arquivo);
+    });
+    
+    // Adiciona a senha
+    formData.append('senha', senha);
+
+    return this.http.post<CertificadoImportacaoLoteResponse>(`${this.baseUrl}/certificados/importar-lote`, formData).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ Erro HTTP na requisição de importação em lote:', error);
+        return throwError(() => error);
       })
     );
   }

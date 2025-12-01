@@ -13,7 +13,14 @@ from sqlalchemy.orm import Session
 
 from ..services.certificate_service import get_certificate_service
 from ..utils.certificado_utils import validar_pfx, extrair_informacoes_certificado
-from ..models.certificado import CertificadoUploadResponse, CertificadoImportResponse
+from ..models.certificado import (
+    CertificadoUploadResponse, 
+    CertificadoImportResponse,
+    CertificadoValidacaoLoteResponse,
+    CertificadoValidacaoLoteItem,
+    CertificadoImportacaoLoteResponse,
+    CertificadoImportacaoLoteItem
+)
 from ..schemas.certificado import (
     CertificadoCreate,
     CertificadoUpdate,
@@ -588,4 +595,306 @@ def deletar_certificado_por_cnpj_metadados(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Certificado com CNPJ {cnpj} não encontrado"
         )
+
+
+@router.post(
+    "/validar-lote",
+    response_model=CertificadoValidacaoLoteResponse,
+    summary="Validar senha de múltiplos certificados em lote"
+)
+async def validar_certificados_lote(
+    certificados: List[UploadFile] = File(...),
+    senha: str = Form(...)
+) -> CertificadoValidacaoLoteResponse:
+    """
+    Valida a senha de múltiplos certificados digitais em lote.
+    
+    Este endpoint testa uma senha única em todos os certificados fornecidos,
+    retornando quais foram validados com sucesso e quais falharam.
+    
+    Args:
+        certificados: Lista de arquivos .pfx ou .p12
+        senha: Senha única para testar em todos os certificados
+        
+    Returns:
+        CertificadoValidacaoLoteResponse com resultados da validação
+    """
+    resultados: List[CertificadoValidacaoLoteItem] = []
+    total_sucesso = 0
+    total_falha = 0
+    
+    # Validação da senha
+    if not senha or not senha.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Senha não pode estar vazia"
+        )
+    
+    certificate_service = get_certificate_service()
+    
+    # Processa cada certificado
+    for certificado in certificados:
+        nome_arquivo = certificado.filename or "arquivo_desconhecido"
+        
+        # Valida extensão do arquivo
+        filename_lower = nome_arquivo.lower()
+        if not (filename_lower.endswith('.pfx') or filename_lower.endswith('.p12')):
+            resultados.append(
+                CertificadoValidacaoLoteItem(
+                    nome_arquivo=nome_arquivo,
+                    sucesso=False,
+                    mensagem_erro=f"Arquivo deve ser .pfx ou .p12. Recebido: {nome_arquivo}"
+                )
+            )
+            total_falha += 1
+            continue
+        
+        try:
+            # Lê o conteúdo do arquivo
+            conteudo = await certificado.read()
+            
+            if not conteudo:
+                resultados.append(
+                    CertificadoValidacaoLoteItem(
+                        nome_arquivo=nome_arquivo,
+                        sucesso=False,
+                        mensagem_erro="Arquivo vazio ou não foi possível ler o conteúdo"
+                    )
+                )
+                total_falha += 1
+                continue
+            
+            # Tenta validar e extrair informações
+            try:
+                informacoes = certificate_service.validar_e_extrair_info(conteudo, senha, debug=False)
+                
+                # Se chegou aqui, a validação foi bem-sucedida
+                resultados.append(
+                    CertificadoValidacaoLoteItem(
+                        nome_arquivo=nome_arquivo,
+                        sucesso=True,
+                        cnpj=informacoes.cnpj,
+                        empresa=informacoes.empresa,
+                        data_vencimento=informacoes.dataVencimento
+                    )
+                )
+                total_sucesso += 1
+                logger.info(f"Certificado {nome_arquivo} validado com sucesso. CNPJ: {informacoes.cnpj_limpo}")
+                
+            except HTTPException as e:
+                # Erro de validação (senha incorreta, certificado inválido, etc.)
+                resultados.append(
+                    CertificadoValidacaoLoteItem(
+                        nome_arquivo=nome_arquivo,
+                        sucesso=False,
+                        mensagem_erro=e.detail or "Erro ao validar certificado"
+                    )
+                )
+                total_falha += 1
+                logger.warning(f"Falha ao validar certificado {nome_arquivo}: {e.detail}")
+                
+        except Exception as e:
+            # Erro inesperado
+            error_msg = str(e)
+            resultados.append(
+                CertificadoValidacaoLoteItem(
+                    nome_arquivo=nome_arquivo,
+                    sucesso=False,
+                    mensagem_erro=f"Erro inesperado: {error_msg}"
+                )
+            )
+            total_falha += 1
+            logger.error(f"Erro inesperado ao processar certificado {nome_arquivo}: {error_msg}", exc_info=True)
+    
+    return CertificadoValidacaoLoteResponse(
+        total=len(certificados),
+        sucesso=total_sucesso,
+        falha=total_falha,
+        resultados=resultados
+    )
+
+
+@router.post(
+    "/importar-lote",
+    response_model=CertificadoImportacaoLoteResponse,
+    summary="Importar múltiplos certificados em lote com senha única"
+)
+async def importar_certificados_lote(
+    certificados: List[UploadFile] = File(...),
+    senha: str = Form(...)
+) -> CertificadoImportacaoLoteResponse:
+    """
+    Importa múltiplos certificados digitais em lote usando uma senha única.
+    
+    Este endpoint valida a senha, extrai informações e salva cada certificado
+    que for validado com sucesso. Retorna quais foram importados e quais falharam.
+    
+    Args:
+        certificados: Lista de arquivos .pfx ou .p12
+        senha: Senha única para usar em todos os certificados
+        
+    Returns:
+        CertificadoImportacaoLoteResponse com resultados da importação
+    """
+    resultados: List[CertificadoImportacaoLoteItem] = []
+    total_sucesso = 0
+    total_falha = 0
+    
+    # Validação da senha
+    if not senha or not senha.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Senha não pode estar vazia"
+        )
+    
+    certificate_service = get_certificate_service()
+    
+    # Processa cada certificado
+    for certificado in certificados:
+        nome_arquivo = certificado.filename or "arquivo_desconhecido"
+        
+        # Valida extensão do arquivo
+        filename_lower = nome_arquivo.lower()
+        if not (filename_lower.endswith('.pfx') or filename_lower.endswith('.p12')):
+            resultados.append(
+                CertificadoImportacaoLoteItem(
+                    nome_arquivo=nome_arquivo,
+                    sucesso=False,
+                    mensagem_erro=f"Arquivo deve ser .pfx ou .p12. Recebido: {nome_arquivo}"
+                )
+            )
+            total_falha += 1
+            continue
+        
+        try:
+            # Lê o conteúdo do arquivo
+            conteudo = await certificado.read()
+            
+            if not conteudo:
+                resultados.append(
+                    CertificadoImportacaoLoteItem(
+                        nome_arquivo=nome_arquivo,
+                        sucesso=False,
+                        mensagem_erro="Arquivo vazio ou não foi possível ler o conteúdo"
+                    )
+                )
+                total_falha += 1
+                continue
+            
+            # Tenta validar e extrair informações
+            try:
+                informacoes = certificate_service.validar_e_extrair_info(conteudo, senha, debug=False)
+                
+                # Valida se CNPJ foi encontrado
+                if not informacoes.cnpj_limpo:
+                    resultados.append(
+                        CertificadoImportacaoLoteItem(
+                            nome_arquivo=nome_arquivo,
+                            sucesso=False,
+                            mensagem_erro="Não foi possível extrair o CNPJ do certificado. Verifique se é um certificado ICP-Brasil válido."
+                        )
+                    )
+                    total_falha += 1
+                    continue
+                
+                # Salva o certificado criptografado
+                try:
+                    certificate_service.salvar_certificado(informacoes.cnpj_limpo, conteudo, senha)
+                    
+                    # Salva metadados no banco de dados (se disponível)
+                    try:
+                        from ..db.session import get_db
+                        from ..db.crud_certificado import criar_certificado, obter_certificado_por_cnpj
+                        
+                        db_gen = get_db()
+                        db = next(db_gen)
+                        
+                        try:
+                            # Verifica se já existe
+                            certificado_existente = obter_certificado_por_cnpj(db, informacoes.cnpj_limpo)
+                            
+                            if not certificado_existente and informacoes.dataVencimento:
+                                try:
+                                    # Converte data de vencimento de string ISO para date
+                                    if isinstance(informacoes.dataVencimento, str):
+                                        data_vencimento = date.fromisoformat(informacoes.dataVencimento)
+                                    else:
+                                        data_vencimento = informacoes.dataVencimento
+                                    
+                                    # Cria registro no banco
+                                    criar_certificado(
+                                        db=db,
+                                        cnpj=informacoes.cnpj_limpo,
+                                        empresa=informacoes.empresa,
+                                        data_vencimento=data_vencimento
+                                    )
+                                    logger.info(f"Metadados do certificado salvos no banco: CNPJ {informacoes.cnpj_limpo}")
+                                except ValueError as ve:
+                                    logger.warning(f"Erro ao converter data de vencimento: {ve}")
+                                except Exception as e:
+                                    logger.warning(f"Erro ao criar metadados no banco: {e}")
+                            elif certificado_existente:
+                                logger.info(f"Metadados do certificado já existem no banco: CNPJ {informacoes.cnpj_limpo}")
+                        finally:
+                            db.close()
+                    except Exception as e:
+                        # Não falha a importação se houver erro ao salvar metadados
+                        logger.warning(f"Erro ao salvar metadados no banco (não crítico): {str(e)}")
+                    
+                    # Se chegou aqui, a importação foi bem-sucedida
+                    resultados.append(
+                        CertificadoImportacaoLoteItem(
+                            nome_arquivo=nome_arquivo,
+                            sucesso=True,
+                            cnpj=informacoes.cnpj,
+                            empresa=informacoes.empresa,
+                            data_vencimento=informacoes.dataVencimento
+                        )
+                    )
+                    total_sucesso += 1
+                    logger.info(f"Certificado {nome_arquivo} importado com sucesso. CNPJ: {informacoes.cnpj_limpo}")
+                    
+                except Exception as save_error:
+                    # Erro ao salvar certificado
+                    resultados.append(
+                        CertificadoImportacaoLoteItem(
+                            nome_arquivo=nome_arquivo,
+                            sucesso=False,
+                            mensagem_erro=f"Erro ao salvar certificado: {str(save_error)}"
+                        )
+                    )
+                    total_falha += 1
+                    logger.error(f"Erro ao salvar certificado {nome_arquivo}: {str(save_error)}", exc_info=True)
+                
+            except HTTPException as e:
+                # Erro de validação (senha incorreta, certificado inválido, etc.)
+                resultados.append(
+                    CertificadoImportacaoLoteItem(
+                        nome_arquivo=nome_arquivo,
+                        sucesso=False,
+                        mensagem_erro=e.detail or "Erro ao validar certificado"
+                    )
+                )
+                total_falha += 1
+                logger.warning(f"Falha ao importar certificado {nome_arquivo}: {e.detail}")
+                
+        except Exception as e:
+            # Erro inesperado
+            error_msg = str(e)
+            resultados.append(
+                CertificadoImportacaoLoteItem(
+                    nome_arquivo=nome_arquivo,
+                    sucesso=False,
+                    mensagem_erro=f"Erro inesperado: {error_msg}"
+                )
+            )
+            total_falha += 1
+            logger.error(f"Erro inesperado ao processar certificado {nome_arquivo}: {error_msg}", exc_info=True)
+    
+    return CertificadoImportacaoLoteResponse(
+        total=len(certificados),
+        sucesso=total_sucesso,
+        falha=total_falha,
+        resultados=resultados
+    )
 

@@ -1,7 +1,7 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { CertificadoService, Certificado } from '../../services/certificado.service';
+import { CertificadoService, Certificado, CertificadoValidacaoLoteResponse, CertificadoImportacaoLoteResponse } from '../../services/certificado.service';
 import { Subject, takeUntil } from 'rxjs';
 import jsPDF from 'jspdf';
 // @ts-ignore - jspdf-autotable não tem tipos TypeScript completos
@@ -53,6 +53,20 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   // Upload em lote
   carregando = false;
   mensagem = '';
+  
+  // Validação em lote
+  modalValidacaoLoteAberto = false;
+  arquivosLote: File[] = [];
+  senhaLote = '';
+  validandoLote = false;
+  resultadosValidacao: CertificadoValidacaoLoteResponse | null = null;
+  
+  // Importação em lote
+  modalImportacaoLoteAberto = false;
+  arquivosImportacaoLote: File[] = [];
+  senhaImportacaoLote = '';
+  importandoLote = false;
+  resultadosImportacao: CertificadoImportacaoLoteResponse | null = null;
   
   // Opções de busca
   searchColumns: { value: SearchColumn; label: string }[] = [
@@ -161,7 +175,18 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     if (input.files && input.files.length > 0) {
       const files = Array.from(input.files);
       
-      files.forEach(file => {
+      // Filtra apenas arquivos .pfx e .p12
+      const arquivosValidos = files.filter(f => 
+        f.name.toLowerCase().endsWith('.pfx') || f.name.toLowerCase().endsWith('.p12')
+      );
+      
+      if (arquivosValidos.length === 0) {
+        alert('Nenhum arquivo .pfx ou .p12 encontrado na seleção.');
+        return;
+      }
+      
+      // Adiciona todos os arquivos à lista de pendentes
+      arquivosValidos.forEach(file => {
         this.certificadosPendentes.push({
           file,
           cnpj: '', // CNPJ será extraído automaticamente pelo backend
@@ -543,5 +568,226 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     
     // Salvar Excel
     XLSX.writeFile(wb, nomeArquivo);
+  }
+
+  // Validação em lote
+  onFilesSelectedLote(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      const files = Array.from(input.files);
+      // Filtra apenas arquivos .pfx e .p12
+      this.arquivosLote = files.filter(f => 
+        f.name.toLowerCase().endsWith('.pfx') || f.name.toLowerCase().endsWith('.p12')
+      );
+      
+      if (this.arquivosLote.length === 0) {
+        alert('Nenhum arquivo .pfx ou .p12 encontrado na seleção.');
+        return;
+      }
+      
+      if (this.arquivosLote.length !== files.length) {
+        alert(`${files.length - this.arquivosLote.length} arquivo(s) ignorado(s) (não são .pfx ou .p12)`);
+      }
+      
+      this.modalValidacaoLoteAberto = true;
+      this.senhaLote = '';
+      this.resultadosValidacao = null;
+    }
+  }
+
+  fecharModalValidacaoLote() {
+    this.modalValidacaoLoteAberto = false;
+    this.arquivosLote = [];
+    this.senhaLote = '';
+    this.resultadosValidacao = null;
+    this.validandoLote = false;
+  }
+
+  async validarLote() {
+    if (!this.senhaLote || !this.senhaLote.trim()) {
+      alert('Por favor, informe a senha para validação.');
+      return;
+    }
+
+    if (this.arquivosLote.length === 0) {
+      alert('Nenhum arquivo selecionado.');
+      return;
+    }
+
+    this.validandoLote = true;
+    this.resultadosValidacao = null;
+
+    try {
+      const resultado = await new Promise<CertificadoValidacaoLoteResponse>((resolve, reject) => {
+        this.certificadoService.validarCertificadosLote(this.arquivosLote, this.senhaLote).subscribe({
+          next: resolve,
+          error: reject
+        });
+      });
+
+      this.resultadosValidacao = resultado;
+    } catch (error: any) {
+      console.error('Erro ao validar certificados em lote:', error);
+      alert('Erro ao validar certificados. Verifique o console para mais detalhes.');
+    } finally {
+      this.validandoLote = false;
+    }
+  }
+
+  // Importação em lote
+  fecharModalImportacaoLote() {
+    this.modalImportacaoLoteAberto = false;
+    this.arquivosImportacaoLote = [];
+    this.senhaImportacaoLote = '';
+    this.resultadosImportacao = null;
+    this.importandoLote = false;
+  }
+
+  async aplicarSenhaParaTodos() {
+    if (!this.senhaForm.valid || this.certificadosPendentes.length === 0) return;
+
+    const senha = this.senhaForm.get('senha')?.value;
+    if (!senha || !senha.trim()) {
+      alert('Por favor, informe a senha.');
+      return;
+    }
+
+    // Confirmação antes de aplicar para todos
+    const confirmar = confirm(
+      `Deseja aplicar esta senha para todos os ${this.certificadosPendentes.length} certificado(s) pendentes?`
+    );
+    
+    if (!confirmar) {
+      return;
+    }
+
+    this.importando = true;
+    this.senhaValida = null;
+    this.mensagemSenha = '';
+
+    try {
+      // Prepara lista de arquivos para importação em lote
+      const arquivosParaImportar = this.certificadosPendentes.map(cp => cp.file);
+
+      // Chama o endpoint de importação em lote
+      const resultado = await new Promise<CertificadoImportacaoLoteResponse>((resolve, reject) => {
+        this.certificadoService.importarCertificadosLote(arquivosParaImportar, senha).subscribe({
+          next: resolve,
+          error: reject
+        });
+      });
+
+      // Processa resultados
+      let sucessoCount = 0;
+      let falhaCount = 0;
+
+      if (resultado.resultados) {
+        resultado.resultados.forEach((item, index) => {
+          if (item.sucesso && item.cnpj) {
+            // Adiciona certificado importado à lista local
+            const cnpjLimpo = item.cnpj.replace(/[^\d]/g, '');
+            const dataValidade = item.data_vencimento ? new Date(item.data_vencimento) : null;
+            const diasAteExpiracao = this.certificadoService.calcularDiasAteExpiracao(dataValidade);
+            const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
+            
+            const novoCertificado: Certificado = {
+              id: `${Date.now()}-${Math.random()}-${index}`,
+              cnpj: cnpjLimpo,
+              nomeArquivo: item.empresa || item.nome_arquivo,
+              dataUpload: new Date(),
+              dataValidade,
+              diasAteExpiracao,
+              status
+            };
+            
+            this.certificadoService.adicionarCertificadoLocal(novoCertificado);
+            sucessoCount++;
+          } else {
+            falhaCount++;
+          }
+        });
+      }
+
+      // Remove todos os certificados pendentes (tanto os que foram importados quanto os que falharam)
+      this.certificadosPendentes = [];
+
+      // Mostra mensagem de sucesso
+      this.senhaValida = true;
+      this.mensagemSenha = `Importação concluída: ${sucessoCount} importado(s) com sucesso, ${falhaCount} falha(s).`;
+
+      // Fecha o modal após um tempo
+      setTimeout(() => {
+        this.fecharModal();
+      }, 2000);
+
+    } catch (error: any) {
+      console.error('Erro ao importar certificados em lote:', error);
+      this.senhaValida = false;
+      if (error.error?.detail) {
+        this.mensagemSenha = `Erro: ${error.error.detail}`;
+      } else if (error.message) {
+        this.mensagemSenha = `Erro: ${error.message}`;
+      } else {
+        this.mensagemSenha = 'Erro ao importar certificados em lote. Verifique o console para mais detalhes.';
+      }
+    } finally {
+      this.importando = false;
+    }
+  }
+
+  async importarLote() {
+    if (!this.senhaImportacaoLote || !this.senhaImportacaoLote.trim()) {
+      alert('Por favor, informe a senha para importação.');
+      return;
+    }
+
+    if (this.arquivosImportacaoLote.length === 0) {
+      alert('Nenhum arquivo selecionado.');
+      return;
+    }
+
+    this.importandoLote = true;
+    this.resultadosImportacao = null;
+
+    try {
+      const resultado = await new Promise<CertificadoImportacaoLoteResponse>((resolve, reject) => {
+        this.certificadoService.importarCertificadosLote(this.arquivosImportacaoLote, this.senhaImportacaoLote).subscribe({
+          next: resolve,
+          error: reject
+        });
+      });
+
+      this.resultadosImportacao = resultado;
+      
+      // Adiciona os certificados importados com sucesso à lista local
+      if (resultado.resultados) {
+        resultado.resultados.forEach(item => {
+          if (item.sucesso && item.cnpj) {
+            const cnpjLimpo = item.cnpj.replace(/[^\d]/g, '');
+            const dataValidade = item.data_vencimento ? new Date(item.data_vencimento) : null;
+            const diasAteExpiracao = this.certificadoService.calcularDiasAteExpiracao(dataValidade);
+            const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
+            
+            const novoCertificado: Certificado = {
+              id: `${Date.now()}-${Math.random()}`,
+              cnpj: cnpjLimpo,
+              nomeArquivo: item.empresa || item.nome_arquivo,
+              dataUpload: new Date(),
+              dataValidade,
+              diasAteExpiracao,
+              status
+            };
+            
+            this.certificadoService.adicionarCertificadoLocal(novoCertificado);
+          }
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('Erro ao importar certificados em lote:', error);
+      alert('Erro ao importar certificados. Verifique o console para mais detalhes.');
+    } finally {
+      this.importandoLote = false;
+    }
   }
 }
