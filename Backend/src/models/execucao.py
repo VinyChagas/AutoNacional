@@ -26,6 +26,14 @@ class EtapaExecucao(str, Enum):
     FINALIZACAO = "finalizacao"
 
 
+class ResultadoFinal(str, Enum):
+    """Resultado final de uma execução."""
+    SEM_MOVIMENTO = "SEM_MOVIMENTO"
+    NOTAS_EMITIDAS = "NOTAS_EMITIDAS"  # Tem emitidas mas não recebidas
+    NOTAS_RECEBIDAS = "NOTAS_RECEBIDAS"  # Tem recebidas mas não emitidas
+    NFS_ENCONTRADAS = "NFS_ENCONTRADAS"  # Tem ambas
+
+
 class ExecucaoInfo(BaseModel):
     """
     Informações sobre uma execução.
@@ -49,6 +57,11 @@ class ExecucaoInfo(BaseModel):
     url_atual: Optional[str] = None
     titulo: Optional[str] = None
     headless: bool = False  # Se True, executa navegador em modo headless
+    
+    # Campos de resultado
+    qtd_notas_emitidas: int = 0
+    qtd_notas_recebidas: int = 0
+    resultado_final: Optional[ResultadoFinal] = None
     
     # ID do registro no banco de dados (None até ser criado)
     # Este campo permite sincronizar o estado em memória com o banco
@@ -79,4 +92,7 @@ class ExecucaoStatusResponse(BaseModel):
     erro: Optional[str] = None
     url_atual: Optional[str] = None
     titulo: Optional[str] = None
+    qtd_notas_emitidas: Optional[int] = 0
+    qtd_notas_recebidas: Optional[int] = 0
+    resultado_final: Optional[str] = None
 

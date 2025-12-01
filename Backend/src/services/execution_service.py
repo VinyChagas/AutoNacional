@@ -30,7 +30,7 @@ if scripts_automation_path not in sys.path:
 # Agora importa os módulos que dependem do path estar configurado
 from ..infrastructure.logger import get_logger
 from ..infrastructure.config import QUEUE_TIMEOUT, PLAYWRIGHT_TIMEOUT, PLAYWRIGHT_HEADLESS
-from ..models.execucao import StatusExecucao, EtapaExecucao, ExecucaoInfo, ExecucaoStatusResponse
+from ..models.execucao import StatusExecucao, EtapaExecucao, ExecucaoInfo, ExecucaoStatusResponse, ResultadoFinal
 from ..db.session import SessionLocal
 from ..db.models import Execucao
 
@@ -165,7 +165,12 @@ class ExecutionService:
                 # Cria registro no banco de dados para persistir o estado
                 # Isso permite rastrear execuções mesmo após reinicialização do processo
                 try:
-                    execucao_db_id = self._criar_execucao_db(empresa_id, StatusExecucao.PENDENTE)
+                    execucao_db_id = self._criar_execucao_db(
+                        empresa_id=empresa_id,
+                        cnpj=cnpj,
+                        competencia=competencia,
+                        status=StatusExecucao.PENDENTE
+                    )
                     execucao.execucao_db_id = execucao_db_id
                     logger.info(f"Registro de execução criado no banco: ID {execucao_db_id}")
                 except Exception as e:
@@ -238,6 +243,10 @@ class ExecutionService:
         if not execucao:
             return None
         
+        resultado_final_str = None
+        if execucao.resultado_final:
+            resultado_final_str = execucao.resultado_final.value if hasattr(execucao.resultado_final, 'value') else str(execucao.resultado_final)
+        
         return {
             "empresa_id": str(execucao.empresa_id) if execucao.empresa_id else "",
             "cnpj": str(execucao.cnpj) if execucao.cnpj else "",
@@ -251,6 +260,9 @@ class ExecutionService:
             "erro": str(execucao.erro) if execucao.erro else None,
             "url_atual": str(execucao.url_atual) if execucao.url_atual else None,
             "titulo": str(execucao.titulo) if execucao.titulo else None,
+            "qtd_notas_emitidas": execucao.qtd_notas_emitidas if hasattr(execucao, 'qtd_notas_emitidas') else 0,
+            "qtd_notas_recebidas": execucao.qtd_notas_recebidas if hasattr(execucao, 'qtd_notas_recebidas') else 0,
+            "resultado_final": resultado_final_str,
         }
     
     async def _processar_fila(self):
@@ -566,14 +578,97 @@ class ExecutionService:
                 # Processa notas emitidas e recebidas conforme o tipo
                 # AGORA USA AWAIT - função é async
                 if execucao.tipo == "ambas":
-                    # A função processar_notas já processa ambas automaticamente
-                    await processar_notas(
-                        page=execucao.page,
-                        competencia_alvo=competencia_formatada,
-                        nome_empresa=nome_empresa
-                    )
+                    # Processa emitidas primeiro, depois recebidas
+                    from processar_notas_competencia import processar_tabela_emitidas, processar_tabela_recebidas
+                    
+                    # ETAPA 1: Processar notas emitidas
+                    menu_emitidas = execucao.page.locator("li:nth-of-type(3) img").first
+                    await menu_emitidas.wait_for(state="visible", timeout=10000)
+                    await menu_emitidas.click()
+                    await execucao.page.wait_for_url("**/Notas/Emitidas", timeout=15000)
+                    await execucao.page.wait_for_load_state("networkidle", timeout=15000)
+                    
+                    # Aguarda um pouco para garantir que a página carregou completamente
+                    await execucao.page.wait_for_timeout(1000)
+                    
+                    # Verifica se há mensagem "Nenhum registro encontrado" antes de aguardar tabela
+                    from processar_notas_competencia import verificar_sem_registros
+                    sem_registros_antes = await verificar_sem_registros(execucao.page)
+                    
+                    # Só aguarda tabela se não houver mensagem de sem registros
+                    if not sem_registros_antes:
+                        try:
+                            await execucao.page.wait_for_selector("table tbody tr", timeout=10000)
+                        except:
+                            # Se não encontrar tabela, verifica novamente se há mensagem de sem registros
+                            sem_registros_antes = await verificar_sem_registros(execucao.page)
+                    
+                    resultado_emitidas = await processar_tabela_emitidas(execucao.page, competencia_formatada, nome_empresa)
+                    execucao.qtd_notas_emitidas = resultado_emitidas.get("qtd_baixadas", 0)
+                    
+                    # Determina status inicial baseado em emitidas
+                    sem_registros_emitidas = resultado_emitidas.get("sem_registros", False)
+                    encontrou_notas_emitidas = resultado_emitidas.get("encontrou_notas", False)
+                    tem_emitidas_baixadas = execucao.qtd_notas_emitidas > 0
+                    
+                    if sem_registros_emitidas or (not encontrou_notas_emitidas and not tem_emitidas_baixadas):
+                        # Sem movimento nas emitidas
+                        execucao.resultado_final = ResultadoFinal.SEM_MOVIMENTO
+                        self._adicionar_log(execucao, f"ℹ️ Emitidas: sem registros ou sem notas válidas")
+                    else:
+                        self._adicionar_log(execucao, f"✅ Emitidas: {execucao.qtd_notas_emitidas} nota(s) baixada(s)")
+                    
+                    # ETAPA 2: Processar notas recebidas
+                    menu_recebidas = execucao.page.locator("li:nth-of-type(4) img").first
+                    await menu_recebidas.wait_for(state="visible", timeout=10000)
+                    await menu_recebidas.click()
+                    await execucao.page.wait_for_url("**/Notas/Recebidas", timeout=15000)
+                    await execucao.page.wait_for_load_state("networkidle", timeout=15000)
+                    
+                    # Aguarda um pouco para garantir que a página carregou completamente
+                    await execucao.page.wait_for_timeout(1000)
+                    
+                    # Verifica se há mensagem "Nenhum registro encontrado" antes de aguardar tabela
+                    sem_registros_antes_recebidas = await verificar_sem_registros(execucao.page)
+                    
+                    # Só aguarda tabela se não houver mensagem de sem registros
+                    if not sem_registros_antes_recebidas:
+                        try:
+                            await execucao.page.wait_for_selector("table tbody tr", timeout=10000)
+                        except:
+                            # Se não encontrar tabela, verifica novamente se há mensagem de sem registros
+                            sem_registros_antes_recebidas = await verificar_sem_registros(execucao.page)
+                    
+                    resultado_recebidas = await processar_tabela_recebidas(execucao.page, competencia_formatada, nome_empresa)
+                    execucao.qtd_notas_recebidas = resultado_recebidas.get("qtd_baixadas", 0)
+                    
+                    # Atualiza resultado final baseado na lógica refinada
+                    sem_registros_recebidas = resultado_recebidas.get("sem_registros", False)
+                    encontrou_notas_recebidas = resultado_recebidas.get("encontrou_notas", False)
+                    tem_recebidas_baixadas = execucao.qtd_notas_recebidas > 0
+                    
+                    if sem_registros_recebidas or (not encontrou_notas_recebidas and not tem_recebidas_baixadas):
+                        # Sem movimento nas recebidas
+                        if execucao.resultado_final == ResultadoFinal.SEM_MOVIMENTO:
+                            # Já estava sem movimento, mantém
+                            self._adicionar_log(execucao, f"ℹ️ Recebidas: sem registros ou sem notas válidas. Mantém SEM_MOVIMENTO")
+                        elif tem_emitidas_baixadas:
+                            # Tinha emitidas mas não tem recebidas
+                            execucao.resultado_final = ResultadoFinal.NOTAS_EMITIDAS
+                            self._adicionar_log(execucao, f"ℹ️ Recebidas: sem registros ou sem notas válidas. Status: NOTAS_EMITIDAS")
+                    else:
+                        # Tem recebidas baixadas
+                        if not tem_emitidas_baixadas:
+                            # Não tinha emitidas mas tem recebidas
+                            execucao.resultado_final = ResultadoFinal.NOTAS_RECEBIDAS
+                            self._adicionar_log(execucao, f"✅ Recebidas: {execucao.qtd_notas_recebidas} nota(s) baixada(s). Status: NOTAS_RECEBIDAS")
+                        else:
+                            # Tem ambas
+                            execucao.resultado_final = ResultadoFinal.NFS_ENCONTRADAS
+                            self._adicionar_log(execucao, f"✅ Recebidas: {execucao.qtd_notas_recebidas} nota(s) baixada(s). Status: NFS_ENCONTRADAS")
+                    
                     execucao.progresso = 90
-                    execucao.mensagem = "Notas emitidas e recebidas processadas com sucesso"
+                    execucao.mensagem = f"Processamento concluído: {execucao.qtd_notas_emitidas} emitidas, {execucao.qtd_notas_recebidas} recebidas"
                     self._adicionar_log(execucao, "✅ Notas emitidas e recebidas processadas")
                 elif execucao.tipo == "emitidas":
                     # Processa apenas emitidas
@@ -586,7 +681,19 @@ class ExecutionService:
                     await execucao.page.wait_for_load_state("networkidle", timeout=15000)
                     await execucao.page.wait_for_selector("table tbody tr", timeout=10000)
                     # Processa tabela (async)
-                    await processar_tabela_emitidas(execucao.page, competencia_formatada, nome_empresa)
+                    resultado_emitidas = await processar_tabela_emitidas(execucao.page, competencia_formatada, nome_empresa)
+                    execucao.qtd_notas_emitidas = resultado_emitidas.get("qtd_baixadas", 0)
+                    
+                    # Determina resultado final
+                    sem_registros_emitidas = resultado_emitidas.get("sem_registros", False)
+                    encontrou_notas_emitidas = resultado_emitidas.get("encontrou_notas", False)
+                    tem_emitidas_baixadas = execucao.qtd_notas_emitidas > 0
+                    
+                    if sem_registros_emitidas or (not encontrou_notas_emitidas and not tem_emitidas_baixadas):
+                        execucao.resultado_final = ResultadoFinal.SEM_MOVIMENTO
+                    else:
+                        execucao.resultado_final = ResultadoFinal.NOTAS_EMITIDAS
+                    
                     execucao.progresso = 90
                     execucao.mensagem = "Notas emitidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas emitidas processadas")
@@ -601,7 +708,19 @@ class ExecutionService:
                     await execucao.page.wait_for_load_state("networkidle", timeout=15000)
                     await execucao.page.wait_for_selector("table tbody tr", timeout=10000)
                     # Processa tabela (async)
-                    await processar_tabela_recebidas(execucao.page, competencia_formatada, nome_empresa)
+                    resultado_recebidas = await processar_tabela_recebidas(execucao.page, competencia_formatada, nome_empresa)
+                    execucao.qtd_notas_recebidas = resultado_recebidas.get("qtd_baixadas", 0)
+                    
+                    # Determina resultado final
+                    sem_registros_recebidas = resultado_recebidas.get("sem_registros", False)
+                    encontrou_notas_recebidas = resultado_recebidas.get("encontrou_notas", False)
+                    tem_recebidas_baixadas = execucao.qtd_notas_recebidas > 0
+                    
+                    if sem_registros_recebidas or (not encontrou_notas_recebidas and not tem_recebidas_baixadas):
+                        execucao.resultado_final = ResultadoFinal.SEM_MOVIMENTO
+                    else:
+                        execucao.resultado_final = ResultadoFinal.NOTAS_RECEBIDAS
+                    
                     execucao.progresso = 90
                     execucao.mensagem = "Notas recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas recebidas processadas")
@@ -615,6 +734,18 @@ class ExecutionService:
             # ETAPA 4: Finalização
             execucao.etapa_atual = EtapaExecucao.FINALIZACAO
             execucao.progresso = 100
+            
+            # Garante que resultado_final está definido (fallback)
+            if execucao.resultado_final is None:
+                if execucao.qtd_notas_emitidas > 0 and execucao.qtd_notas_recebidas > 0:
+                    execucao.resultado_final = ResultadoFinal.NFS_ENCONTRADAS
+                elif execucao.qtd_notas_emitidas > 0:
+                    execucao.resultado_final = ResultadoFinal.NOTAS_EMITIDAS
+                elif execucao.qtd_notas_recebidas > 0:
+                    execucao.resultado_final = ResultadoFinal.NOTAS_RECEBIDAS
+                else:
+                    execucao.resultado_final = ResultadoFinal.SEM_MOVIMENTO
+            
             execucao.status = StatusExecucao.CONCLUIDO
             execucao.mensagem = "Execução concluída com sucesso"
             execucao.data_fim = datetime.now()
@@ -783,7 +914,13 @@ class ExecutionService:
             except:
                 pass
     
-    def _criar_execucao_db(self, empresa_id: str, status: StatusExecucao) -> int:
+    def _criar_execucao_db(
+        self,
+        empresa_id: str,
+        status: StatusExecucao,
+        cnpj: Optional[str] = None,
+        competencia: Optional[str] = None
+    ) -> int:
         """
         Cria um novo registro de execução no banco de dados.
         
@@ -793,7 +930,12 @@ class ExecutionService:
         try:
             execucao_db = Execucao(
                 empresa_id=empresa_id,
+                cnpj=cnpj,
+                competencia=competencia,
                 status=status.value,
+                qtd_notas_emitidas=0,
+                qtd_notas_recebidas=0,
+                resultado_final=None,
                 data_inicio=None,  # Será preenchido quando a execução realmente iniciar
                 criado_em=datetime.utcnow(),
                 atualizado_em=datetime.utcnow()
@@ -839,6 +981,21 @@ class ExecutionService:
             # Atualiza campos
             execucao_db.status = status.value
             execucao_db.atualizado_em = datetime.utcnow()
+            
+            # Atualiza CNPJ e competência se disponíveis
+            if execucao.cnpj and not execucao_db.cnpj:
+                execucao_db.cnpj = execucao.cnpj
+            if execucao.competencia and not execucao_db.competencia:
+                execucao_db.competencia = execucao.competencia
+            
+            # Atualiza quantidades de notas e resultado final
+            if hasattr(execucao, 'qtd_notas_emitidas'):
+                execucao_db.qtd_notas_emitidas = execucao.qtd_notas_emitidas
+            if hasattr(execucao, 'qtd_notas_recebidas'):
+                execucao_db.qtd_notas_recebidas = execucao.qtd_notas_recebidas
+            if execucao.resultado_final:
+                resultado_str = execucao.resultado_final.value if hasattr(execucao.resultado_final, 'value') else str(execucao.resultado_final)
+                execucao_db.resultado_final = resultado_str
             
             # Atualiza data_inicio se fornecida ou se ainda não estiver preenchida
             if data_inicio:

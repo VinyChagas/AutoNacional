@@ -46,6 +46,17 @@
 
           @if (execucoes.length > 0) {
             <button
+              (click)="gerarResumo()"
+              [disabled]="carregandoResumo"
+              class="btn-futuristic px-6 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
+            >
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+              </svg>
+              Gerar Resumo
+            </button>
+
+            <button
               (click)="limparExecucoes()"
               class="px-6 py-4 glass border border-[#1E2615]/30 text-[#1E2615] rounded-xl hover:bg-[#1E2615]/10 transition-all font-semibold"
             >
@@ -97,169 +108,151 @@
           </div>
         </div>
       </div>
-
-      <!-- Informações -->
-      <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div class="glass rounded-xl p-6 border">
-          <div class="text-sm text-[#1E2615] font-semibold mb-2">Certificados Válidos</div>
-          <div class="text-4xl font-bold text-[#8BCB70]">{{ certificadosValidos.length }}</div>
-        </div>
-        <div class="glass rounded-xl p-6 border">
-          <div class="text-sm text-[#1E2615] font-semibold mb-2">Empresas Carregadas</div>
-          <div class="text-4xl font-bold text-[#8BCB70]">{{ certificadosCarregados.length }}</div>
-        </div>
-        <div class="glass rounded-xl p-6 border">
-          <div class="text-sm text-[#1E2615] font-semibold mb-2">Execuções</div>
-          <div class="text-4xl font-bold text-[#8BCB70]">{{ execucoes.length }}</div>
-        </div>
-      </div>
     </div>
 
-    <!-- Lista de Empresas Carregadas -->
-    @if (certificadosCarregados.length > 0) {
-      <div class="glass-strong rounded-2xl p-8 mb-8 border">
-        <h3 class="text-2xl font-bold text-[#0C0D0A] mb-6">Empresas Validadas</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          @for (certificado of certificadosCarregados; track certificado.id) {
-            <div class="card-futuristic rounded-xl p-6 border">
-              <div class="flex items-center justify-between mb-3">
-                <span class="font-bold text-[#0C0D0A]">{{ formatarCNPJ(certificado.cnpj) }}</span>
-                <span class="text-xs px-3 py-1 rounded-full bg-[#8BCB70]/20 text-[#0C0D0A] border border-[#8BCB70]/50 font-semibold">
-                  Válido
-                </span>
-              </div>
-              <div class="text-sm text-[#1E2615] mb-4">{{ certificado.nomeArquivo }}</div>
-              <button
-                (click)="executarCertificado(certificado)"
-                [disabled]="executando"
-                class="w-full px-4 py-3 btn-futuristic rounded-lg disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed text-sm font-bold transition-all"
-              >
-                Executar
-              </button>
-            </div>
-          }
+    <!-- Barra de Progresso Geral -->
+    @if (execucoes.length > 0) {
+      <div class="mb-8">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-semibold text-[#1E2615]">
+            Execução geral: {{ empresasFinalizadas }} de {{ totalEmpresas }} empresas finalizadas ({{ percentualFinalizado }}%)
+          </span>
+        </div>
+        <div class="w-full bg-[#A9D9D4]/30 rounded-full h-4 overflow-hidden">
+          <div
+            class="h-4 rounded-full transition-all duration-500 bg-[#8BCB70]"
+            [style.width.%]="percentualFinalizado"
+          ></div>
         </div>
       </div>
     }
 
-    <!-- Execuções em Andamento -->
+    <!-- Bloco de 30 CNPJs em Foco -->
+    @if (emFoco.length > 0) {
+      <div class="glass-strong rounded-2xl p-6 mb-8 border">
+        <h3 class="text-lg font-bold text-[#0C0D0A] mb-4">Empresas em Execução</h3>
+        <div class="grid grid-cols-6 gap-3">
+          @for (execucao of emFoco; track execucao.id) {
+            <div
+              class="px-3 py-2 rounded-lg border text-center text-sm font-semibold"
+              [ngClass]="{
+                'border-[#7EBFB3]/50 bg-[#A9D9D4]/20': execucao.status === 'fila',
+                'border-[#8BCB70]/50 bg-[#8BCB70]/20': execucao.status === 'executando'
+              }"
+              [title]="execucao.nomeEmpresa || formatarCNPJ(execucao.cnpj)"
+            >
+              {{ formatarCNPJ(execucao.cnpj) }}
+            </div>
+          }
+        </div>
+        @if (aguardando > 0) {
+          <p class="text-sm text-[#1E2615] mt-4 text-center">
+            + {{ aguardando }} empresas aguardando na fila
+          </p>
+        }
+      </div>
+    }
+
+    <!-- Três Colunas: Fila / Executando / Finalizado -->
     @if (execucoes.length > 0) {
-      <div class="space-y-6">
-        <h3 class="text-2xl font-bold text-[#0C0D0A]">Status das Execuções</h3>
-        
-        @for (execucao of execucoes; track execucao.id) {
-          <div class="glass-strong rounded-2xl overflow-hidden border-2" [ngClass]="obterCorStatus(execucao.status)">
-            <!-- Header da Execução -->
-            <div class="p-4 border-b-2" [ngClass]="obterCorStatus(execucao.status)">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" [attr.d]="obterIconeStatus(execucao.status)"></path>
-                  </svg>
-                  <div>
-                    <div class="font-bold text-[#0C0D0A] text-lg">{{ formatarCNPJ(execucao.cnpj) }}</div>
-                    <div class="text-sm opacity-75" [ngClass]="obterCorTextoStatus(execucao.status)">{{ obterTextoStatus(execucao.status) }}</div>
-                  </div>
-                </div>
-                <div class="flex items-center gap-4">
-                  <div class="text-right">
-                    <div class="text-lg font-bold" [ngClass]="obterCorTextoStatus(execucao.status)">{{ execucao.progresso }}%</div>
-                    <div class="text-xs opacity-75 text-[#1E2615]">
-                      @if (execucao.dataInicio) {
-                        Iniciado: {{ execucao.dataInicio | date:'HH:mm:ss' }}
-                      }
-                    </div>
-                  </div>
-                  <button
-                    (click)="removerExecucao(execucao.id)"
-                    class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors p-2 hover:bg-[#A9D9D4]/20 rounded-lg"
-                  >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                  </button>
+      <div class="grid grid-cols-3 gap-6">
+        <!-- Coluna 1: Fila -->
+        <div class="glass-strong rounded-xl p-6 border">
+          <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
+            Fila ({{ colunaFila.length }})
+          </h3>
+          <div class="space-y-2 max-h-[600px] overflow-y-auto">
+            @for (execucao of colunaFila; track execucao.id) {
+              <div class="p-3 rounded-lg border border-[#7EBFB3]/30 bg-[#A9D9D4]/10">
+                <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                @if (execucao.nomeEmpresa) {
+                  <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
+                }
+              </div>
+            }
+            @if (colunaFila.length === 0) {
+              <p class="text-sm text-[#1E2615]/60 text-center py-4">Nenhuma empresa na fila</p>
+            }
+          </div>
+        </div>
+
+        <!-- Coluna 2: Executando -->
+        <div class="glass-strong rounded-xl p-6 border">
+          <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
+            Executando ({{ colunaExecutando.length }})
+          </h3>
+          <div class="space-y-2 max-h-[600px] overflow-y-auto">
+            @for (execucao of colunaExecutando; track execucao.id) {
+              <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/20">
+                <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                @if (execucao.nomeEmpresa) {
+                  <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
+                }
+                <div class="text-xs text-[#8BCB70] mt-2 font-semibold">{{ execucao.progresso }}%</div>
+                <div class="w-full bg-[#A9D9D4]/30 rounded-full h-2 mt-2">
+                  <div
+                    class="h-2 rounded-full bg-[#8BCB70] transition-all"
+                    [style.width.%]="execucao.progresso"
+                  ></div>
                 </div>
               </div>
-            </div>
+            }
+            @if (colunaExecutando.length === 0) {
+              <p class="text-sm text-[#1E2615]/60 text-center py-4">Nenhuma empresa executando</p>
+            }
+          </div>
+        </div>
 
-            <!-- Barra de Progresso -->
-            <div class="px-6 pt-6">
-              <div class="w-full bg-[#A9D9D4]/30 rounded-full h-3 overflow-hidden">
-                <div
-                  class="h-3 rounded-full transition-all duration-500 relative overflow-hidden"
-                  [ngClass]="{
-                    'bg-[#8BCB70]': execucao.status === 'concluido',
-                    'bg-[#1E2615]': execucao.status === 'falhou',
-                    'bg-[#8BCB70] animate-pulse': execucao.status === 'em_execucao',
-                    'bg-[#7EBFB3]': execucao.status === 'pendente'
-                  }"
-                  [style.width.%]="execucao.progresso"
-                >
-                  @if (execucao.status === 'em_execucao') {
-                    <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
-                  }
-                </div>
-              </div>
-            </div>
-
-            <!-- Mensagem Atual -->
-            <div class="px-6 py-4">
-              <p class="text-sm font-semibold text-[#1E2615]">{{ execucao.mensagem }}</p>
-            </div>
-
-            <!-- Logs -->
-            @if (execucao.logs.length > 0) {
-              <div class="px-6 pb-6">
-                <button
-                  (click)="execucao.mostrarLogs = !execucao.mostrarLogs"
-                  class="text-sm text-[#8BCB70] hover:text-[#7EBFB3] flex items-center gap-2 font-semibold transition-colors"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" [attr.d]="execucao.mostrarLogs ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'"></path>
-                  </svg>
-                  Ver Logs ({{ execucao.logs.length }})
-                </button>
-                
-                @if (execucao.mostrarLogs) {
-                  <div class="mt-4 bg-[#0C0D0A]/50 text-[#8BCB70] rounded-xl p-6 max-h-64 overflow-y-auto font-mono text-xs border border-[#8BCB70]/20">
-                    @for (log of execucao.logs; track $index) {
-                      <div class="mb-2 text-[#8BCB70]">{{ log }}</div>
+        <!-- Coluna 3: Finalizado -->
+        <div class="glass-strong rounded-xl p-6 border">
+          <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
+            Finalizado ({{ colunaFinalizado.length }})
+          </h3>
+          <div class="space-y-2 max-h-[600px] overflow-y-auto">
+            @for (execucao of colunaFinalizado; track execucao.id) {
+              <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/10">
+                <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                @if (execucao.nomeEmpresa) {
+                  <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
+                }
+                @if (execucao.resultadoFinal) {
+                  <div class="mt-2">
+                    @if (execucao.resultadoFinal === 'NFS_ENCONTRADAS') {
+                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-[#8BCB70]/30 text-[#0C0D0A] font-semibold border border-[#8BCB70]/50">
+                        Com notas (ambas)
+                      </span>
+                    } @else if (execucao.resultadoFinal === 'NOTAS_EMITIDAS') {
+                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-blue-200 text-blue-800 font-semibold border border-blue-300">
+                        Notas Emitidas
+                      </span>
+                    } @else if (execucao.resultadoFinal === 'NOTAS_RECEBIDAS') {
+                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-purple-200 text-purple-800 font-semibold border border-purple-300">
+                        Notas Recebidas
+                      </span>
+                    } @else {
+                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-gray-200 text-gray-700 font-semibold border border-gray-300">
+                        Sem movimento
+                      </span>
+                    }
+                  </div>
+                }
+                @if (execucao.qtdNotasEmitidas !== undefined || execucao.qtdNotasRecebidas !== undefined) {
+                  <div class="text-xs text-[#1E2615] mt-2">
+                    @if (execucao.qtdNotasEmitidas !== undefined && execucao.qtdNotasEmitidas > 0) {
+                      <span>Emitidas: {{ execucao.qtdNotasEmitidas }}</span>
+                    }
+                    @if (execucao.qtdNotasRecebidas !== undefined && execucao.qtdNotasRecebidas > 0) {
+                      <span class="ml-2">Recebidas: {{ execucao.qtdNotasRecebidas }}</span>
                     }
                   </div>
                 }
               </div>
             }
-
-            <!-- Informações Adicionais -->
-            @if (execucao.status === 'concluido' || execucao.status === 'falhou') {
-              <div class="px-6 pb-6 border-t-2 mt-4 pt-6" [ngClass]="obterCorStatus(execucao.status)">
-                @if (execucao.urlAtual) {
-                  <div class="text-sm mb-3">
-                    <strong class="text-[#0C0D0A]">URL:</strong> 
-                    <a [href]="execucao.urlAtual" target="_blank" class="text-[#8BCB70] hover:text-[#7EBFB3] hover:underline ml-2 transition-colors">
-                      {{ execucao.urlAtual }}
-                    </a>
-                  </div>
-                }
-                @if (execucao.titulo) {
-                  <div class="text-sm mb-3 text-[#1E2615]">
-                    <strong class="text-[#0C0D0A]">Título:</strong> {{ execucao.titulo }}
-                  </div>
-                }
-                @if (execucao.erro) {
-                  <div class="text-sm text-[#1E2615]">
-                    <strong class="text-[#0C0D0A]">Erro:</strong> {{ execucao.erro }}
-                  </div>
-                }
-                @if (execucao.dataFim) {
-                  <div class="text-sm mt-4 opacity-75 text-[#1E2615]">
-                    Finalizado: {{ execucao.dataFim | date:'dd/MM/yyyy HH:mm:ss' }}
-                  </div>
-                }
-              </div>
+            @if (colunaFinalizado.length === 0) {
+              <p class="text-sm text-[#1E2615]/60 text-center py-4">Nenhuma empresa finalizada</p>
             }
           </div>
-        }
+        </div>
       </div>
     } @else {
       <div class="glass-strong rounded-2xl p-16 text-center border">
@@ -271,6 +264,63 @@
         </div>
         <p class="text-[#0C0D0A] text-xl font-semibold mb-2">Nenhuma execução iniciada</p>
         <p class="text-[#1E2615]/60 text-sm">Carregue as empresas validadas e inicie as execuções</p>
+      </div>
+    }
+
+    <!-- Modal de Resumo -->
+    @if (mostrandoResumo) {
+      <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" (click)="fecharResumo()">
+        <div class="glass-strong rounded-2xl p-8 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+          <div class="flex items-center justify-between mb-6">
+            <h3 class="text-2xl font-bold text-[#0C0D0A]">Resumo das Execuções</h3>
+            <button
+              (click)="fecharResumo()"
+              class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors"
+            >
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+
+          @if (carregandoResumo) {
+            <div class="text-center py-8">
+              <svg class="animate-spin h-8 w-8 mx-auto text-[#8BCB70]" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+          } @else if (resumo) {
+            <div class="space-y-6">
+              <div class="grid grid-cols-3 gap-4">
+                <div class="glass rounded-xl p-4 border text-center">
+                  <div class="text-sm text-[#1E2615] font-semibold mb-1">Total</div>
+                  <div class="text-3xl font-bold text-[#8BCB70]">{{ resumo.total_empresas }}</div>
+                </div>
+                <div class="glass rounded-xl p-4 border text-center">
+                  <div class="text-sm text-[#1E2615] font-semibold mb-1">Com Movimento</div>
+                  <div class="text-3xl font-bold text-[#8BCB70]">{{ resumo.com_movimento }}</div>
+                </div>
+                <div class="glass rounded-xl p-4 border text-center">
+                  <div class="text-sm text-[#1E2615] font-semibold mb-1">Sem Movimento</div>
+                  <div class="text-3xl font-bold text-gray-600">{{ resumo.sem_movimento }}</div>
+                </div>
+              </div>
+
+              <div class="flex justify-end gap-4">
+                <button
+                  (click)="baixarResumoCSV()"
+                  class="btn-futuristic px-6 py-3 rounded-xl flex items-center font-bold"
+                >
+                  <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                  </svg>
+                  Baixar CSV
+                </button>
+              </div>
+            </div>
+          }
+        </div>
       </div>
     }
   </div>

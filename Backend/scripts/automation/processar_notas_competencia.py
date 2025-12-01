@@ -446,7 +446,7 @@ async def baixar_arquivos_da_linha(
         logger.debug(traceback.format_exc())
 
 
-async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: str) -> None:
+async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: str) -> dict:
     """
     Processa a tabela de notas emitidas, varrendo todas as páginas.
     
@@ -454,14 +454,28 @@ async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empr
         page: Página do Playwright
         competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
         nome_empresa: Nome da empresa (do certificado digital)
+    
+    Returns:
+        dict com:
+            - qtd_baixadas: quantidade de notas baixadas (válidas, não canceladas, com competência correta)
+            - sem_registros: True se encontrou mensagem "Nenhum registro encontrado"
+            - encontrou_notas: True se encontrou notas (mesmo que canceladas ou sem competência)
     """
     logger.info(f"Iniciando processamento de Notas Emitidas para competência {competencia_alvo}")
+    
+    qtd_baixadas = 0
+    sem_registros = False
+    encontrou_notas = False
     
     # Verifica se há mensagem "Nenhum registro encontrado" antes de processar
     if await verificar_sem_registros(page):
         logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
         logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
-        return
+        return {
+            "qtd_baixadas": 0,
+            "sem_registros": True,
+            "encontrou_notas": False
+        }
     
     while True:
         try:
@@ -492,6 +506,7 @@ async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empr
                     
                     if competencia_texto == competencia_alvo:
                         encontrou_competencia = True
+                        encontrou_notas = True
                         logger.info(f"Nota encontrada na linha {i+1} com competência {competencia_alvo}")
                         
                         # Verifica se a nota é válida
@@ -500,6 +515,7 @@ async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empr
                         if nota_valida:
                             logger.info(f"Nota válida confirmada. Baixando arquivos...")
                             await baixar_arquivos_da_linha(page, linha, competencia_alvo, nome_empresa, "Emitidas")
+                            qtd_baixadas += 1
                         else:
                             logger.info(f"Nota inválida/cancelada. Pulando download.")
                     
@@ -569,10 +585,15 @@ async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empr
             logger.error(f"Erro ao processar tabela de emitidas: {e}")
             break
     
-    logger.info("Processamento de Notas Emitidas finalizado")
+    logger.info(f"Processamento de Notas Emitidas finalizado. Notas baixadas: {qtd_baixadas}")
+    return {
+        "qtd_baixadas": qtd_baixadas,
+        "sem_registros": sem_registros,
+        "encontrou_notas": encontrou_notas
+    }
 
 
-async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: str) -> None:
+async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: str) -> dict:
     """
     Processa a tabela de notas recebidas, varrendo todas as páginas.
     
@@ -580,14 +601,28 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
         page: Página do Playwright
         competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
         nome_empresa: Nome da empresa (do certificado digital)
+    
+    Returns:
+        dict com:
+            - qtd_baixadas: quantidade de notas baixadas (válidas, não canceladas, com competência correta)
+            - sem_registros: True se encontrou mensagem "Nenhum registro encontrado"
+            - encontrou_notas: True se encontrou notas (mesmo que canceladas ou sem competência)
     """
     logger.info(f"Iniciando processamento de Notas Recebidas para competência {competencia_alvo}")
+    
+    qtd_baixadas = 0
+    sem_registros = False
+    encontrou_notas = False
     
     # Verifica se há mensagem "Nenhum registro encontrado" antes de processar
     if await verificar_sem_registros(page):
         logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
         logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
-        return
+        return {
+            "qtd_baixadas": 0,
+            "sem_registros": True,
+            "encontrou_notas": False
+        }
     
     while True:
         try:
@@ -618,6 +653,7 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
                     
                     if competencia_texto == competencia_alvo:
                         encontrou_competencia = True
+                        encontrou_notas = True
                         logger.info(f"Nota encontrada na linha {i+1} com competência {competencia_alvo}")
                         
                         # Verifica se a nota é válida
@@ -626,6 +662,7 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
                         if nota_valida:
                             logger.info(f"Nota válida confirmada. Baixando arquivos...")
                             await baixar_arquivos_da_linha(page, linha, competencia_alvo, nome_empresa, "Recebidas")
+                            qtd_baixadas += 1
                         else:
                             logger.info(f"Nota inválida/cancelada. Pulando download.")
                     
@@ -694,7 +731,12 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
             logger.error(f"Erro ao processar tabela de recebidas: {e}")
             break
     
-    logger.info("Processamento de Notas Recebidas finalizado")
+    logger.info(f"Processamento de Notas Recebidas finalizado. Notas baixadas: {qtd_baixadas}")
+    return {
+        "qtd_baixadas": qtd_baixadas,
+        "sem_registros": sem_registros,
+        "encontrou_notas": encontrou_notas
+    }
 
 
 async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) -> None:

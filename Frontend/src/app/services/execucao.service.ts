@@ -4,11 +4,18 @@ import { Observable } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 
-export interface ExecucaoStatus {
+export type StatusExecucao = 'fila' | 'executando' | 'finalizado' | 'falhou';
+export type ResultadoFinal = 'SEM_MOVIMENTO' | 'NOTAS_EMITIDAS' | 'NOTAS_RECEBIDAS' | 'NFS_ENCONTRADAS';
+
+export interface ExecucaoEmpresa {
   id: string;
   empresa_id?: string;
   cnpj: string;
-  status: 'pendente' | 'em_execucao' | 'concluido' | 'falhou';
+  nomeEmpresa?: string;
+  status: StatusExecucao;
+  resultadoFinal?: ResultadoFinal; // preenchido quando status = 'finalizado'
+  qtdNotasEmitidas?: number;
+  qtdNotasRecebidas?: number;
   etapa_atual?: string;
   progresso: number; // 0-100
   logs: string[];
@@ -20,6 +27,11 @@ export interface ExecucaoStatus {
   dataFim?: Date;
   erro?: string;
   mostrarLogs?: boolean; // Propriedade para controlar exibição de logs
+}
+
+// Mantém compatibilidade com código antigo
+export interface ExecucaoStatus extends ExecucaoEmpresa {
+  // Mapeia status antigo para novo
 }
 
 export interface NFSeResponse {
@@ -43,6 +55,26 @@ export interface ExecucaoStatusResponse {
   erro?: string;
   url_atual?: string;
   titulo?: string;
+  qtd_notas_emitidas?: number;
+  qtd_notas_recebidas?: number;
+  resultado_final?: string;
+}
+
+export interface ResumoExecucoesResponse {
+  competencia?: string;
+  total_empresas: number;
+  com_movimento: number;
+  sem_movimento: number;
+  empresas_com_movimento: Array<{
+    cnpj: string;
+    nome?: string;
+    qtd_notas_emitidas: number;
+    qtd_notas_recebidas: number;
+  }>;
+  empresas_sem_movimento: Array<{
+    cnpj: string;
+    nome?: string;
+  }>;
 }
 
 @Injectable({
@@ -107,6 +139,38 @@ export class ExecucaoService {
         clearInterval(intervalo);
       }
     }, 500); // Atualiza a cada 500ms para simular tempo real
+  }
+
+  obterResumoExecucoes(
+    competencia?: string,
+    statusFiltro: string = 'concluido'
+  ): Observable<ResumoExecucoesResponse> {
+    let url = `${this.baseUrl}/relatorios/execucoes/resumo?status_filtro=${statusFiltro}`;
+    if (competencia) {
+      url += `&competencia=${competencia}`;
+    }
+    return this.http.get<ResumoExecucoesResponse>(url).pipe(
+      catchError((error) => {
+        console.error('Erro ao obter resumo de execuções:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  baixarResumoCSV(
+    competencia?: string,
+    statusFiltro: string = 'concluido'
+  ): Observable<Blob> {
+    let url = `${this.baseUrl}/relatorios/execucoes/resumo/csv?status_filtro=${statusFiltro}`;
+    if (competencia) {
+      url += `&competencia=${competencia}`;
+    }
+    return this.http.get(url, { responseType: 'blob' }).pipe(
+      catchError((error) => {
+        console.error('Erro ao baixar CSV de resumo:', error);
+        return throwError(() => error);
+      })
+    );
   }
 }
 

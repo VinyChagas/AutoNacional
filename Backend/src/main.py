@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .infrastructure.config import CORS_ORIGINS
 from .infrastructure.logger import get_logger
-from routers import empresas, credenciais, nfse, execucao
+from routers import empresas, credenciais, nfse, execucao, relatorios
 
 logger = get_logger(__name__)
 
@@ -31,6 +31,7 @@ app.include_router(empresas.router)
 app.include_router(credenciais.router)
 app.include_router(nfse.router)
 app.include_router(execucao.router)
+app.include_router(relatorios.router)
 
 
 @app.get("/", tags=["Health"])
