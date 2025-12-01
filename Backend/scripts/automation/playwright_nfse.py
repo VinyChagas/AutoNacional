@@ -26,6 +26,16 @@ from playwright.async_api import (
     Playwright,
 )
 
+# Importações para conversão de certificados TLS legados
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️  Biblioteca cryptography não disponível. Conversão de certificados TLS legados desabilitada.")
+
 # Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -89,6 +99,69 @@ get_certificate_service = _get_certificate_service_func
 
 # URL base do portal NFSe Nacional
 BASE_URL = "https://www.nfse.gov.br/EmissorNacional/"
+
+
+def _converter_certificado_tls_moderno(conteudo_pfx: bytes, senha: str) -> Optional[bytes]:
+    """
+    Tenta converter um certificado PFX legado para um formato moderno compatível com OpenSSL.
+    
+    Esta função tenta re-exportar o certificado usando algoritmos de criptografia modernos,
+    o que pode resolver problemas com certificados que usam algoritmos TLS depreciados.
+    
+    Args:
+        conteudo_pfx: Conteúdo do arquivo PFX em bytes
+        senha: Senha do certificado
+        
+    Returns:
+        Bytes do certificado convertido, ou None se a conversão falhar
+    """
+    if not CRYPTOGRAPHY_AVAILABLE:
+        return None
+    
+    try:
+        senha_bytes = senha.encode('utf-8') if senha else None
+        
+        # Carrega o certificado original
+        key, cert, additional_certs = pkcs12.load_key_and_certificates(
+            conteudo_pfx, 
+            senha_bytes
+        )
+        
+        # Re-exporta usando algoritmos modernos
+        # BestAvailableEncryption usa PBES2 (mais moderno) ao invés de PBES1 (legado)
+        pfx_modernizado = pkcs12.serialize_key_and_certificates(
+            name=b"certificado",
+            key=key,
+            cert=cert,
+            cas=additional_certs or [],
+            encryption_algorithm=serialization.BestAvailableEncryption(senha_bytes)
+        )
+        
+        logger.info("✅ Certificado convertido para formato TLS moderno")
+        return pfx_modernizado
+        
+    except Exception as e:
+        logger.debug(f"⚠️  Não foi possível converter certificado: {e}")
+        return None
+
+
+def _is_tls_legacy_error(error_str: str) -> bool:
+    """
+    Verifica se o erro é relacionado a certificado TLS legado.
+    
+    Args:
+        error_str: String do erro
+        
+    Returns:
+        True se for erro de certificado TLS legado
+    """
+    error_lower = error_str.lower()
+    return (
+        "unsupported tls certificate" in error_lower or
+        "deprecated" in error_lower or
+        "legacy provider" in error_lower or
+        "security algorithm" in error_lower
+    )
 
 
 class NFSeAutenticacaoError(Exception):
@@ -182,36 +255,116 @@ async def criar_contexto_com_certificado(
         viewport_config = viewport if viewport else {"width": 1920, "height": 1080}
         logger.info(f"📐 Viewport configurado: {viewport_config['width']}x{viewport_config['height']}")
         
-        context = await browser.new_context(
-            ignore_https_errors=ignore_https_errors,
-            viewport=viewport_config,
-            user_agent=(
+        # Prepara configuração do contexto
+        context_config = {
+            "ignore_https_errors": ignore_https_errors,
+            "viewport": viewport_config,
+            "user_agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
-            # Permite downloads automáticos sem validação de segurança
-            accept_downloads=True,
-            # Configura pasta de download padrão
-            # Os arquivos serão movidos para o destino correto após o download
-            # Configuração de certificado cliente (suportado desde Playwright 1.46+)
-            # O certificado será usado automaticamente para requisições HTTPS
-            # ao domínio especificado, sem exibir popup de seleção
-            client_certificates=[{
-                "origin": "https://www.nfse.gov.br",  # Domínio do portal NFSe
-                "pfx": conteudo_pfx,  # Conteúdo do certificado em bytes
-                "passphrase": senha  # Senha do certificado
+            "accept_downloads": True,
+        }
+        
+        # Tenta criar contexto com certificado original primeiro
+        pfx_para_usar = conteudo_pfx
+        context = None
+        erro_original = None
+        
+        try:
+            context_config["client_certificates"] = [{
+                "origin": "https://www.nfse.gov.br",
+                "pfx": pfx_para_usar,
+                "passphrase": senha
             }]
-        )
+            context = await browser.new_context(**context_config)
+            logger.info("✅ Contexto do navegador criado com certificado cliente configurado")
+            
+        except Exception as e:
+            erro_original = e
+            error_str = str(e)
+            
+            # Verifica se é erro de certificado TLS legado
+            if _is_tls_legacy_error(error_str):
+                logger.warning(f"⚠️  Erro de certificado TLS legado detectado: {error_str[:100]}...")
+                logger.info("🔄 Tentando converter certificado para formato moderno...")
+                
+                # Tenta converter o certificado para formato moderno
+                pfx_convertido = _converter_certificado_tls_moderno(conteudo_pfx, senha)
+                
+                if pfx_convertido:
+                    try:
+                        # Tenta novamente com certificado convertido
+                        context_config["client_certificates"] = [{
+                            "origin": "https://www.nfse.gov.br",
+                            "pfx": pfx_convertido,
+                            "passphrase": senha
+                        }]
+                        context = await browser.new_context(**context_config)
+                        logger.info("✅ Contexto criado com certificado convertido para formato moderno")
+                        
+                    except Exception as e2:
+                        error_str2 = str(e2)
+                        logger.error(f"❌ Certificado convertido também falhou: {error_str2[:100]}...")
+                        
+                        # Se ainda falhar, fornece mensagem de erro detalhada
+                        error_msg = (
+                            f"❌ Certificado TLS legado não suportado para CNPJ {cnpj}.\n\n"
+                            f"O certificado digital usa algoritmos de segurança depreciados pelo OpenSSL moderno.\n"
+                            f"Mesmo após tentativa de conversão, o certificado não pôde ser usado.\n\n"
+                            f"💡 Soluções recomendadas:\n"
+                            f"1. ✅ RENOVAR o certificado digital com a autoridade certificadora\n"
+                            f"   - Solicite um novo certificado com algoritmos modernos (SHA-256 ou superior)\n"
+                            f"   - Certificados antigos com MD5 ou SHA1 não são mais suportados\n"
+                            f"2. 📞 Contatar a autoridade certificadora (Serasa, Serpro, Certisign, etc.)\n"
+                            f"   - Explique que o certificado precisa ser atualizado para algoritmos modernos\n"
+                            f"   - Mencione que está usando OpenSSL moderno que não suporta algoritmos legados\n"
+                            f"3. 🔄 Verificar se há uma versão mais recente do certificado disponível\n\n"
+                            f"⚠️  Nota: Outros certificados funcionam normalmente porque usam algoritmos modernos.\n"
+                            f"Este certificado específico precisa ser renovado para funcionar.\n\n"
+                            f"Erro técnico original: {error_str[:200]}"
+                        )
+                        logger.error(error_msg)
+                        raise NFSeAutenticacaoError(error_msg)
+                else:
+                    # Conversão não disponível ou falhou
+                    error_msg = (
+                        f"❌ Certificado TLS legado não suportado para CNPJ {cnpj}.\n\n"
+                        f"O certificado digital usa algoritmos de segurança depreciados pelo OpenSSL moderno.\n"
+                        f"Este é um problema comum com certificados antigos que usam algoritmos como MD5 ou SHA1.\n\n"
+                        f"💡 Soluções recomendadas:\n"
+                        f"1. ✅ RENOVAR o certificado digital com a autoridade certificadora\n"
+                        f"   - Solicite um novo certificado com algoritmos modernos (SHA-256 ou superior)\n"
+                        f"   - Certificados antigos com MD5 ou SHA1 não são mais suportados\n"
+                        f"2. 📞 Contatar a autoridade certificadora (Serasa, Serpro, Certisign, etc.)\n"
+                        f"   - Explique que o certificado precisa ser atualizado para algoritmos modernos\n"
+                        f"   - Mencione que está usando OpenSSL moderno que não suporta algoritmos legados\n"
+                        f"3. 🔄 Verificar se há uma versão mais recente do certificado disponível\n\n"
+                        f"⚠️  Nota: Outros certificados funcionam normalmente porque usam algoritmos modernos.\n"
+                        f"Este certificado específico precisa ser renovado para funcionar.\n\n"
+                        f"Erro técnico: {error_str[:200]}"
+                    )
+                    logger.error(error_msg)
+                    raise NFSeAutenticacaoError(error_msg)
+            else:
+                # Outro tipo de erro, propaga normalmente
+                error_msg = f"Erro ao criar contexto com certificado: {error_str}"
+                logger.error(f"❌ {error_msg}")
+                raise NFSeAutenticacaoError(error_msg)
         
-        logger.info("✅ Contexto do navegador criado com certificado cliente configurado")
-        logger.info("   O certificado será usado automaticamente para autenticação")
-        logger.info("   sem exibir popups de seleção")
+        if context:
+            logger.info("   O certificado será usado automaticamente para autenticação")
+            logger.info("   sem exibir popups de seleção")
+            return playwright, browser, context
+        else:
+            raise NFSeAutenticacaoError("Não foi possível criar contexto do navegador")
         
-        return playwright, browser, context
-        
+    except NFSeAutenticacaoError:
+        # Re-propaga erros de autenticação
+        raise
     except Exception as e:
-        error_msg = f"Erro ao criar contexto com certificado: {str(e)}"
+        error_msg = f"Erro inesperado ao criar contexto com certificado: {str(e)}"
         logger.error(f"❌ {error_msg}")
         raise NFSeAutenticacaoError(error_msg)
 
