@@ -30,3 +30,39 @@ class CertificadoImportResponse(BaseModel):
     dataVencimento: Optional[str] = None
     message: Optional[str] = None
 
+
+class CertificadoValidacaoLoteItem(BaseModel):
+    """Item de resultado da validação em lote."""
+    nome_arquivo: str
+    sucesso: bool
+    cnpj: Optional[str] = None
+    empresa: Optional[str] = None
+    data_vencimento: Optional[str] = None
+    mensagem_erro: Optional[str] = None
+
+
+class CertificadoValidacaoLoteResponse(BaseModel):
+    """Resposta da validação de certificados em lote."""
+    total: int
+    sucesso: int
+    falha: int
+    resultados: list[CertificadoValidacaoLoteItem]
+
+
+class CertificadoImportacaoLoteItem(BaseModel):
+    """Item de resultado da importação em lote."""
+    nome_arquivo: str
+    sucesso: bool
+    cnpj: Optional[str] = None
+    empresa: Optional[str] = None
+    data_vencimento: Optional[str] = None
+    mensagem_erro: Optional[str] = None
+
+
+class CertificadoImportacaoLoteResponse(BaseModel):
+    """Resposta da importação de certificados em lote."""
+    total: int
+    sucesso: int
+    falha: int
+    resultados: list[CertificadoImportacaoLoteItem]
+

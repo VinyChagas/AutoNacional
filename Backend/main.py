@@ -7,6 +7,7 @@ e configura middlewares (CORS, tratamento de erros, etc.).
 
 import os
 import sys
+import json
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -64,10 +65,23 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         error_details.append({
             "field": ".".join(str(loc) for loc in error.get("loc", [])),
             "message": error.get("msg"),
-            "type": error.get("type")
+            "type": error.get("type"),
+            "input": error.get("input")
         })
     
-    logger.warning(f"Erro de validação: {error_details}")
+    logger.error(f"❌ ERRO DE VALIDAÇÃO:")
+    logger.error(f"   URL: {request.url}")
+    logger.error(f"   Method: {request.method}")
+    logger.error(f"   Erros detalhados: {json.dumps(error_details, indent=2, default=str)}")
+    
+    # Tenta ler o body se possível (pode já ter sido consumido)
+    try:
+        if hasattr(request, '_body'):
+            body_str = request._body.decode('utf-8') if isinstance(request._body, bytes) else str(request._body)
+            logger.error(f"   Body recebido: {body_str[:500]}")  # Limita a 500 chars
+    except:
+        pass
+    
     return JSONResponse(
         status_code=400,
         headers={

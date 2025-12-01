@@ -9,8 +9,8 @@
       <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
     </div>
 
-    <!-- Botão de Upload em Lote -->
-    <div class="mb-8">
+    <!-- Botões de Upload -->
+    <div class="mb-8 flex gap-4 flex-wrap">
       <label class="btn-futuristic inline-flex items-center px-8 py-4 rounded-xl cursor-pointer relative overflow-hidden group">
         <svg class="w-6 h-6 mr-3 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
@@ -24,8 +24,22 @@
           class="hidden"
         />
       </label>
-      <p class="text-sm text-[#1E2615]/70 mt-3 ml-2">Selecione um ou mais arquivos .pfx ou .p12</p>
+      
+      <label class="inline-flex items-center px-8 py-4 rounded-xl cursor-pointer relative overflow-hidden group border-2 border-[#7EBFB3] bg-[#7EBFB3]/20 hover:bg-[#7EBFB3]/30 text-[#0C0D0A] font-bold transition-all">
+        <svg class="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <span>Validar Senha em Lote</span>
+        <input
+          type="file"
+          multiple
+          accept=".pfx,.p12"
+          (change)="onFilesSelectedLote($event)"
+          class="hidden"
+        />
+      </label>
     </div>
+    <p class="text-sm text-[#1E2615]/70 mb-4 ml-2">Selecione um ou mais arquivos .pfx ou .p12</p>
 
     <!-- Botões de Exportação -->
     <div class="flex justify-end gap-3 mb-4">
@@ -352,14 +366,46 @@
           </div>
         }
 
+        <!-- Informação sobre certificados pendentes -->
+        @if (certificadosPendentes.length > 1) {
+          <div class="p-3 rounded-xl border border-[#7EBFB3]/50 bg-[#7EBFB3]/10 mb-4">
+            <p class="text-sm text-white/90">
+              <strong class="text-white">{{ certificadosPendentes.length - 1 }}</strong> certificado(s) aguardando importação
+            </p>
+          </div>
+        }
+
         <div class="flex gap-4 pt-4">
           <button
             type="button"
             (click)="fecharModal()"
             class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+            [disabled]="importando"
           >
             Cancelar
           </button>
+          
+          @if (certificadosPendentes.length > 1) {
+            <button
+              type="button"
+              (click)="aplicarSenhaParaTodos()"
+              [disabled]="!senhaForm.valid || importando"
+              class="flex-1 px-6 py-3 rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white border-2 border-[#7EBFB3] bg-[#7EBFB3]/20 hover:bg-[#7EBFB3]/30"
+            >
+              @if (importando) {
+                <span class="flex items-center justify-center">
+                  <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Importando...
+                </span>
+              } @else {
+                Aplicar para Todos ({{ certificadosPendentes.length }})
+              }
+            </button>
+          }
+          
           <button
             type="submit"
             [disabled]="!senhaForm.valid || importando"
@@ -382,3 +428,280 @@
     </div>
   </div>
 }
+
+<!-- Modal de Validação em Lote -->
+@if (modalValidacaoLoteAberto) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalValidacaoLote()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-4xl w-full p-8 border max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-white">Validação de Senha em Lote</h3>
+        <button
+          (click)="fecharModalValidacaoLote()"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-6">
+        <p class="text-sm text-white/90 mb-4">
+          <strong class="text-white">{{ arquivosLote.length }}</strong> arquivo(s) selecionado(s) para validação
+        </p>
+        
+        @if (!resultadosValidacao) {
+          <form (ngSubmit)="validarLote()" class="space-y-5">
+            <div>
+              <label for="senhaLote" class="block text-sm font-semibold text-white mb-2">Senha dos Certificados</label>
+              <input
+                id="senhaLote"
+                type="password"
+                [(ngModel)]="senhaLote"
+                name="senhaLote"
+                required
+                class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all text-white bg-white/10 placeholder-white/50"
+                placeholder="Digite a senha para testar em todos os certificados"
+                [disabled]="validandoLote"
+              />
+            </div>
+
+            <div class="flex gap-4 pt-4">
+              <button
+                type="button"
+                (click)="fecharModalValidacaoLote()"
+                class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+                [disabled]="validandoLote"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                [disabled]="!senhaLote || validandoLote"
+                class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+              >
+                @if (validandoLote) {
+                  <span class="flex items-center justify-center">
+                    <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Validando...
+                  </span>
+                } @else {
+                  Validar Todos
+                }
+              </button>
+            </div>
+          </form>
+        } @else {
+          <!-- Resultados da Validação -->
+          <div class="space-y-4">
+            <div class="p-4 rounded-xl border bg-[#8BCB70]/20 border-[#8BCB70]/50">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-white font-bold text-lg">Resumo da Validação</p>
+                  <p class="text-white/80 text-sm mt-1">
+                    Total: {{ resultadosValidacao.total }} | 
+                    <span class="text-[#8BCB70]">Sucesso: {{ resultadosValidacao.sucesso }}</span> | 
+                    <span class="text-red-400">Falha: {{ resultadosValidacao.falha }}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+              @for (resultado of resultadosValidacao.resultados; track resultado.nome_arquivo) {
+                <div class="p-4 rounded-xl border" [ngClass]="{
+                  'bg-[#8BCB70]/20 border-[#8BCB70]/50': resultado.sucesso,
+                  'bg-red-400/20 border-red-400/50': !resultado.sucesso
+                }">
+                  <div class="flex items-start gap-3">
+                    @if (resultado.sucesso) {
+                      <svg class="w-6 h-6 text-[#8BCB70] flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                      </svg>
+                    } @else {
+                      <svg class="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                      </svg>
+                    }
+                    <div class="flex-1">
+                      <p class="text-white font-semibold">{{ resultado.nome_arquivo }}</p>
+                      @if (resultado.sucesso) {
+                        <div class="mt-2 space-y-1 text-sm text-white/80">
+                          @if (resultado.cnpj) {
+                            <p><strong>CNPJ:</strong> {{ resultado.cnpj }}</p>
+                          }
+                          @if (resultado.empresa) {
+                            <p><strong>Empresa:</strong> {{ resultado.empresa }}</p>
+                          }
+                          @if (resultado.data_vencimento) {
+                            <p><strong>Data de Vencimento:</strong> {{ resultado.data_vencimento }}</p>
+                          }
+                        </div>
+                      } @else {
+                        <p class="mt-2 text-sm text-red-300">{{ resultado.mensagem_erro }}</p>
+                      }
+                    </div>
+                  </div>
+                </div>
+              }
+            </div>
+
+            <div class="flex gap-4 pt-4">
+              <button
+                type="button"
+                (click)="fecharModalValidacaoLote()"
+                class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Modal de Importação em Lote -->
+@if (modalImportacaoLoteAberto) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalImportacaoLote()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-4xl w-full p-8 border max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-white">Importação de Certificados em Lote</h3>
+        <button
+          (click)="fecharModalImportacaoLote()"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-6">
+        <p class="text-sm text-white/90 mb-4">
+          <strong class="text-white">{{ arquivosImportacaoLote.length }}</strong> arquivo(s) selecionado(s) para importação
+        </p>
+        
+        @if (!resultadosImportacao) {
+          <form (ngSubmit)="importarLote()" class="space-y-5">
+            <div>
+              <label for="senhaImportacaoLote" class="block text-sm font-semibold text-white mb-2">Senha dos Certificados</label>
+              <input
+                id="senhaImportacaoLote"
+                type="password"
+                [(ngModel)]="senhaImportacaoLote"
+                name="senhaImportacaoLote"
+                required
+                class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all text-white bg-white/10 placeholder-white/50"
+                placeholder="Digite a senha para importar todos os certificados"
+                [disabled]="importandoLote"
+              />
+              <p class="text-xs text-white/70 mt-2">
+                Esta senha será usada para todos os certificados selecionados. Os certificados com senha diferente falharão na importação.
+              </p>
+            </div>
+
+            <div class="flex gap-4 pt-4">
+              <button
+                type="button"
+                (click)="fecharModalImportacaoLote()"
+                class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+                [disabled]="importandoLote"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                [disabled]="!senhaImportacaoLote || importandoLote"
+                class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+              >
+                @if (importandoLote) {
+                  <span class="flex items-center justify-center">
+                    <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Importando...
+                  </span>
+                } @else {
+                  Importar Todos
+                }
+              </button>
+            </div>
+          </form>
+        } @else {
+          <!-- Resultados da Importação -->
+          <div class="space-y-4">
+            <div class="p-4 rounded-xl border bg-[#8BCB70]/20 border-[#8BCB70]/50">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-white font-bold text-lg">Resumo da Importação</p>
+                  <p class="text-white/80 text-sm mt-1">
+                    Total: {{ resultadosImportacao.total }} | 
+                    <span class="text-[#8BCB70]">Importados: {{ resultadosImportacao.sucesso }}</span> | 
+                    <span class="text-red-400">Falhas: {{ resultadosImportacao.falha }}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+              @for (resultado of resultadosImportacao.resultados; track resultado.nome_arquivo) {
+                <div class="p-4 rounded-xl border" [ngClass]="{
+                  'bg-[#8BCB70]/20 border-[#8BCB70]/50': resultado.sucesso,
+                  'bg-red-400/20 border-red-400/50': !resultado.sucesso
+                }">
+                  <div class="flex items-start gap-3">
+                    @if (resultado.sucesso) {
+                      <svg class="w-6 h-6 text-[#8BCB70] flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                      </svg>
+                    } @else {
+                      <svg class="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                      </svg>
+                    }
+                    <div class="flex-1">
+                      <p class="text-white font-semibold">{{ resultado.nome_arquivo }}</p>
+                      @if (resultado.sucesso) {
+                        <div class="mt-2 space-y-1 text-sm text-white/80">
+                          @if (resultado.cnpj) {
+                            <p><strong>CNPJ:</strong> {{ resultado.cnpj }}</p>
+                          }
+                          @if (resultado.empresa) {
+                            <p><strong>Empresa:</strong> {{ resultado.empresa }}</p>
+                          }
+                          @if (resultado.data_vencimento) {
+                            <p><strong>Data de Vencimento:</strong> {{ resultado.data_vencimento }}</p>
+                          }
+                          <p class="text-[#8BCB70] font-semibold mt-2">✅ Certificado importado com sucesso!</p>
+                        </div>
+                      } @else {
+                        <p class="mt-2 text-sm text-red-300">{{ resultado.mensagem_erro }}</p>
+                      }
+                    </div>
+                  </div>
+                </div>
+              }
+            </div>
+
+            <div class="flex gap-4 pt-4">
+              <button
+                type="button"
+                (click)="fecharModalImportacaoLote()"
+                class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+}
+</div>
