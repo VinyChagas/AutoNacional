@@ -237,21 +237,21 @@ class ExecutionService:
         execucao = self.execucoes_ativas.get(empresa_id)
         if not execucao:
             return None
-            
-            return {
-                "empresa_id": str(execucao.empresa_id) if execucao.empresa_id else "",
-                "cnpj": str(execucao.cnpj) if execucao.cnpj else "",
-                "status": execucao.status.value if execucao.status else "pendente",
-                "etapa_atual": execucao.etapa_atual.value if execucao.etapa_atual else "inicio",
-                "progresso": execucao.progresso if execucao.progresso is not None else 0,
-                "logs": execucao.logs if execucao.logs else [],
-                "mensagem": str(execucao.mensagem) if execucao.mensagem else "Aguardando execução...",
-                "data_inicio": execucao.data_inicio.isoformat() if execucao.data_inicio else None,
-                "data_fim": execucao.data_fim.isoformat() if execucao.data_fim else None,
-                "erro": str(execucao.erro) if execucao.erro else None,
-                "url_atual": str(execucao.url_atual) if execucao.url_atual else None,
-                "titulo": str(execucao.titulo) if execucao.titulo else None,
-            }
+        
+        return {
+            "empresa_id": str(execucao.empresa_id) if execucao.empresa_id else "",
+            "cnpj": str(execucao.cnpj) if execucao.cnpj else "",
+            "status": execucao.status.value if execucao.status else "pendente",
+            "etapa_atual": execucao.etapa_atual.value if execucao.etapa_atual else "inicio",
+            "progresso": execucao.progresso if execucao.progresso is not None else 0,
+            "logs": execucao.logs if execucao.logs else [],
+            "mensagem": str(execucao.mensagem) if execucao.mensagem else "Aguardando execução...",
+            "data_inicio": execucao.data_inicio.isoformat() if execucao.data_inicio else None,
+            "data_fim": execucao.data_fim.isoformat() if execucao.data_fim else None,
+            "erro": str(execucao.erro) if execucao.erro else None,
+            "url_atual": str(execucao.url_atual) if execucao.url_atual else None,
+            "titulo": str(execucao.titulo) if execucao.titulo else None,
+        }
     
     async def _processar_fila(self):
         """
@@ -575,15 +575,6 @@ class ExecutionService:
                     execucao.progresso = 90
                     execucao.mensagem = "Notas emitidas e recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas emitidas e recebidas processadas")
-                    
-                    # Fecha o navegador após processar notas recebidas (quando tipo é "ambas")
-                    self._adicionar_log(execucao, "🔒 Fechando navegador após processamento de notas recebidas")
-                    await self._limpar_recursos(execucao)
-                    # Marca que recursos já foram fechados para evitar fechamento duplo no finally
-                    execucao.page = None
-                    execucao.context = None
-                    execucao.browser = None
-                    execucao.playwright = None
                 elif execucao.tipo == "emitidas":
                     # Processa apenas emitidas
                     from processar_notas_competencia import processar_tabela_emitidas
@@ -615,15 +606,6 @@ class ExecutionService:
                     execucao.mensagem = "Notas recebidas processadas com sucesso"
                     self._adicionar_log(execucao, "✅ Notas recebidas processadas")
                     
-                    # Fecha o navegador após processar notas recebidas
-                    self._adicionar_log(execucao, "🔒 Fechando navegador após processamento de notas recebidas")
-                    await self._limpar_recursos(execucao)
-                    # Marca que recursos já foram fechados para evitar fechamento duplo no finally
-                    execucao.page = None
-                    execucao.context = None
-                    execucao.browser = None
-                    execucao.playwright = None
-                    
             except Exception as e:
                 error_msg = f"Erro ao processar notas: {str(e)}"
                 self._adicionar_log(execucao, f"❌ {error_msg}")
@@ -641,6 +623,18 @@ class ExecutionService:
             # Atualiza status no banco de dados para CONCLUIDO
             # Sincronização: estado em memória -> banco de dados
             self._atualizar_execucao_db(execucao, StatusExecucao.CONCLUIDO, execucao.data_inicio, execucao.data_fim)
+            
+            # Fecha o navegador após finalizar a execução (para tipos "recebidas" e "ambas")
+            # IMPORTANTE: Fecha APÓS atualizar o status para garantir que o frontend receba o status correto
+            # IMPORTANTE: Força fechamento mesmo em modo visível (headless=False) para tipos "recebidas" e "ambas"
+            if execucao.tipo in ["recebidas", "ambas"]:
+                self._adicionar_log(execucao, "🔒 Fechando navegador após finalização (fechamento automático para notas recebidas)")
+                await self._limpar_recursos(execucao, forcar_fechamento=True)
+                # Marca que recursos já foram fechados para evitar fechamento duplo no finally
+                execucao.page = None
+                execucao.context = None
+                execucao.browser = None
+                execucao.playwright = None
             
         except Exception as e:
             # Verifica se é erro de autenticação específico
@@ -670,10 +664,12 @@ class ExecutionService:
             
         finally:
             # Cleanup: fecha recursos do Playwright (async)
-            # IMPORTANTE: Só fecha recursos se ainda não foram fechados após processar recebidas
-            # (quando tipo é "recebidas" ou "ambas", os recursos já foram fechados acima)
+            # IMPORTANTE: Só fecha recursos se ainda não foram fechados após finalização
+            # (quando tipo é "recebidas" ou "ambas", os recursos já foram fechados após finalização)
+            # Para "emitidas", fecha aqui no finally
             if execucao.page is not None or execucao.context is not None or execucao.browser is not None:
                 # Se ainda houver recursos abertos, fecha
+                logger.debug(f"Fechando recursos no finally para empresa {execucao.empresa_id}")
                 await self._limpar_recursos(execucao)
     
     def _adicionar_log(self, execucao: ExecucaoInfo, mensagem: str):
@@ -699,26 +695,35 @@ class ExecutionService:
                     # Não interrompe o fluxo se falhar ao atualizar o banco
                     logger.debug(f"Erro ao atualizar mensagem_erro no banco: {e}")
     
-    async def _limpar_recursos(self, execucao: ExecucaoInfo):
+    async def _limpar_recursos(self, execucao: ExecucaoInfo, forcar_fechamento: bool = False):
         """
         Limpa recursos do Playwright após execução (async).
         
         IMPORTANTE: Fecha recursos na ordem correta (page -> context -> browser -> playwright)
         e trata erros individualmente para garantir que todos os recursos sejam fechados
         mesmo se algum falhar.
+        
+        Args:
+            execucao: Informações da execução
+            forcar_fechamento: Se True, fecha o navegador mesmo em modo visível (headless=False).
+                              Útil para fechar após processar notas recebidas.
         """
         try:
             headless = execucao.headless if execucao.headless is not None else PLAYWRIGHT_HEADLESS
             
-            if headless:
-                # Em modo headless, fecha tudo na ordem correta
+            # Fecha navegador se estiver em modo headless OU se forçar fechamento foi solicitado
+            if headless or forcar_fechamento:
+                # Fecha tudo na ordem correta
                 # Ordem: page -> context -> browser -> playwright
                 
                 # 1. Fecha página
                 if execucao.page:
                     try:
-                        await execucao.page.close()
-                        logger.debug(f"Página fechada para empresa {execucao.empresa_id}")
+                        if not execucao.page.is_closed():
+                            await execucao.page.close()
+                            logger.debug(f"Página fechada para empresa {execucao.empresa_id}")
+                        else:
+                            logger.debug(f"Página já estava fechada para empresa {execucao.empresa_id}")
                     except Exception as e:
                         # Página pode já estar fechada ou desconectada
                         logger.debug(f"Erro ao fechar página (pode já estar fechada): {e}")
@@ -726,8 +731,11 @@ class ExecutionService:
                 # 2. Fecha contexto
                 if execucao.context:
                     try:
-                        await execucao.context.close()
-                        logger.debug(f"Contexto fechado para empresa {execucao.empresa_id}")
+                        if not execucao.context.is_closed():
+                            await execucao.context.close()
+                            logger.debug(f"Contexto fechado para empresa {execucao.empresa_id}")
+                        else:
+                            logger.debug(f"Contexto já estava fechado para empresa {execucao.empresa_id}")
                     except Exception as e:
                         # Contexto pode já estar fechado ou desconectado
                         logger.debug(f"Erro ao fechar contexto (pode já estar fechado): {e}")
@@ -735,8 +743,11 @@ class ExecutionService:
                 # 3. Fecha browser
                 if execucao.browser:
                     try:
-                        await execucao.browser.close()
-                        logger.debug(f"Browser fechado para empresa {execucao.empresa_id}")
+                        if execucao.browser.is_connected():
+                            await execucao.browser.close()
+                            logger.debug(f"Browser fechado para empresa {execucao.empresa_id}")
+                        else:
+                            logger.debug(f"Browser já estava desconectado para empresa {execucao.empresa_id}")
                     except Exception as e:
                         # Browser pode já estar fechado ou desconectado
                         logger.debug(f"Erro ao fechar browser (pode já estar fechado): {e}")
@@ -755,9 +766,10 @@ class ExecutionService:
                 execucao.browser = None
                 execucao.playwright = None
                 
-                self._adicionar_log(execucao, "🧹 Recursos liberados (modo headless)")
+                modo_msg = "modo headless" if headless else "fechamento forçado"
+                self._adicionar_log(execucao, f"🧹 Recursos liberados ({modo_msg})")
             else:
-                # Em modo visível, mantém navegador aberto
+                # Em modo visível e sem forçar fechamento, mantém navegador aberto
                 self._adicionar_log(execucao, "🌐 Navegador mantido aberto para visualização")
                 
         except Exception as e:
