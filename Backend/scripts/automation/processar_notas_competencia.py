@@ -10,19 +10,43 @@ from pathlib import Path
 from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
-# Importa o módulo de gerenciamento de downloads
-from .download_manager import (
-    set_downloads_base_path as set_base_path,
-    get_download_base_path,
-    salvar_download_direto
-)
-
-# Configuração de logging
+# Configuração de logging (deve vir antes de usar logger)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Importa o módulo de gerenciamento de downloads
+# IMPORTANTE: Usa import absoluto porque o módulo é importado diretamente (não como pacote)
+# O scripts_automation_path é adicionado ao sys.path, então os módulos são tratados como standalone
+try:
+    # Tenta import absoluto primeiro (quando usado como módulo standalone via sys.path)
+    from download_manager import (
+        set_downloads_base_path as set_base_path,
+        get_download_base_path,
+        salvar_download_direto
+    )
+    logger.debug("download_manager importado com sucesso (import absoluto)")
+except ImportError as e1:
+    # Fallback para import relativo (quando usado como pacote)
+    try:
+        from .download_manager import (
+            set_downloads_base_path as set_base_path,
+            get_download_base_path,
+            salvar_download_direto
+        )
+        logger.debug("download_manager importado com sucesso (import relativo)")
+    except ImportError as e2:
+        # Se não conseguir importar, cria stubs para evitar erros
+        logger.warning(f"download_manager não disponível. Import absoluto: {e1}, Import relativo: {e2}")
+        logger.warning("Algumas funcionalidades podem não funcionar.")
+        def set_base_path(path: str) -> None:
+            pass
+        def get_download_base_path() -> str:
+            return "./downloads"
+        def salvar_download_direto(*args, **kwargs):
+            pass
 
 
 def set_downloads_base_path(path: str) -> None:
@@ -35,6 +59,76 @@ def set_downloads_base_path(path: str) -> None:
         path: Caminho base para downloads
     """
     set_base_path(path)
+
+
+async def verificar_sem_registros(page: Page) -> bool:
+    """
+    Verifica se a página exibe a mensagem "Nenhum registro encontrado".
+    
+    Esta função verifica múltiplos seletores para detectar quando não há
+    registros na tabela de notas fiscais.
+    
+    Valida os seguintes seletores:
+    - XPath: /html/body/div[1]/span
+    - CSS: span.sem-registros
+    - Texto: "Nenhum registro encontrado"
+    
+    Args:
+        page: Página do Playwright
+        
+    Returns:
+        True se encontrar a mensagem "Nenhum registro encontrado", False caso contrário
+    """
+    try:
+        # Tenta encontrar pelo xpath (Playwright usa xpath= como prefixo)
+        xpath_selector = "/html/body/div[1]/span"
+        try:
+            elemento_xpath = page.locator(f"xpath={xpath_selector}")
+            count = await elemento_xpath.count()
+            if count > 0:
+                texto = await elemento_xpath.inner_text()
+                if texto and "Nenhum registro encontrado" in texto:
+                    logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via XPath")
+                    return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar XPath: {e}")
+        
+        # Tenta encontrar pelo seletor CSS com classe
+        try:
+            elemento_span = page.locator("span.sem-registros")
+            count = await elemento_span.count()
+            if count > 0:
+                texto = await elemento_span.inner_text()
+                if texto and "Nenhum registro encontrado" in texto:
+                    logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via CSS (span.sem-registros)")
+                    return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar CSS span.sem-registros: {e}")
+        
+        # Tenta encontrar pelo texto direto (usando locator com texto)
+        try:
+            elemento_texto = page.locator("text=Nenhum registro encontrado")
+            count = await elemento_texto.count()
+            if count > 0:
+                logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via texto")
+                return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar texto direto: {e}")
+        
+        # Tenta encontrar usando get_by_text (método mais moderno do Playwright)
+        try:
+            elemento_texto_moderno = page.get_by_text("Nenhum registro encontrado", exact=False)
+            count = await elemento_texto_moderno.count()
+            if count > 0:
+                logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via get_by_text")
+                return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar get_by_text: {e}")
+        
+        return False
+    except Exception as e:
+        logger.debug(f"Erro ao verificar mensagem 'sem registros': {e}")
+        return False
 
 
 # Nota: A função salvar_download foi movida para download_manager.py
@@ -261,6 +355,12 @@ async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empr
     """
     logger.info(f"Iniciando processamento de Notas Emitidas para competência {competencia_alvo}")
     
+    # Verifica se há mensagem "Nenhum registro encontrado" antes de processar
+    if await verificar_sem_registros(page):
+        logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
+        logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
+        return
+    
     while True:
         try:
             # Aguarda a tabela carregar
@@ -380,6 +480,12 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
         nome_empresa: Nome da empresa (do certificado digital)
     """
     logger.info(f"Iniciando processamento de Notas Recebidas para competência {competencia_alvo}")
+    
+    # Verifica se há mensagem "Nenhum registro encontrado" antes de processar
+    if await verificar_sem_registros(page):
+        logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
+        logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
+        return
     
     while True:
         try:
@@ -521,12 +627,33 @@ async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) 
         # Aguarda navegação e carregamento da tabela
         await page.wait_for_url("**/Notas/Emitidas", timeout=15000)
         await page.wait_for_load_state("networkidle", timeout=15000)
-        await page.wait_for_selector("table tbody tr", timeout=10000)
+        
+        # Aguarda um pouco para garantir que a página carregou completamente
+        await page.wait_for_timeout(1000)
+        
+        # Verifica se há mensagem "Nenhum registro encontrado"
+        if await verificar_sem_registros(page):
+            logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
+            logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
+        else:
+            # Só aguarda a tabela se não houver mensagem de "sem registros"
+            try:
+                await page.wait_for_selector("table tbody tr", timeout=10000)
+            except:
+                # Se não encontrar tabela, verifica novamente se há mensagem de sem registros
+                if await verificar_sem_registros(page):
+                    logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
+                    logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
+                else:
+                    logger.warning("⚠️  Não foi possível encontrar tabela nem mensagem de 'sem registros'")
         
         logger.info("✅ Acessou Notas Emitidas com sucesso")
         
-        # 2) Processar tabela de Notas Emitidas
-        await processar_tabela_emitidas(page, competencia_alvo, nome_empresa)
+        # 2) Processar tabela de Notas Emitidas (só processa se não houver mensagem de sem registros)
+        if not await verificar_sem_registros(page):
+            await processar_tabela_emitidas(page, competencia_alvo, nome_empresa)
+        else:
+            logger.info("⏭️  Pulando processamento de Notas Emitidas (nenhum registro encontrado)")
         
         # 4) Ir para "Notas fiscais recebidas"
         logger.info("Acessando menu 'Notas fiscais recebidas'...")
@@ -541,12 +668,33 @@ async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) 
         # Aguarda navegação e carregamento da tabela
         await page.wait_for_url("**/Notas/Recebidas", timeout=15000)
         await page.wait_for_load_state("networkidle", timeout=15000)
-        await page.wait_for_selector("table tbody tr", timeout=10000)
+        
+        # Aguarda um pouco para garantir que a página carregou completamente
+        await page.wait_for_timeout(1000)
+        
+        # Verifica se há mensagem "Nenhum registro encontrado"
+        if await verificar_sem_registros(page):
+            logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
+            logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
+        else:
+            # Só aguarda a tabela se não houver mensagem de "sem registros"
+            try:
+                await page.wait_for_selector("table tbody tr", timeout=10000)
+            except:
+                # Se não encontrar tabela, verifica novamente se há mensagem de sem registros
+                if await verificar_sem_registros(page):
+                    logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
+                    logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
+                else:
+                    logger.warning("⚠️  Não foi possível encontrar tabela nem mensagem de 'sem registros'")
         
         logger.info("✅ Acessou Notas Recebidas com sucesso")
         
-        # 5) Processar tabela de Notas Recebidas
-        await processar_tabela_recebidas(page, competencia_alvo, nome_empresa)
+        # 5) Processar tabela de Notas Recebidas (só processa se não houver mensagem de sem registros)
+        if not await verificar_sem_registros(page):
+            await processar_tabela_recebidas(page, competencia_alvo, nome_empresa)
+        else:
+            logger.info("⏭️  Pulando processamento de Notas Recebidas (nenhum registro encontrado)")
         
         logger.info("🎉 Processamento completo finalizado!")
         

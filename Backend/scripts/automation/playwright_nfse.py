@@ -399,6 +399,9 @@ async def abrir_dashboard_nfse(
             log("⚠️  Possível falha na autenticação")
             mensagem = "Não foi possível confirmar acesso ao dashboard"
         
+        # IMPORTANTE: Não fecha recursos aqui! Eles serão fechados pelo ExecutionService
+        # quando a execução terminar. Isso permite que múltiplas execuções concorrentes
+        # funcionem corretamente sem interferir umas nas outras.
         return {
             "sucesso": sucesso,
             "url_atual": final_url,
@@ -416,13 +419,9 @@ async def abrir_dashboard_nfse(
         logger.error(f"❌ {error_msg}")
         logs.append(f"❌ ERRO: {error_msg}")
         
-        raise NFSeAutenticacaoError(error_msg)
-        
-    finally:
-        # Se estiver em modo headless, fecha tudo automaticamente
-        # Se não estiver em headless, mantém o navegador aberto para o usuário ver
-        if headless:
-            # Limpa recursos apenas em modo headless
+        # Em caso de erro, limpa recursos antes de levantar exceção
+        # para evitar vazamento de recursos
+        try:
             if page:
                 try:
                     await page.close()
@@ -447,9 +446,9 @@ async def abrir_dashboard_nfse(
                 except:
                     pass
             
-            log("🧹 Recursos liberados (modo headless)")
-        else:
-            # Em modo visível, mantém o navegador aberto
-            log("🌐 Navegador mantido aberto para visualização")
-            log("   O navegador será fechado quando o script terminar")
+            log("🧹 Recursos liberados após erro")
+        except Exception as cleanup_error:
+            logger.warning(f"Erro ao limpar recursos após erro: {cleanup_error}")
+        
+        raise NFSeAutenticacaoError(error_msg)
 

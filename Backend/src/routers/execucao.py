@@ -203,15 +203,32 @@ async def iniciar_execucao(
         
         logger.info(f"Iniciando execução: empresa_id_real={empresa_id_real}, cnpj={cnpj_limpo}")
         
-        execucao_id = await execution_service.adicionar_execucao(
-            empresa_id=str(empresa_id_real),
-            cnpj=cnpj_limpo,
-            competencia=competencia,
-            tipo=tipo,
-            headless=headless
-        )
-        
-        logger.info(f"Execução adicionada à fila: execucao_id={execucao_id}")
+        try:
+            execucao_id = await execution_service.adicionar_execucao(
+                empresa_id=str(empresa_id_real),
+                cnpj=cnpj_limpo,
+                competencia=competencia,
+                tipo=tipo,
+                headless=headless
+            )
+            logger.info(f"Execução adicionada à fila: execucao_id={execucao_id}")
+        except ValueError as ve:
+            # Erro de validação - retorna 400
+            logger.warning(f"Erro de validação ao adicionar execução: {ve}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Erro de validação: {str(ve)}"
+            )
+        except Exception as e:
+            # Outros erros - loga e retorna 500
+            logger.error(f"Erro ao adicionar execução à fila: {str(e)}", exc_info=True)
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Traceback completo:\n{error_trace}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erro ao iniciar execução: {str(e)}"
+            )
         
         # Retorna status inicial usando o ID real da empresa
         try:

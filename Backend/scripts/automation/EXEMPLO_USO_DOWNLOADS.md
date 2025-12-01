@@ -31,7 +31,7 @@ from scripts.automation.download_manager import set_downloads_base_path
 set_downloads_base_path("C:\\DownloadsAutomacao")
 
 # Linux/macOS
-set_downloads_base_path("/home/usuario/DownloadsAutomacao")
+set_downloads_base_path("/home/usuario/DownloadsAutomacao")"
 
 # Ou usando Path (multiplataforma)
 from pathlib import Path
