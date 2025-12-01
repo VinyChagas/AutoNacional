@@ -78,12 +78,12 @@ class ExecutionService:
         if self.lock is None:
             self.lock = asyncio.Lock()
     
-    async def _obter_limite_concorrencia(self) -> int:
+    async def _obter_configuracoes(self):
         """
-        Obtém o limite de concorrência do banco de dados.
+        Obtém todas as configurações do banco de dados.
         
         Returns:
-            Limite de navegadores simultâneos (padrão: 3)
+            Objeto AutomationSettings com todas as configurações ou None se erro
         """
         try:
             from ..db.session import get_db
@@ -92,14 +92,38 @@ class ExecutionService:
             db = next(get_db())
             try:
                 configuracoes = obter_configuracoes(db)
-                if configuracoes and configuracoes.default_concurrent_browsers:
-                    limite = configuracoes.default_concurrent_browsers
-                    logger.info(f"Limite de concorrência obtido do banco: {limite}")
-                    return limite
+                if configuracoes:
+                    logger.debug("Configurações obtidas do banco de dados")
+                    return configuracoes
             finally:
                 db.close()
         except Exception as e:
-            logger.warning(f"Erro ao obter limite de concorrência do banco: {e}. Usando padrão.")
+            logger.warning(f"Erro ao obter configurações do banco: {e}. Usando padrões.")
+        
+        return None
+    
+    async def _obter_limite_concorrencia(self) -> int:
+        """
+        Obtém o limite de concorrência do banco de dados.
+        
+        Usa default_concurrent_browsers como limite principal, mas respeita
+        max_concurrent_browsers como limite máximo absoluto.
+        
+        Returns:
+            Limite de navegadores simultâneos (padrão: 3)
+        """
+        configuracoes = await self._obter_configuracoes()
+        if configuracoes:
+            # Usa default_concurrent_browsers como limite principal
+            limite = configuracoes.default_concurrent_browsers or 3
+            
+            # Respeita max_concurrent_browsers como limite máximo absoluto
+            if configuracoes.max_concurrent_browsers and limite > configuracoes.max_concurrent_browsers:
+                limite = configuracoes.max_concurrent_browsers
+                logger.warning(f"Limite ajustado para max_concurrent_browsers: {limite}")
+            
+            logger.info(f"Limite de concorrência obtido do banco: {limite} (default: {configuracoes.default_concurrent_browsers}, max: {configuracoes.max_concurrent_browsers})")
+            return limite
         
         # Padrão: 3 navegadores simultâneos
         return 3
@@ -143,7 +167,11 @@ class ExecutionService:
             
             # Usa headless da config se não fornecido
             if headless is None:
-                headless = PLAYWRIGHT_HEADLESS
+                configuracoes = await self._obter_configuracoes()
+                if configuracoes:
+                    headless = configuracoes.headless
+                else:
+                    headless = PLAYWRIGHT_HEADLESS
             
             # Inicializa recursos async se necessário
             await self._inicializar_recursos_async()
@@ -309,6 +337,13 @@ class ExecutionService:
                 
                 logger.info(f"Execução obtida da fila: Empresa {execucao.empresa_id}")
                 
+                # Aplica delay entre lançamentos de navegadores se configurado
+                configuracoes = await self._obter_configuracoes()
+                if configuracoes and configuracoes.browser_launch_delay_ms > 0:
+                    delay_ms = configuracoes.browser_launch_delay_ms
+                    logger.debug(f"Aplicando delay de {delay_ms}ms entre lançamentos de navegadores")
+                    await asyncio.sleep(delay_ms / 1000.0)  # Converte ms para segundos
+                
                 # Processa a execução usando Semaphore para controlar concorrência
                 # Isso permite múltiplas execuções simultâneas, limitadas pelo Semaphore
                 # Usa get_running_loop() para garantir que estamos no loop correto
@@ -420,14 +455,42 @@ class ExecutionService:
             
             self._adicionar_log(execucao, "Chamando abrir_dashboard_nfse (async)...")
             
-            headless = execucao.headless if execucao.headless is not None else PLAYWRIGHT_HEADLESS
+            # Obtém configurações do banco de dados
+            configuracoes = await self._obter_configuracoes()
+            
+            # Determina headless: usa o fornecido na execução, senão usa da config, senão usa padrão
+            headless = execucao.headless if execucao.headless is not None else (
+                configuracoes.headless if configuracoes else PLAYWRIGHT_HEADLESS
+            )
+            
+            # Determina timeout: usa da config (convertido de segundos para ms), senão usa padrão
+            timeout_ms = (
+                configuracoes.company_timeout_seconds * 1000 if configuracoes and configuracoes.company_timeout_seconds else PLAYWRIGHT_TIMEOUT
+            )
+            
+            # Determina viewport baseado no preset
+            viewport_config = None
+            if configuracoes:
+                if configuracoes.viewport_preset == "CUSTOM" and configuracoes.viewport_width and configuracoes.viewport_height:
+                    viewport_config = {"width": configuracoes.viewport_width, "height": configuracoes.viewport_height}
+                elif configuracoes.viewport_preset == "HD":
+                    viewport_config = {"width": 1280, "height": 720}
+                elif configuracoes.viewport_preset == "FULLHD":
+                    viewport_config = {"width": 1920, "height": 1080}
+                elif configuracoes.viewport_preset == "QHD":
+                    viewport_config = {"width": 2560, "height": 1440}
+            
+            # Se não configurado, usa Full HD como padrão
+            if not viewport_config:
+                viewport_config = {"width": 1920, "height": 1080}
             
             try:
                 # AGORA USA AWAIT - função é async
                 resultado_auth = await abrir_dashboard_nfse(
                     cnpj=cnpj_str,
                     headless=headless,
-                    timeout=PLAYWRIGHT_TIMEOUT
+                    timeout=timeout_ms,
+                    viewport=viewport_config
                 )
                 self._adicionar_log(execucao, "abrir_dashboard_nfse concluído")
             except Exception as e:

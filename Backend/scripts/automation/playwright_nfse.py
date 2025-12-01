@@ -16,7 +16,7 @@ Características:
 import os
 import sys
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
 
 from playwright.async_api import (
     async_playwright,
@@ -101,7 +101,8 @@ class NFSeAutenticacaoError(Exception):
 async def criar_contexto_com_certificado(
     cnpj: str,
     headless: bool = True,
-    ignore_https_errors: bool = True
+    ignore_https_errors: bool = True,
+    viewport: Optional[dict] = None
 ) -> Tuple[Playwright, Browser, BrowserContext]:
     """
     Cria um contexto do navegador Chromium configurado para usar certificado A1.
@@ -120,6 +121,8 @@ async def criar_contexto_com_certificado(
         cnpj: CNPJ da empresa (sem formatação, apenas números)
         headless: Se True, executa o navegador em modo headless
         ignore_https_errors: Se True, ignora erros de certificado SSL
+        viewport: Dicionário com width e height do viewport (ex: {"width": 1920, "height": 1080})
+                  Se None, usa Full HD (1920x1080) como padrão
         
     Returns:
         Tupla (playwright, browser, context) configurados com certificado
@@ -174,9 +177,14 @@ async def criar_contexto_com_certificado(
         # Isso permite autenticação via certificado A1 sem popups de seleção
         
         logger.info("🔐 Configurando certificado cliente no contexto do navegador...")
+        
+        # Define viewport: usa o fornecido ou Full HD como padrão
+        viewport_config = viewport if viewport else {"width": 1920, "height": 1080}
+        logger.info(f"📐 Viewport configurado: {viewport_config['width']}x{viewport_config['height']}")
+        
         context = await browser.new_context(
             ignore_https_errors=ignore_https_errors,
-            viewport={"width": 1920, "height": 1080},  # Full HD 1920x1080p
+            viewport=viewport_config,
             user_agent=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -211,7 +219,8 @@ async def criar_contexto_com_certificado(
 async def abrir_dashboard_nfse(
     cnpj: str,
     headless: bool = False,
-    timeout: int = 30000
+    timeout: int = 30000,
+    viewport: Optional[dict] = None
 ) -> dict:
     """
     Abre o dashboard do portal NFSe Nacional autenticado com certificado A1.
@@ -227,6 +236,8 @@ async def abrir_dashboard_nfse(
         cnpj: CNPJ da empresa (sem formatação, apenas números)
         headless: Se True, executa o navegador em modo headless (padrão: False - navegador visível)
         timeout: Timeout em milissegundos para operações do Playwright
+        viewport: Dicionário com width e height do viewport (ex: {"width": 1920, "height": 1080})
+                  Se None, usa Full HD (1920x1080) como padrão
         
     Returns:
         Dicionário com informações sobre o resultado:
@@ -261,7 +272,8 @@ async def abrir_dashboard_nfse(
         playwright_instance, browser, context = await criar_contexto_com_certificado(
             cnpj=cnpj,
             headless=headless,
-            ignore_https_errors=True
+            ignore_https_errors=True,
+            viewport=viewport
         )
         log("✅ Contexto criado com sucesso")
         
@@ -269,14 +281,13 @@ async def abrir_dashboard_nfse(
         log("📄 Criando nova página...")
         page = await context.new_page()
         
-        # Maximiza a janela para fullscreen (1920x1080) quando não estiver em headless
-        if not headless:
+        # Configura viewport quando não estiver em headless (já configurado no contexto, mas garante)
+        if not headless and viewport:
             try:
-                # Tenta maximizar a janela do navegador
-                await page.set_viewport_size({"width": 1920, "height": 1080})
-                log("✅ Janela configurada para 1920x1080p (Full HD)")
+                await page.set_viewport_size(viewport)
+                log(f"✅ Janela configurada para {viewport['width']}x{viewport['height']}")
             except Exception as e:
-                log(f"⚠️  Não foi possível maximizar janela: {e}")
+                log(f"⚠️  Não foi possível configurar viewport: {e}")
         
         log("✅ Página criada")
         

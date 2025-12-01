@@ -6,6 +6,8 @@ competência específica, fazendo download de XML e DANFS-e (PDF) para notas vá
 """
 
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -59,6 +61,68 @@ def set_downloads_base_path(path: str) -> None:
         path: Caminho base para downloads
     """
     set_base_path(path)
+
+
+# Cache para configurações (evita múltiplas consultas ao banco)
+_configuracoes_cache: Optional[dict] = None
+
+
+def _obter_configuracoes() -> dict:
+    """
+    Obtém configurações do banco de dados (com cache).
+    
+    Returns:
+        Dicionário com configurações ou valores padrão se não conseguir obter
+    """
+    global _configuracoes_cache
+    
+    # Se já tem cache, retorna
+    if _configuracoes_cache is not None:
+        return _configuracoes_cache
+    
+    try:
+        # Tenta importar e obter configurações do banco
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src_path = os.path.join(backend_dir, "src")
+        
+        if src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        
+        from db.session import get_db
+        from db.crud_settings import obter_configuracoes
+        
+        db = next(get_db())
+        try:
+            configuracoes = obter_configuracoes(db)
+            if configuracoes:
+                _configuracoes_cache = {
+                    "min_action_delay_ms": configuracoes.min_action_delay_ms or 500,
+                    "max_retries_per_step": configuracoes.max_retries_per_step or 3,
+                }
+                logger.debug(f"Configurações obtidas do banco: {_configuracoes_cache}")
+                return _configuracoes_cache
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug(f"Erro ao obter configurações: {e}. Usando padrões.")
+    
+    # Valores padrão se não conseguir obter
+    _configuracoes_cache = {
+        "min_action_delay_ms": 500,
+        "max_retries_per_step": 3,
+    }
+    return _configuracoes_cache
+
+
+def get_min_action_delay_ms() -> int:
+    """
+    Obtém o delay mínimo entre ações em milissegundos.
+    
+    Returns:
+        Delay em milissegundos (padrão: 500)
+    """
+    config = _obter_configuracoes()
+    return config.get("min_action_delay_ms", 500)
 
 
 async def verificar_sem_registros(page: Page) -> bool:
@@ -390,7 +454,8 @@ async def baixar_arquivos_da_linha(
         
         # Fecha o menu e reabre para baixar o PDF
         await icone_acoes.click()  # Fecha o menu
-        await page.wait_for_timeout(200)
+        delay_ms = get_min_action_delay_ms()
+        await page.wait_for_timeout(delay_ms)
         
         # Reabre o menu para baixar DANFS-e
         await icone_acoes.click()
@@ -438,7 +503,8 @@ async def baixar_arquivos_da_linha(
         
         # Fecha o menu novamente
         await icone_acoes.click()
-        await page.wait_for_timeout(200)
+        delay_ms = get_min_action_delay_ms()
+        await page.wait_for_timeout(delay_ms)
         
     except Exception as e:
         logger.error(f"Erro ao baixar arquivos da linha: {e}")
@@ -773,7 +839,8 @@ async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) 
         await page.wait_for_load_state("networkidle", timeout=15000)
         
         # Aguarda um pouco para garantir que a página carregou completamente
-        await page.wait_for_timeout(1000)
+        delay_ms = get_min_action_delay_ms() * 2  # Delay maior para carregamento de página
+        await page.wait_for_timeout(delay_ms)
         
         # Verifica se há mensagem "Nenhum registro encontrado"
         if await verificar_sem_registros(page):
@@ -814,7 +881,8 @@ async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) 
         await page.wait_for_load_state("networkidle", timeout=15000)
         
         # Aguarda um pouco para garantir que a página carregou completamente
-        await page.wait_for_timeout(1000)
+        delay_ms = get_min_action_delay_ms() * 2  # Delay maior para carregamento de página
+        await page.wait_for_timeout(delay_ms)
         
         # Verifica se há mensagem "Nenhum registro encontrado"
         if await verificar_sem_registros(page):
