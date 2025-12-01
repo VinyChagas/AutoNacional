@@ -15,7 +15,7 @@ import sys
 import asyncio
 from typing import Dict, Optional, List
 from datetime import datetime
-from asyncio import Queue
+from asyncio import Queue, Empty
 
 # Adiciona src e scripts/automation ao path para imports funcionarem ANTES de importar outros módulos
 backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,27 +56,14 @@ class ExecutionService:
     
     def __init__(self):
         """Inicializa o service de execução."""
-        # IMPORTANTE: asyncio.Queue() e asyncio.Lock() não podem ser criados no __init__
-        # porque precisam estar dentro de um evento loop. Serão criados na primeira chamada async.
-        self.fila_execucoes: Optional[Queue] = None
+        self.fila_execucoes: Queue = Queue()
         self.execucoes_ativas: Dict[str, ExecucaoInfo] = {}
         self.task_processadora: Optional[asyncio.Task] = None
         self.rodando = False
-        self.lock: Optional[asyncio.Lock] = None
+        self.lock = asyncio.Lock()
         # Semaphore para controlar concorrência de navegadores
         # O limite será configurado dinamicamente baseado no banco de dados
         self.semaphore: Optional[asyncio.Semaphore] = None
-    
-    async def _inicializar_recursos_async(self):
-        """
-        Inicializa recursos assíncronos que precisam estar dentro de um evento loop.
-        
-        Esta função deve ser chamada antes de usar qualquer recurso async.
-        """
-        if self.fila_execucoes is None:
-            self.fila_execucoes = Queue()
-        if self.lock is None:
-            self.lock = asyncio.Lock()
     
     async def _obter_limite_concorrencia(self) -> int:
         """
@@ -128,56 +115,46 @@ class ExecutionService:
         Raises:
             ValueError: Se os parâmetros forem inválidos
         """
-        try:
-            # Validações
-            if not empresa_id:
-                raise ValueError("empresa_id não pode ser None ou vazio")
-            if not cnpj:
-                raise ValueError("cnpj não pode ser None ou vazio")
-            if not competencia:
-                raise ValueError("competencia não pode ser None ou vazio")
+        # Validações
+        if not empresa_id:
+            raise ValueError("empresa_id não pode ser None ou vazio")
+        if not cnpj:
+            raise ValueError("cnpj não pode ser None ou vazio")
+        if not competencia:
+            raise ValueError("competencia não pode ser None ou vazio")
+        
+        empresa_id = str(empresa_id)
+        cnpj = str(cnpj).strip()
+        competencia = str(competencia).strip()
+        
+        # Usa headless da config se não fornecido
+        if headless is None:
+            headless = PLAYWRIGHT_HEADLESS
+        
+        async with self.lock:
+            # Cria informação da execução
+            execucao = ExecucaoInfo(
+                empresa_id=empresa_id,
+                cnpj=cnpj,
+                competencia=competencia,
+                tipo=tipo,
+                headless=headless
+            )
             
-            empresa_id = str(empresa_id)
-            cnpj = str(cnpj).strip()
-            competencia = str(competencia).strip()
+            # Cria registro no banco de dados para persistir o estado
+            # Isso permite rastrear execuções mesmo após reinicialização do processo
+            try:
+                execucao_db_id = self._criar_execucao_db(empresa_id, StatusExecucao.PENDENTE)
+                execucao.execucao_db_id = execucao_db_id
+                logger.info(f"Registro de execução criado no banco: ID {execucao_db_id}")
+            except Exception as e:
+                # Se falhar ao criar no banco, continua com execução em memória
+                # Isso garante que o sistema continue funcionando mesmo com problemas no banco
+                logger.warning(f"Erro ao criar registro de execução no banco: {e}. Continuando apenas em memória.")
             
-            # Usa headless da config se não fornecido
-            if headless is None:
-                headless = PLAYWRIGHT_HEADLESS
-            
-            # Inicializa recursos async se necessário
-            await self._inicializar_recursos_async()
-            
-            # Garante que lock está inicializado
-            if self.lock is None:
-                await self._inicializar_recursos_async()
-            
-            async with self.lock:
-                # Cria informação da execução
-                execucao = ExecucaoInfo(
-                    empresa_id=empresa_id,
-                    cnpj=cnpj,
-                    competencia=competencia,
-                    tipo=tipo,
-                    headless=headless
-                )
-                
-                # Cria registro no banco de dados para persistir o estado
-                # Isso permite rastrear execuções mesmo após reinicialização do processo
-                try:
-                    execucao_db_id = self._criar_execucao_db(empresa_id, StatusExecucao.PENDENTE)
-                    execucao.execucao_db_id = execucao_db_id
-                    logger.info(f"Registro de execução criado no banco: ID {execucao_db_id}")
-                except Exception as e:
-                    # Se falhar ao criar no banco, continua com execução em memória
-                    # Isso garante que o sistema continue funcionando mesmo com problemas no banco
-                    logger.warning(f"Erro ao criar registro de execução no banco: {e}. Continuando apenas em memória.")
-                
-                # Adiciona à fila assíncrona (garante que está inicializada)
-                if self.fila_execucoes is None:
-                    await self._inicializar_recursos_async()
-                await self.fila_execucoes.put(execucao)
-                self.execucoes_ativas[empresa_id] = execucao
+            # Adiciona à fila assíncrona
+            await self.fila_execucoes.put(execucao)
+            self.execucoes_ativas[empresa_id] = execucao
             
             logger.info(f"Execução adicionada à fila: Empresa {empresa_id} (CNPJ: {cnpj})")
             
@@ -191,35 +168,10 @@ class ExecutionService:
                     logger.info(f"Semaphore inicializado com limite de {limite} navegadores simultâneos")
                 
                 # Cria task assíncrona para processar a fila
-                # IMPORTANTE: Estamos dentro de um endpoint async do FastAPI, então há um loop rodando
-                try:
-                    loop = asyncio.get_running_loop()
-                    self.task_processadora = loop.create_task(self._processar_fila())
-                    logger.info("Task processadora iniciada (async)")
-                except RuntimeError as e:
-                    # Se não houver loop rodando, isso é um problema
-                    logger.error(f"Erro ao criar task processadora: {e}", exc_info=True)
-                    # Tenta usar ensure_future como fallback
-                    try:
-                        self.task_processadora = asyncio.ensure_future(self._processar_fila())
-                        logger.info("Task processadora criada via ensure_future")
-                    except Exception as e2:
-                        logger.error(f"Erro ao criar task via ensure_future: {e2}", exc_info=True)
-                        # Se tudo falhar, marca como não rodando mas NÃO levanta exceção
-                        # A execução já foi adicionada à fila, então pode ser processada depois
-                        self.rodando = False
-                        logger.warning("Task processadora não pôde ser criada, mas execução foi adicionada à fila")
+                self.task_processadora = asyncio.create_task(self._processar_fila())
+                logger.info("Task processadora iniciada (async)")
             
             return empresa_id
-        except ValueError:
-            # Re-raise ValueError sem modificar (validações)
-            raise
-        except Exception as e:
-            # Loga qualquer outro erro e re-raise para que o FastAPI trate
-            logger.error(f"Erro ao adicionar execução: {str(e)}", exc_info=True)
-            import traceback
-            logger.error(f"Traceback completo:\n{traceback.format_exc()}")
-            raise
     
     def obter_status(self, empresa_id: str) -> Optional[Dict]:
         """
@@ -260,20 +212,13 @@ class ExecutionService:
         REFATORADO PARA ASYNC: Esta função agora roda em uma task asyncio,
         permitindo execução concorrente controlada via Semaphore.
         """
-        # Garante que recursos async estão inicializados
-        await self._inicializar_recursos_async()
-        
         logger.info("Iniciando processamento da fila de execuções (async)")
         
         while True:
             try:
                 # Pega próxima execução (bloqueia até ter uma)
-                fila_size = self.fila_execucoes.qsize() if self.fila_execucoes else 0
-                logger.info(f"Aguardando próxima execução na fila... (fila tem {fila_size} itens)")
+                logger.info(f"Aguardando próxima execução na fila... (fila tem {self.fila_execucoes.qsize()} itens)")
                 try:
-                    # Garante que fila está inicializada
-                    if self.fila_execucoes is None:
-                        await self._inicializar_recursos_async()
                     execucao = await asyncio.wait_for(
                         self.fila_execucoes.get(),
                         timeout=QUEUE_TIMEOUT
@@ -281,49 +226,20 @@ class ExecutionService:
                 except asyncio.TimeoutError:
                     # Timeout - verifica se deve continuar
                     logger.info(f"Timeout ao aguardar execução ({QUEUE_TIMEOUT}s)")
-                    await self._inicializar_recursos_async()
-                    # Garante que lock está inicializado
-                    if self.lock is None:
-                        await self._inicializar_recursos_async()
                     async with self.lock:
-                        if self.fila_execucoes and self.fila_execucoes.empty():
+                        if self.fila_execucoes.empty():
                             logger.info("Fila vazia. Task processadora pausada.")
                             self.rodando = False
                             break
                         else:
-                            fila_size = self.fila_execucoes.qsize() if self.fila_execucoes else 0
-                            logger.info(f"Fila ainda tem itens ({fila_size}), continuando...")
+                            logger.info(f"Fila ainda tem itens ({self.fila_execucoes.qsize()}), continuando...")
                             continue
                 
                 logger.info(f"Execução obtida da fila: Empresa {execucao.empresa_id}")
                 
                 # Processa a execução usando Semaphore para controlar concorrência
                 # Isso permite múltiplas execuções simultâneas, limitadas pelo Semaphore
-                # Usa get_running_loop() para garantir que estamos no loop correto
-                try:
-                    loop = asyncio.get_running_loop()
-                    # Cria task sem aguardar (fire-and-forget) para permitir concorrência
-                    task = loop.create_task(self._executar_com_semaphore(execucao))
-                    # Adiciona callback para logar erros não tratados na task
-                    def log_task_error(task):
-                        try:
-                            task.result()  # Isso vai levantar exceção se houver erro
-                        except Exception as e:
-                            logger.error(f"Erro não tratado na task de execução para empresa {execucao.empresa_id}: {e}", exc_info=True)
-                    task.add_done_callback(log_task_error)
-                    logger.debug(f"Task criada para execução da empresa {execucao.empresa_id}")
-                except RuntimeError as e:
-                    logger.error(f"Erro ao criar task para execução: {e}", exc_info=True)
-                    # Se não conseguir criar task, tenta executar diretamente (sequencial)
-                    logger.warning("Executando sem task (sequencial) devido a erro no loop")
-                    try:
-                        await self._executar_com_semaphore(execucao)
-                    except Exception as exec_error:
-                        logger.error(f"Erro ao executar diretamente: {exec_error}", exc_info=True)
-                        # Continua para próxima execução mesmo com erro
-                except Exception as e:
-                    logger.error(f"Erro inesperado ao criar task: {e}", exc_info=True)
-                    # Continua para próxima execução mesmo com erro
+                asyncio.create_task(self._executar_com_semaphore(execucao))
                 
             except Exception as e:
                 logger.error(f"Erro no processamento da fila: {str(e)}", exc_info=True)
@@ -345,22 +261,15 @@ class ExecutionService:
             self.semaphore = asyncio.Semaphore(limite)
         
         async with self.semaphore:
-            # Log com identificação única para rastreamento de concorrência
-            execucao_id = f"{execucao.empresa_id}-{id(execucao)}"
-            logger.info(f"[{execucao_id}] Iniciando execução com controle de concorrência: Empresa {execucao.empresa_id}")
-            logger.info(f"[{execucao_id}] Semaphore adquirido. Navegadores ativos limitados pelo Semaphore.")
-            
+            logger.info(f"Iniciando execução com controle de concorrência: Empresa {execucao.empresa_id}")
             try:
                 await self._executar_fluxo_completo(execucao)
-                logger.info(f"[{execucao_id}] Execução concluída com sucesso para empresa {execucao.empresa_id}")
+                logger.info(f"Execução concluída para empresa {execucao.empresa_id}")
             except Exception as e:
-                logger.error(f"[{execucao_id}] Erro na execução para empresa {execucao.empresa_id}: {str(e)}", exc_info=True)
+                logger.error(f"Erro na execução para empresa {execucao.empresa_id}: {str(e)}", exc_info=True)
             finally:
-                logger.info(f"[{execucao_id}] Liberando Semaphore e marcando execução como concluída")
-                # Marca como concluída na fila (se fila estiver inicializada)
-                if self.fila_execucoes is not None:
-                    self.fila_execucoes.task_done()
-                logger.info(f"[{execucao_id}] Semaphore liberado. Outra execução pode iniciar agora.")
+                # Marca como concluída na fila
+                self.fila_execucoes.task_done()
     
     async def _executar_fluxo_completo(self, execucao: ExecucaoInfo):
         """
@@ -624,18 +533,6 @@ class ExecutionService:
             # Sincronização: estado em memória -> banco de dados
             self._atualizar_execucao_db(execucao, StatusExecucao.CONCLUIDO, execucao.data_inicio, execucao.data_fim)
             
-            # Fecha o navegador após finalizar a execução (para tipos "recebidas" e "ambas")
-            # IMPORTANTE: Fecha APÓS atualizar o status para garantir que o frontend receba o status correto
-            # IMPORTANTE: Força fechamento mesmo em modo visível (headless=False) para tipos "recebidas" e "ambas"
-            if execucao.tipo in ["recebidas", "ambas"]:
-                self._adicionar_log(execucao, "🔒 Fechando navegador após finalização (fechamento automático para notas recebidas)")
-                await self._limpar_recursos(execucao, forcar_fechamento=True)
-                # Marca que recursos já foram fechados para evitar fechamento duplo no finally
-                execucao.page = None
-                execucao.context = None
-                execucao.browser = None
-                execucao.playwright = None
-            
         except Exception as e:
             # Verifica se é erro de autenticação específico
             if "NFSeAutenticacaoError" in str(type(e)) or "autenticação" in str(e).lower():
@@ -664,13 +561,7 @@ class ExecutionService:
             
         finally:
             # Cleanup: fecha recursos do Playwright (async)
-            # IMPORTANTE: Só fecha recursos se ainda não foram fechados após finalização
-            # (quando tipo é "recebidas" ou "ambas", os recursos já foram fechados após finalização)
-            # Para "emitidas", fecha aqui no finally
-            if execucao.page is not None or execucao.context is not None or execucao.browser is not None:
-                # Se ainda houver recursos abertos, fecha
-                logger.debug(f"Fechando recursos no finally para empresa {execucao.empresa_id}")
-                await self._limpar_recursos(execucao)
+            await self._limpar_recursos(execucao)
     
     def _adicionar_log(self, execucao: ExecucaoInfo, mensagem: str):
         """
@@ -683,7 +574,7 @@ class ExecutionService:
         log_msg = f"[{timestamp}] {mensagem}"
         execucao.logs.append(log_msg)
         logger.info(f"Empresa {execucao.empresa_id}: {mensagem}")
-    
+        
         # Se for um erro crítico e a execução ainda não foi finalizada,
         # atualiza mensagem_erro no banco para facilitar debugging
         if "❌" in mensagem or "ERRO" in mensagem.upper():
@@ -695,93 +586,44 @@ class ExecutionService:
                     # Não interrompe o fluxo se falhar ao atualizar o banco
                     logger.debug(f"Erro ao atualizar mensagem_erro no banco: {e}")
     
-    async def _limpar_recursos(self, execucao: ExecucaoInfo, forcar_fechamento: bool = False):
-        """
-        Limpa recursos do Playwright após execução (async).
-        
-        IMPORTANTE: Fecha recursos na ordem correta (page -> context -> browser -> playwright)
-        e trata erros individualmente para garantir que todos os recursos sejam fechados
-        mesmo se algum falhar.
-        
-        Args:
-            execucao: Informações da execução
-            forcar_fechamento: Se True, fecha o navegador mesmo em modo visível (headless=False).
-                              Útil para fechar após processar notas recebidas.
-        """
+    async def _limpar_recursos(self, execucao: ExecucaoInfo):
+        """Limpa recursos do Playwright após execução (async)."""
         try:
             headless = execucao.headless if execucao.headless is not None else PLAYWRIGHT_HEADLESS
             
-            # Fecha navegador se estiver em modo headless OU se forçar fechamento foi solicitado
-            if headless or forcar_fechamento:
-                # Fecha tudo na ordem correta
-                # Ordem: page -> context -> browser -> playwright
-                
-                # 1. Fecha página
+            if headless:
+                # Em modo headless, fecha tudo
                 if execucao.page:
                     try:
-                        if not execucao.page.is_closed():
-                            await execucao.page.close()
-                            logger.debug(f"Página fechada para empresa {execucao.empresa_id}")
-                        else:
-                            logger.debug(f"Página já estava fechada para empresa {execucao.empresa_id}")
-                    except Exception as e:
-                        # Página pode já estar fechada ou desconectada
-                        logger.debug(f"Erro ao fechar página (pode já estar fechada): {e}")
+                        await execucao.page.close()
+                    except:
+                        pass
                 
-                # 2. Fecha contexto
                 if execucao.context:
                     try:
-                        if not execucao.context.is_closed():
-                            await execucao.context.close()
-                            logger.debug(f"Contexto fechado para empresa {execucao.empresa_id}")
-                        else:
-                            logger.debug(f"Contexto já estava fechado para empresa {execucao.empresa_id}")
-                    except Exception as e:
-                        # Contexto pode já estar fechado ou desconectado
-                        logger.debug(f"Erro ao fechar contexto (pode já estar fechado): {e}")
+                        await execucao.context.close()
+                    except:
+                        pass
                 
-                # 3. Fecha browser
                 if execucao.browser:
                     try:
-                        if execucao.browser.is_connected():
-                            await execucao.browser.close()
-                            logger.debug(f"Browser fechado para empresa {execucao.empresa_id}")
-                        else:
-                            logger.debug(f"Browser já estava desconectado para empresa {execucao.empresa_id}")
-                    except Exception as e:
-                        # Browser pode já estar fechado ou desconectado
-                        logger.debug(f"Erro ao fechar browser (pode já estar fechado): {e}")
+                        await execucao.browser.close()
+                    except:
+                        pass
                 
-                # 4. Para playwright
                 if execucao.playwright:
                     try:
                         await execucao.playwright.stop()
-                        logger.debug(f"Playwright parado para empresa {execucao.empresa_id}")
-                    except Exception as e:
-                        logger.debug(f"Erro ao parar playwright (pode já estar parado): {e}")
+                    except:
+                        pass
                 
-                # Limpa referências para evitar uso acidental
-                execucao.page = None
-                execucao.context = None
-                execucao.browser = None
-                execucao.playwright = None
-                
-                modo_msg = "modo headless" if headless else "fechamento forçado"
-                self._adicionar_log(execucao, f"🧹 Recursos liberados ({modo_msg})")
+                self._adicionar_log(execucao, "🧹 Recursos liberados (modo headless)")
             else:
-                # Em modo visível e sem forçar fechamento, mantém navegador aberto
+                # Em modo visível, mantém navegador aberto
                 self._adicionar_log(execucao, "🌐 Navegador mantido aberto para visualização")
                 
         except Exception as e:
-            logger.error(f"Erro ao limpar recursos para empresa {execucao.empresa_id}: {str(e)}", exc_info=True)
-            # Tenta limpar referências mesmo em caso de erro
-            try:
-                execucao.page = None
-                execucao.context = None
-                execucao.browser = None
-                execucao.playwright = None
-            except:
-                pass
+            logger.error(f"Erro ao limpar recursos: {str(e)}", exc_info=True)
     
     def _criar_execucao_db(self, empresa_id: str, status: StatusExecucao) -> int:
         """

@@ -10,19 +10,43 @@ from pathlib import Path
 from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
-# Importa o módulo de gerenciamento de downloads
-from .download_manager import (
-    set_downloads_base_path as set_base_path,
-    get_download_base_path,
-    salvar_download_direto
-)
-
-# Configuração de logging
+# Configuração de logging (deve vir antes de usar logger)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Importa o módulo de gerenciamento de downloads
+# IMPORTANTE: Usa import absoluto porque o módulo é importado diretamente (não como pacote)
+# O scripts_automation_path é adicionado ao sys.path, então os módulos são tratados como standalone
+try:
+    # Tenta import absoluto primeiro (quando usado como módulo standalone via sys.path)
+    from download_manager import (
+        set_downloads_base_path as set_base_path,
+        get_download_base_path,
+        salvar_download_direto
+    )
+    logger.debug("download_manager importado com sucesso (import absoluto)")
+except ImportError as e1:
+    # Fallback para import relativo (quando usado como pacote)
+    try:
+        from .download_manager import (
+            set_downloads_base_path as set_base_path,
+            get_download_base_path,
+            salvar_download_direto
+        )
+        logger.debug("download_manager importado com sucesso (import relativo)")
+    except ImportError as e2:
+        # Se não conseguir importar, cria stubs para evitar erros
+        logger.warning(f"download_manager não disponível. Import absoluto: {e1}, Import relativo: {e2}")
+        logger.warning("Algumas funcionalidades podem não funcionar.")
+        def set_base_path(path: str) -> None:
+            pass
+        def get_download_base_path() -> str:
+            return "./downloads"
+        def salvar_download_direto(*args, **kwargs):
+            pass
 
 
 def set_downloads_base_path(path: str) -> None:
@@ -37,50 +61,222 @@ def set_downloads_base_path(path: str) -> None:
     set_base_path(path)
 
 
+async def verificar_sem_registros(page: Page) -> bool:
+    """
+    Verifica se a página exibe a mensagem "Nenhum registro encontrado".
+    
+    Esta função verifica múltiplos seletores para detectar quando não há
+    registros na tabela de notas fiscais.
+    
+    Valida os seguintes seletores:
+    - XPath: /html/body/div[1]/span
+    - CSS: span.sem-registros
+    - Texto: "Nenhum registro encontrado"
+    
+    Args:
+        page: Página do Playwright
+        
+    Returns:
+        True se encontrar a mensagem "Nenhum registro encontrado", False caso contrário
+    """
+    try:
+        # Tenta encontrar pelo xpath (Playwright usa xpath= como prefixo)
+        xpath_selector = "/html/body/div[1]/span"
+        try:
+            elemento_xpath = page.locator(f"xpath={xpath_selector}")
+            count = await elemento_xpath.count()
+            if count > 0:
+                texto = await elemento_xpath.inner_text()
+                if texto and "Nenhum registro encontrado" in texto:
+                    logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via XPath")
+                    return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar XPath: {e}")
+        
+        # Tenta encontrar pelo seletor CSS com classe
+        try:
+            elemento_span = page.locator("span.sem-registros")
+            count = await elemento_span.count()
+            if count > 0:
+                texto = await elemento_span.inner_text()
+                if texto and "Nenhum registro encontrado" in texto:
+                    logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via CSS (span.sem-registros)")
+                    return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar CSS span.sem-registros: {e}")
+        
+        # Tenta encontrar pelo texto direto (usando locator com texto)
+        try:
+            elemento_texto = page.locator("text=Nenhum registro encontrado")
+            count = await elemento_texto.count()
+            if count > 0:
+                logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via texto")
+                return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar texto direto: {e}")
+        
+        # Tenta encontrar usando get_by_text (método mais moderno do Playwright)
+        try:
+            elemento_texto_moderno = page.get_by_text("Nenhum registro encontrado", exact=False)
+            count = await elemento_texto_moderno.count()
+            if count > 0:
+                logger.debug("Mensagem 'Nenhum registro encontrado' encontrada via get_by_text")
+                return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar get_by_text: {e}")
+        
+        return False
+    except Exception as e:
+        logger.debug(f"Erro ao verificar mensagem 'sem registros': {e}")
+        return False
+
+
 # Nota: A função salvar_download foi movida para download_manager.py
 # Use salvar_download_direto() do módulo download_manager para salvar downloads
 
 
-async def verificar_nota_valida(row_locator) -> bool:
+async def verificar_nota_cancelada(row_locator) -> bool:
     """
-    Verifica se uma nota fiscal é válida baseado no ícone na coluna 6.
+    Verifica se uma nota fiscal está cancelada baseado em dois pontos:
+    1. XPath: /html/body/div[1]/table/tbody/tr[3]/td[5]/img (adaptado para a linha atual)
+    2. Elemento HTML: <img data-toggle="tooltip" src="/EmissorNacional\\img/tb-cancelada.svg" title="" data-original-title="NFS-e Cancelada">
     
     Args:
         row_locator: Locator da linha da tabela
         
     Returns:
-        True se a nota for válida, False caso contrário
+        True se a nota estiver cancelada, False caso contrário
     """
     try:
-        # Tenta encontrar o ícone na coluna 6 (índice 5, pois começa em 0)
-        # Para emitidas: coluna 6, para recebidas: coluna 6 também
+        # Método 1: Verifica pela coluna de status (coluna 5, índice 4 para recebidas, coluna 6, índice 5 para emitidas)
+        # Tenta ambas as colunas possíveis
         celulas = row_locator.locator("td")
-        coluna_status = celulas.nth(5)  # 6ª coluna (índice 5)
         
-        # Procura por imagem na coluna de status
-        img_status = coluna_status.locator("img")
+        # Verifica coluna 5 (índice 4) - comum para recebidas
+        coluna_status_5 = celulas.nth(4)
+        img_status_5 = coluna_status_5.locator("img")
         
-        if await img_status.count() > 0:
-            # Verifica atributos que indicam nota válida
-            alt_text = await img_status.get_attribute("alt")
-            src_text = await img_status.get_attribute("src")
-            class_text = await img_status.get_attribute("class")
-            
-            # Considera válida se não houver indicadores de inválida/cancelada
-            if alt_text:
-                alt_lower = alt_text.lower()
-                if any(palavra in alt_lower for palavra in ["cancelada", "cancel", "inválida", "invalid"]):
-                    return False
-            
+        if await img_status_5.count() > 0:
+            # Verifica atributo src para imagem de cancelada
+            src_text = await img_status_5.get_attribute("src")
             if src_text:
-                src_lower = src_text.lower()
-                if any(palavra in src_lower for palavra in ["cancel", "invalid"]):
-                    return False
+                # Verifica se contém o caminho da imagem de cancelada
+                if "tb-cancelada.svg" in src_text or "cancelada" in src_text.lower():
+                    logger.debug("Nota cancelada detectada via src da imagem na coluna 5")
+                    return True
             
-            # Se não encontrou indicadores negativos, assume válida
-            return True
+            # Verifica atributo data-original-title
+            data_original_title = await img_status_5.get_attribute("data-original-title")
+            if data_original_title:
+                if "cancelada" in data_original_title.lower() or "cancel" in data_original_title.lower():
+                    logger.debug("Nota cancelada detectada via data-original-title na coluna 5")
+                    return True
+            
+            # Verifica atributo title
+            title_text = await img_status_5.get_attribute("title")
+            if title_text:
+                if "cancelada" in title_text.lower() or "cancel" in title_text.lower():
+                    logger.debug("Nota cancelada detectada via title na coluna 5")
+                    return True
         
-        # Se não encontrou imagem, assume válida por padrão
+        # Verifica coluna 6 (índice 5) - comum para emitidas
+        coluna_status_6 = celulas.nth(5)
+        img_status_6 = coluna_status_6.locator("img")
+        
+        if await img_status_6.count() > 0:
+            # Verifica atributo src para imagem de cancelada
+            src_text = await img_status_6.get_attribute("src")
+            if src_text:
+                # Verifica se contém o caminho da imagem de cancelada
+                if "tb-cancelada.svg" in src_text or "cancelada" in src_text.lower():
+                    logger.debug("Nota cancelada detectada via src da imagem na coluna 6")
+                    return True
+            
+            # Verifica atributo data-original-title
+            data_original_title = await img_status_6.get_attribute("data-original-title")
+            if data_original_title:
+                if "cancelada" in data_original_title.lower() or "cancel" in data_original_title.lower():
+                    logger.debug("Nota cancelada detectada via data-original-title na coluna 6")
+                    return True
+            
+            # Verifica atributo title
+            title_text = await img_status_6.get_attribute("title")
+            if title_text:
+                if "cancelada" in title_text.lower() or "cancel" in title_text.lower():
+                    logger.debug("Nota cancelada detectada via title na coluna 6")
+                    return True
+        
+        # Método 2: Tenta encontrar usando XPath adaptado para a linha atual
+        # O XPath original é /html/body/div[1]/table/tbody/tr[3]/td[5]/img
+        # Adaptamos para usar o row_locator e verificar td[5] (índice 4)
+        try:
+            # Tenta encontrar img dentro de td[5] usando XPath relativo
+            img_xpath = row_locator.locator("xpath=./td[5]/img")
+            if await img_xpath.count() > 0:
+                src_xpath = await img_xpath.get_attribute("src")
+                if src_xpath and ("tb-cancelada.svg" in src_xpath or "cancelada" in src_xpath.lower()):
+                    logger.debug("Nota cancelada detectada via XPath td[5]/img")
+                    return True
+        except Exception as e:
+            logger.debug(f"Erro ao verificar XPath td[5]/img: {e}")
+        
+        # Não encontrou indicadores de cancelada
+        return False
+        
+    except Exception as e:
+        logger.warning(f"Erro ao verificar se nota está cancelada: {e}. Assumindo não cancelada.")
+        return False
+
+
+async def verificar_nota_valida(row_locator) -> bool:
+    """
+    Verifica se uma nota fiscal é válida (não cancelada) baseado no ícone na coluna de status.
+    
+    Esta função verifica se a nota está cancelada usando verificar_nota_cancelada.
+    Se estiver cancelada, retorna False (nota inválida para download).
+    Se não estiver cancelada, retorna True (nota válida para download).
+    
+    Args:
+        row_locator: Locator da linha da tabela
+        
+    Returns:
+        True se a nota for válida (não cancelada), False caso contrário
+    """
+    try:
+        # Primeiro verifica se está cancelada
+        if await verificar_nota_cancelada(row_locator):
+            logger.info("⚠️  Nota fiscal cancelada detectada. Não será baixada.")
+            return False
+        
+        # Se não está cancelada, verifica outros indicadores de validade
+        # Tenta encontrar o ícone na coluna de status
+        celulas = row_locator.locator("td")
+        
+        # Verifica coluna 5 (índice 4) e coluna 6 (índice 5)
+        for col_idx in [4, 5]:
+            try:
+                coluna_status = celulas.nth(col_idx)
+                img_status = coluna_status.locator("img")
+                
+                if await img_status.count() > 0:
+                    # Verifica atributos que indicam nota inválida (mas não cancelada)
+                    alt_text = await img_status.get_attribute("alt")
+                    src_text = await img_status.get_attribute("src")
+                    
+                    # Considera inválida se houver indicadores de inválida (mas não cancelada, já verificado acima)
+                    if alt_text:
+                        alt_lower = alt_text.lower()
+                        if any(palavra in alt_lower for palavra in ["inválida", "invalid"]) and "cancelada" not in alt_lower:
+                            return False
+                    
+                    if src_text:
+                        src_lower = src_text.lower()
+                        if any(palavra in src_lower for palavra in ["invalid"]) and "cancelada" not in src_lower:
+                            return False
+            except Exception:
+                continue
+        
+        # Se não encontrou indicadores negativos, assume válida
         return True
         
     except Exception as e:
@@ -261,6 +457,12 @@ async def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empr
     """
     logger.info(f"Iniciando processamento de Notas Emitidas para competência {competencia_alvo}")
     
+    # Verifica se há mensagem "Nenhum registro encontrado" antes de processar
+    if await verificar_sem_registros(page):
+        logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
+        logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
+        return
+    
     while True:
         try:
             # Aguarda a tabela carregar
@@ -380,6 +582,12 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
         nome_empresa: Nome da empresa (do certificado digital)
     """
     logger.info(f"Iniciando processamento de Notas Recebidas para competência {competencia_alvo}")
+    
+    # Verifica se há mensagem "Nenhum registro encontrado" antes de processar
+    if await verificar_sem_registros(page):
+        logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
+        logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
+        return
     
     while True:
         try:
@@ -521,12 +729,33 @@ async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) 
         # Aguarda navegação e carregamento da tabela
         await page.wait_for_url("**/Notas/Emitidas", timeout=15000)
         await page.wait_for_load_state("networkidle", timeout=15000)
-        await page.wait_for_selector("table tbody tr", timeout=10000)
+        
+        # Aguarda um pouco para garantir que a página carregou completamente
+        await page.wait_for_timeout(1000)
+        
+        # Verifica se há mensagem "Nenhum registro encontrado"
+        if await verificar_sem_registros(page):
+            logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
+            logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
+        else:
+            # Só aguarda a tabela se não houver mensagem de "sem registros"
+            try:
+                await page.wait_for_selector("table tbody tr", timeout=10000)
+            except:
+                # Se não encontrar tabela, verifica novamente se há mensagem de sem registros
+                if await verificar_sem_registros(page):
+                    logger.info("ℹ️  Nenhuma nota fiscal emitida encontrada para esta competência")
+                    logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Emitidas")
+                else:
+                    logger.warning("⚠️  Não foi possível encontrar tabela nem mensagem de 'sem registros'")
         
         logger.info("✅ Acessou Notas Emitidas com sucesso")
         
-        # 2) Processar tabela de Notas Emitidas
-        await processar_tabela_emitidas(page, competencia_alvo, nome_empresa)
+        # 2) Processar tabela de Notas Emitidas (só processa se não houver mensagem de sem registros)
+        if not await verificar_sem_registros(page):
+            await processar_tabela_emitidas(page, competencia_alvo, nome_empresa)
+        else:
+            logger.info("⏭️  Pulando processamento de Notas Emitidas (nenhum registro encontrado)")
         
         # 4) Ir para "Notas fiscais recebidas"
         logger.info("Acessando menu 'Notas fiscais recebidas'...")
@@ -541,12 +770,33 @@ async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) 
         # Aguarda navegação e carregamento da tabela
         await page.wait_for_url("**/Notas/Recebidas", timeout=15000)
         await page.wait_for_load_state("networkidle", timeout=15000)
-        await page.wait_for_selector("table tbody tr", timeout=10000)
+        
+        # Aguarda um pouco para garantir que a página carregou completamente
+        await page.wait_for_timeout(1000)
+        
+        # Verifica se há mensagem "Nenhum registro encontrado"
+        if await verificar_sem_registros(page):
+            logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
+            logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
+        else:
+            # Só aguarda a tabela se não houver mensagem de "sem registros"
+            try:
+                await page.wait_for_selector("table tbody tr", timeout=10000)
+            except:
+                # Se não encontrar tabela, verifica novamente se há mensagem de sem registros
+                if await verificar_sem_registros(page):
+                    logger.info("ℹ️  Nenhuma nota fiscal recebida encontrada para esta competência")
+                    logger.info("   Mensagem 'Nenhum registro encontrado' detectada na página de Notas Recebidas")
+                else:
+                    logger.warning("⚠️  Não foi possível encontrar tabela nem mensagem de 'sem registros'")
         
         logger.info("✅ Acessou Notas Recebidas com sucesso")
         
-        # 5) Processar tabela de Notas Recebidas
-        await processar_tabela_recebidas(page, competencia_alvo, nome_empresa)
+        # 5) Processar tabela de Notas Recebidas (só processa se não houver mensagem de sem registros)
+        if not await verificar_sem_registros(page):
+            await processar_tabela_recebidas(page, competencia_alvo, nome_empresa)
+        else:
+            logger.info("⏭️  Pulando processamento de Notas Recebidas (nenhum registro encontrado)")
         
         logger.info("🎉 Processamento completo finalizado!")
         

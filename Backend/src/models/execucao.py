@@ -27,7 +27,13 @@ class EtapaExecucao(str, Enum):
 
 
 class ExecucaoInfo(BaseModel):
-    """Informações sobre uma execução."""
+    """
+    Informações sobre uma execução.
+    
+    Esta classe mantém o estado da execução em memória para acesso rápido
+    via API. O estado também é persistido no banco de dados através do campo
+    execucao_db_id, que referencia o registro na tabela Execucao.
+    """
     empresa_id: str
     cnpj: str
     competencia: str
@@ -43,6 +49,10 @@ class ExecucaoInfo(BaseModel):
     url_atual: Optional[str] = None
     titulo: Optional[str] = None
     headless: bool = False  # Se True, executa navegador em modo headless
+    
+    # ID do registro no banco de dados (None até ser criado)
+    # Este campo permite sincronizar o estado em memória com o banco
+    execucao_db_id: Optional[int] = None
     
     # Campos adicionais para recursos do Playwright (não serializados)
     page: Optional[Any] = None
