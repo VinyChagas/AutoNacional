@@ -47,3 +47,5 @@ Backend/*.pwd.enc
 Backend/src/db/
 
 Backend/downloads/
+
+*.pyc
