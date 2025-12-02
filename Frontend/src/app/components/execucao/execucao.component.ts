@@ -104,17 +104,23 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   async carregarEmpresasValidadas() {
+    console.log('[CarregarEmpresas] Iniciando carregamento de empresas validadas...');
+    console.log('[CarregarEmpresas] Certificados válidos disponíveis:', this.certificadosValidos.length);
+    
     if (this.certificadosValidos.length === 0) {
+      console.error('[CarregarEmpresas] Nenhum certificado válido encontrado');
       alert('Nenhum certificado válido encontrado.');
       return;
     }
 
     // Valida competência antes de carregar
     if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
+      console.error('[CarregarEmpresas] Competência inválida:', this.competencia);
       alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
       return;
     }
 
+    console.log('[CarregarEmpresas] Competência válida:', this.competencia);
     this.carregandoCertificados = true;
     
     try {
@@ -148,12 +154,26 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       };
 
       // Log para debug
-      console.log('Enviando requisição:', JSON.stringify(request, null, 2));
+      console.log('[CarregarEmpresas] Enviando requisição ao backend:', JSON.stringify(request, null, 2));
+      console.log('[CarregarEmpresas] URL do serviço:', 'http://localhost:8000/api/execucao/multiplas');
+      console.log('[CarregarEmpresas] Número de empresas na requisição:', empresas.length);
 
       // Chama backend para adicionar todas à fila
+      console.log('[CarregarEmpresas] Fazendo chamada HTTP...');
       const response = await firstValueFrom(
         this.execucaoService.adicionarMultiplasExecucoes(request)
       );
+      console.log('[CarregarEmpresas] Resposta recebida do backend:', response);
+      console.log('[CarregarEmpresas] Detalhes da resposta:', {
+        sucesso: response.sucesso,
+        erros: response.erros,
+        numExecucoes: response.execucoes?.length || 0,
+        execucoes: response.execucoes?.map(e => ({
+          empresa_id: e.empresa_id,
+          cnpj: e.cnpj,
+          status: e.status
+        }))
+      });
 
       // Atualiza certificados carregados
       this.certificadosCarregados = [...this.certificadosValidos];
@@ -186,8 +206,10 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       });
 
       // Inicia polling para todas as execuções simultaneamente
+      console.log('[CarregarEmpresas] Iniciando polling para', this.execucoes.length, 'execuções');
       this.execucoes.forEach((execucao) => {
         const empresaId = execucao.empresa_id || execucao.cnpj;
+        console.log('[CarregarEmpresas] Iniciando polling para empresa:', empresaId, 'execução ID:', execucao.id);
         this.iniciarPollingStatus(execucao, empresaId);
       });
 
@@ -200,17 +222,51 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       }
 
     } catch (error: any) {
-      console.error('Erro ao carregar empresas:', error);
-      alert(`Erro ao carregar empresas: ${error.error?.detail || error.message || 'Erro desconhecido'}`);
+      console.error('[CarregarEmpresas] Erro ao carregar empresas:', error);
+      console.error('[CarregarEmpresas] Detalhes do erro:', {
+        status: error.status,
+        statusText: error.statusText,
+        error: error.error,
+        message: error.message,
+        stack: error.stack
+      });
+      
+      let mensagemErro = 'Erro desconhecido ao carregar empresas.';
+      if (error.status === 0) {
+        mensagemErro = 'Não foi possível conectar ao servidor. Verifique se o backend está rodando em http://localhost:8000';
+      } else if (error.status === 404) {
+        mensagemErro = 'Endpoint não encontrado. Verifique se a rota /api/execucao/multiplas existe no backend.';
+      } else if (error.status === 500) {
+        mensagemErro = `Erro no servidor: ${error.error?.detail || error.message || 'Erro interno do servidor'}`;
+      } else if (error.error?.detail) {
+        mensagemErro = error.error.detail;
+      } else if (error.message) {
+        mensagemErro = error.message;
+      }
+      
+      alert(`Erro ao carregar empresas: ${mensagemErro}`);
     } finally {
       this.carregandoCertificados = false;
+      console.log('[CarregarEmpresas] Carregamento finalizado');
     }
   }
 
   executarTodos() {
+    console.log('[ExecutarTodos] Iniciando execução de todos os certificados...');
+    console.log('[ExecutarTodos] Certificados válidos:', this.certificadosValidos.length);
+    console.log('[ExecutarTodos] Certificados carregados:', this.certificadosCarregados.length);
+    console.log('[ExecutarTodos] Execuções atuais:', this.execucoes.length);
+    console.log('[ExecutarTodos] Competência:', this.competencia);
+
     // Verifica se há empresas carregadas
     if (this.certificadosCarregados.length === 0) {
-      alert('Por favor, carregue as empresas validadas primeiro.');
+      console.warn('[ExecutarTodos] Nenhum certificado carregado. Redirecionando para carregar empresas...');
+      if (this.certificadosValidos.length === 0) {
+        alert('Nenhum certificado válido encontrado. Por favor, carregue os certificados primeiro.');
+        return;
+      }
+      // Se há certificados válidos mas não carregados, carrega automaticamente
+      this.carregarEmpresasValidadas();
       return;
     }
 
@@ -220,17 +276,20 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     );
     
     if (executandoOuFila.length > 0) {
+      console.warn('[ExecutarTodos] Já existem execuções em andamento:', executandoOuFila.length);
       alert('Já existem execuções em andamento ou na fila. Aguarde a conclusão ou limpe as execuções.');
       return;
     }
 
     // Se não há execuções, carrega as empresas (que já adiciona à fila)
     if (this.execucoes.length === 0) {
+      console.log('[ExecutarTodos] Nenhuma execução anterior. Carregando empresas validadas...');
       this.carregarEmpresasValidadas();
       return;
     }
 
     // Se já há execuções na fila, apenas informa que estão sendo processadas
+    console.log('[ExecutarTodos] Execuções já na fila:', this.execucoes.length);
     alert('As empresas já estão na fila e serão executadas automaticamente conforme o limite de concorrência.');
   }
 
@@ -238,20 +297,41 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   // As execuções são adicionadas à fila e processadas simultaneamente pelo backend
 
   private iniciarPollingStatus(execucao: ExecucaoEmpresa, empresaId: string) {
+    console.log(`[Polling] Iniciando polling para empresa ${empresaId}, execução ${execucao.id}`);
+    
     // Limpa intervalo anterior se existir
     if (this.intervalosStatus.has(execucao.id)) {
+      console.log(`[Polling] Limpando intervalo anterior para ${execucao.id}`);
       clearInterval(this.intervalosStatus.get(execucao.id));
     }
 
     let tentativasErro404 = 0;
     const maxTentativas404 = 3;
+    let contadorPolling = 0;
 
     // Polling a cada 2 segundos
     const intervalo = setInterval(async () => {
+      contadorPolling++;
+      console.log(`[Polling] Verificando status da empresa ${empresaId} (tentativa ${contadorPolling})`);
+      
       try {
         const status = await firstValueFrom(
           this.execucaoService.obterStatusExecucao(empresaId)
         );
+
+        console.log(`[Polling] Status recebido para ${empresaId}:`, status);
+        console.log(`[Polling] Detalhes completos do status:`, {
+          empresa_id: status.empresa_id,
+          cnpj: status.cnpj,
+          status: status.status,
+          etapa_atual: status.etapa_atual,
+          progresso: status.progresso,
+          mensagem: status.mensagem,
+          erro: status.erro,
+          logs: status.logs,
+          url_atual: status.url_atual,
+          titulo: status.titulo
+        });
 
         // Reset contador de 404 se conseguir obter status
         tentativasErro404 = 0;
@@ -275,9 +355,26 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
         // Se concluído ou falhou, para o polling
         const statusMapeado = this.mapearStatusBackendParaFrontend(status.status);
+        console.log(`[Polling] Status mapeado para ${empresaId}: ${statusMapeado} (anterior: ${execucao.status})`);
+        
+        // Se falhou, mostra o erro detalhadamente
+        if (statusMapeado === 'falhou') {
+          console.error(`[Polling] ⚠️ EXECUÇÃO FALHOU para ${empresaId}:`);
+          console.error(`[Polling] - Mensagem: ${status.mensagem || 'Sem mensagem'}`);
+          console.error(`[Polling] - Erro: ${status.erro || 'Sem detalhes de erro'}`);
+          console.error(`[Polling] - Etapa atual: ${status.etapa_atual || 'N/A'}`);
+          console.error(`[Polling] - Logs completos:`, JSON.stringify(status.logs || [], null, 2));
+          if (status.logs && status.logs.length > 0) {
+            console.error(`[Polling] - Últimos logs:`, status.logs.slice(-5));
+          }
+        }
+        
         if (statusMapeado === 'finalizado' || statusMapeado === 'falhou') {
+          console.log(`[Polling] Execução ${statusMapeado} para ${empresaId}, parando polling`);
           clearInterval(intervalo);
           this.intervalosStatus.delete(execucao.id);
+        } else {
+          console.log(`[Polling] Execução ainda em andamento para ${empresaId}: ${statusMapeado}, continuando polling...`);
         }
       } catch (error: any) {
         console.error(`Erro ao obter status para empresa ${empresaId}:`, error);

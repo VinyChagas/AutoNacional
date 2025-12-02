@@ -5,8 +5,29 @@ Este arquivo configura e inicializa o servidor FastAPI, registra os routers
 e configura middlewares (CORS, tratamento de erros, etc.).
 """
 
-import os
+# CRÍTICO: Configura event loop policy ANTES de qualquer import que use asyncio
+# Isso é necessário porque o uvicorn com reload cria processos filhos que também precisam
+# desta configuração. Deve ser a PRIMEIRA coisa no arquivo.
 import sys
+import platform
+
+if platform.system() == "Windows":
+    try:
+        import asyncio
+        # Configura ProactorEventLoop para suportar subprocessos no Windows
+        # Isso é ESSENCIAL para o Playwright funcionar, mesmo em processos filhos do uvicorn reload
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        print(f"[main.py] ✅ ProactorEventLoop configurado para Windows (Python {sys.version_info.major}.{sys.version_info.minor})")
+    except Exception as e:
+        print(f"[main.py] ⚠️  Aviso ao configurar ProactorEventLoop: {e}")
+
+# Importa fix adicional (backup)
+try:
+    import asyncio_windows_fix  # noqa: F401
+except ImportError:
+    pass
+
+import os
 import json
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
@@ -123,23 +144,59 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # Configuração CORS para permitir requisições do frontend Angular
-cors_origins = CORS_ORIGINS or [
-    "http://localhost:4200",
-    "http://127.0.0.1:4200",
-    "http://localhost:1234",
-    "http://127.0.0.1:1234",
-]
+# Em desenvolvimento, permite qualquer porta do localhost para facilitar
+# Para produção, use variável de ambiente CORS_ORIGINS para restringir
 
-logger.info(f"Configurando CORS com origens: {cors_origins}")
+# Verifica se está em modo desenvolvimento (padrão) ou produção
+is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
+cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
+logger.info(f"Environment: {'production' if is_production else 'development'}")
+logger.info(f"CORS_ORIGINS env: {cors_origins_env if cors_origins_env else 'não definido'}")
+
+# Em desenvolvimento, sempre permite localhost em qualquer porta usando regex
+# Isso resolve quando o Angular usa porta aleatória (ex: 53229, 60197 quando 1234 está ocupada)
+# Em produção, só usa regex se CORS_ORIGINS não estiver definido explicitamente
+if not is_production:
+    # Permite localhost/127.0.0.1 em qualquer porta usando regex
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
+    logger.info("✅ CORS configurado para permitir localhost em qualquer porta (desenvolvimento)")
+    logger.info("   Regex: http://(localhost|127.0.0.1):\\d+")
+    logger.info("   Isso permite qualquer porta do localhost, incluindo portas aleatórias do Angular")
+elif cors_origins_env:
+    # Em produção, usa as origens específicas configuradas via variável de ambiente
+    cors_origins = [
+        origin.strip() 
+        for origin in cors_origins_env.split(",") 
+        if origin.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
+    logger.info(f"✅ CORS configurado para produção com origens: {cors_origins}")
+else:
+    # Produção sem CORS_ORIGINS definido, usa regex como fallback (não recomendado)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
+    logger.warning("⚠️  CORS usando regex em produção (não recomendado). Defina CORS_ORIGINS.")
 
 # O middleware CORS do FastAPI já lida automaticamente com requisições OPTIONS (preflight)
 # Não precisamos de um handler manual

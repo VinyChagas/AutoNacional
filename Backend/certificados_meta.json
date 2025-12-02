@@ -1,0 +1,44 @@
+[
+  {
+    "id": 1,
+    "cnpj": "17844066000160",
+    "empresa": "CENTRO AUTOMOTIVO FLAVIO LTDA",
+    "data_vencimento": "2026-11-18"
+  },
+  {
+    "id": 2,
+    "cnpj": "52352633000162",
+    "empresa": "KORBAN CONSULT SERVICOS EMPRESARIAIS LTDA",
+    "data_vencimento": "2026-11-17"
+  },
+  {
+    "id": 3,
+    "cnpj": "34999926000154",
+    "empresa": "RAFAEL LUIS RIGO REPRESENTANTE COMERCIAL",
+    "data_vencimento": "2026-11-14"
+  },
+  {
+    "id": 4,
+    "cnpj": "21340645000143",
+    "empresa": "ELIZANGELA JUSSARA CIRELLO RESTAURANTE",
+    "data_vencimento": "2026-11-19"
+  },
+  {
+    "id": 5,
+    "cnpj": "00363320000106",
+    "empresa": "SCS ASSESSORIA EMPRESARIAL E CONTABIL LTDA",
+    "data_vencimento": "2026-09-12"
+  },
+  {
+    "id": 6,
+    "cnpj": "55189841000180",
+    "empresa": "MARKIEWICZ CAPITAL SERVICES LTDA",
+    "data_vencimento": "2026-11-19"
+  },
+  {
+    "id": 7,
+    "cnpj": "35114127000116",
+    "empresa": "LUIZ CESAR AFONSO DE LIMA LTDA",
+    "data_vencimento": "2026-11-19"
+  }
+]

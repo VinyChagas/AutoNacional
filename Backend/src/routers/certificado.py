@@ -5,7 +5,7 @@ Este módulo fornece endpoints REST para upload, importação e validação
 de certificados digitais ICP-Brasil, além de CRUD para metadados.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, status, Query
 from fastapi.responses import JSONResponse
@@ -43,6 +43,68 @@ from cryptography import x509
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/certificados", tags=["Certificados"])
+
+
+def converter_data_vencimento_iso(data_str: str) -> date:
+    """
+    Converte string ISO de data/hora para date de forma robusta.
+    
+    Aceita formatos:
+    - YYYY-MM-DDTHH:MM:SS (ISO com hora, ex: '2026-11-14T18:21:53')
+    - YYYY-MM-DDTHH:MM:SSZ (ISO com timezone)
+    - YYYY-MM-DD (ISO apenas data)
+    
+    Args:
+        data_str: String no formato ISO
+        
+    Returns:
+        date object
+        
+    Raises:
+        ValueError: Se não conseguir fazer o parse
+    """
+    if not data_str:
+        raise ValueError("Data não pode ser vazia")
+    
+    # Remove espaços
+    data_str = data_str.strip()
+    
+    # Extrai apenas a parte da data (antes do T, espaço, ou timezone)
+    # Formato esperado: YYYY-MM-DD ou YYYY-MM-DDTHH:MM:SS
+    if 'T' in data_str:
+        # Remove tudo após o T (hora e timezone)
+        data_part = data_str.split('T')[0]
+    elif ' ' in data_str:
+        # Remove tudo após espaço
+        data_part = data_str.split(' ')[0]
+    else:
+        # Já está no formato YYYY-MM-DD
+        data_part = data_str
+    
+    # Remove timezone se ainda presente (ex: -03:00 ou +00:00 no início)
+    if len(data_part) > 10:
+        data_part = data_part[:10]
+    
+    # Tenta fazer parse como date
+    try:
+        return date.fromisoformat(data_part)
+    except ValueError:
+        # Se falhar, tenta como datetime completo e extrai a data
+        try:
+            # Remove timezone (Z, +HH:MM, -HH:MM)
+            data_clean = data_str.replace('Z', '')
+            if '+' in data_clean:
+                data_clean = data_clean.split('+')[0]
+            elif '-' in data_clean[10:]:  # Verifica se há timezone após a data
+                parts = data_clean.split('-')
+                if len(parts) > 3:
+                    data_clean = '-'.join(parts[:3])
+            
+            # Tenta parse como datetime
+            dt = datetime.fromisoformat(data_clean.split('T')[0] if 'T' in data_clean else data_clean[:10])
+            return dt.date()
+        except (ValueError, AttributeError) as e:
+            raise ValueError(f"Formato de data inválido: {data_str}. Erro: {e}")
 
 
 @router.post("", response_model=CertificadoUploadResponse, summary="Upload de certificado")
@@ -143,7 +205,7 @@ async def upload_certificado(
                     try:
                         # Converte data de vencimento de string ISO para date
                         if isinstance(informacoes.dataVencimento, str):
-                            data_vencimento = date.fromisoformat(informacoes.dataVencimento)
+                            data_vencimento = converter_data_vencimento_iso(informacoes.dataVencimento)
                         else:
                             # Se já for date, usa diretamente
                             data_vencimento = informacoes.dataVencimento
@@ -292,7 +354,7 @@ async def importar_certificado(
                     try:
                         # Converte data de vencimento de string ISO para date
                         if isinstance(informacoes.dataVencimento, str):
-                            data_vencimento = date.fromisoformat(informacoes.dataVencimento)
+                            data_vencimento = converter_data_vencimento_iso(informacoes.dataVencimento)
                         else:
                             # Se já for date, usa diretamente
                             data_vencimento = informacoes.dataVencimento
@@ -817,7 +879,7 @@ async def importar_certificados_lote(
                                 try:
                                     # Converte data de vencimento de string ISO para date
                                     if isinstance(informacoes.dataVencimento, str):
-                                        data_vencimento = date.fromisoformat(informacoes.dataVencimento)
+                                        data_vencimento = converter_data_vencimento_iso(informacoes.dataVencimento)
                                     else:
                                         data_vencimento = informacoes.dataVencimento
                                     

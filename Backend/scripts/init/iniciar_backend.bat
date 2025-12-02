@@ -46,6 +46,7 @@ echo    Host: 0.0.0.0 (acessivel de qualquer IP)
 echo    Porta: 8000
 echo.
 
-REM Inicia o uvicorn usando Python do ambiente virtual
+REM Inicia o uvicorn usando o script personalizado que configura o event loop
+REM O script run_server.py configura o ProactorEventLoop ANTES do uvicorn iniciar
 REM A variável FERNET_KEY será herdada pelo processo Python
-"!PYTHON_CMD!" -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+"!PYTHON_CMD!" run_server.py --host 0.0.0.0 --port 8000
