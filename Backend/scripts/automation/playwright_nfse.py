@@ -15,8 +15,36 @@ Características:
 
 import os
 import sys
+import platform
+import asyncio
 import logging
 from typing import Tuple, Optional
+
+# Configuração de logging (antes de qualquer uso de logger)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# IMPORTANTE: Configura o event loop policy no Windows ANTES de importar playwright
+# Isso garante que o ProactorEventLoop seja usado, permitindo subprocessos no Windows
+# Nota: Esta configuração precisa ser feita ANTES de qualquer event loop ser criado.
+# O servidor deve ser iniciado via run_server.py para garantir que a política seja
+# configurada antes do uvicorn iniciar seu event loop.
+if platform.system() == "Windows":
+    try:
+        # Tenta configurar a política de event loop para ProactorEventLoop
+        # Isso só funciona se nenhum event loop foi criado ainda
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            logger.debug("✅ ProactorEventLoop policy configurada no módulo playwright_nfse")
+        except (AttributeError, RuntimeError) as e:
+            # Se falhar, pode ser que um loop já exista ou a política já esteja configurada
+            logger.debug(f"⚠️  Não foi possível configurar ProactorEventLoop policy: {e}")
+            logger.debug("   Isso é normal se o servidor foi iniciado via run_server.py")
+    except Exception as e:
+        logger.debug(f"⚠️  Erro ao configurar event loop policy: {e}")
 
 from playwright.async_api import (
     async_playwright,
@@ -33,15 +61,7 @@ try:
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
-    logger = logging.getLogger(__name__)
     logger.warning("⚠️  Biblioteca cryptography não disponível. Conversão de certificados TLS legados desabilitada.")
-
-# Configuração de logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # Permite importar services independentemente de onde o script for executado
 # IMPORTANTE: Este código deve executar ANTES de qualquer import que dependa dele
@@ -184,7 +204,7 @@ async def criar_contexto_com_certificado(
     correta com FastAPI e asyncio, permitindo execução concorrente.
     
     Esta função:
-    1. Carrega o certificado A1 (.pfx) e senha usando cert_storage
+    1. Carrega o certificado A1 (.pfx) e senha usando CertificateService
     2. Inicia o Playwright Async API e configura o Chromium para usar o certificado
     3. Usa a funcionalidade nativa do Playwright (client_certificates) para
        autenticação via certificado cliente sem popups de seleção
@@ -364,8 +384,21 @@ async def criar_contexto_com_certificado(
         # Re-propaga erros de autenticação
         raise
     except Exception as e:
-        error_msg = f"Erro inesperado ao criar contexto com certificado: {str(e)}"
+        # Captura informações detalhadas do erro
+        error_type = type(e).__name__
+        error_str = str(e) if str(e) else repr(e)
+        import traceback
+        error_traceback = traceback.format_exc()
+        
+        # Se a mensagem estiver vazia, tenta obter mais informações
+        if not error_str or error_str.strip() == '':
+            error_str = f"{error_type} sem mensagem. Verifique os logs do servidor para detalhes."
+        
+        error_msg = f"Erro inesperado ao criar contexto com certificado: [{error_type}] {error_str}"
         logger.error(f"❌ {error_msg}")
+        logger.error(f"❌ Tipo de exceção: {error_type}")
+        logger.error(f"❌ Args da exceção: {getattr(e, 'args', 'N/A')}")
+        logger.error(f"❌ Traceback completo:\n{error_traceback}")
         raise NFSeAutenticacaoError(error_msg)
 
 
@@ -579,8 +612,15 @@ async def abrir_dashboard_nfse(
         }
         
     except Exception as e:
-        error_msg = f"Erro durante automação NFSe: {str(e)}"
+        import traceback
+        
+        error_type = type(e).__name__
+        error_str = str(e) if str(e) else repr(e)
+        error_traceback = traceback.format_exc()
+        
+        error_msg = f"Erro durante automação NFSe: [{error_type}] {error_str or 'Sem mensagem de erro'}"
         logger.error(f"❌ {error_msg}")
+        logger.error(f"❌ Traceback completo:\n{error_traceback}")
         logs.append(f"❌ ERRO: {error_msg}")
         
         # Em caso de erro, limpa recursos antes de levantar exceção

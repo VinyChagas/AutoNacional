@@ -209,10 +209,17 @@ class ExecutionService:
                 # Adiciona à fila assíncrona (garante que está inicializada)
                 if self.fila_execucoes is None:
                     await self._inicializar_recursos_async()
+                
+                fila_size_antes = self.fila_execucoes.qsize() if self.fila_execucoes else 0
+                logger.info(f"[ADICIONAR] Adicionando execução à fila - Empresa {empresa_id} (CNPJ: {cnpj}). Tamanho da fila antes: {fila_size_antes}")
+                
                 await self.fila_execucoes.put(execucao)
                 self.execucoes_ativas[empresa_id] = execucao
+                
+                fila_size_depois = self.fila_execucoes.qsize() if self.fila_execucoes else 0
+                logger.info(f"[ADICIONAR] Execução adicionada à fila: Empresa {empresa_id} (CNPJ: {cnpj}). Tamanho da fila depois: {fila_size_depois}")
             
-            logger.info(f"Execução adicionada à fila: Empresa {empresa_id} (CNPJ: {cnpj})")
+            logger.info(f"[ADICIONAR] Execução registrada em execucoes_ativas: Empresa {empresa_id}. Total de execuções ativas: {len(self.execucoes_ativas)}")
             
             # Inicia task processadora se não estiver rodando
             if not self.rodando:
@@ -309,33 +316,43 @@ class ExecutionService:
             try:
                 # Pega próxima execução (bloqueia até ter uma)
                 fila_size = self.fila_execucoes.qsize() if self.fila_execucoes else 0
-                logger.info(f"Aguardando próxima execução na fila... (fila tem {fila_size} itens)")
+                logger.info(f"[PROCESSAR] Aguardando próxima execução na fila... (fila tem {fila_size} itens)")
+                logger.info(f"[PROCESSAR] Execuções ativas em memória: {len(self.execucoes_ativas)}")
+                
                 try:
                     # Garante que fila está inicializada
                     if self.fila_execucoes is None:
+                        logger.warning("[PROCESSAR] Fila não estava inicializada! Inicializando agora...")
                         await self._inicializar_recursos_async()
+                    
+                    logger.info(f"[PROCESSAR] Tentando obter execução da fila (timeout: {QUEUE_TIMEOUT}s)...")
                     execucao = await asyncio.wait_for(
                         self.fila_execucoes.get(),
                         timeout=QUEUE_TIMEOUT
                     )
+                    logger.info(f"[PROCESSAR] ✅ Execução obtida da fila: Empresa {execucao.empresa_id} (CNPJ: {execucao.cnpj})")
+                    
                 except asyncio.TimeoutError:
                     # Timeout - verifica se deve continuar
-                    logger.info(f"Timeout ao aguardar execução ({QUEUE_TIMEOUT}s)")
+                    fila_size_timeout = self.fila_execucoes.qsize() if self.fila_execucoes else 0
+                    logger.warning(f"[PROCESSAR] ⏱️ Timeout ao aguardar execução ({QUEUE_TIMEOUT}s). Tamanho da fila: {fila_size_timeout}")
+                    logger.warning(f"[PROCESSAR] Execuções ativas em memória: {len(self.execucoes_ativas)}")
+                    
                     await self._inicializar_recursos_async()
                     # Garante que lock está inicializado
                     if self.lock is None:
                         await self._inicializar_recursos_async()
                     async with self.lock:
                         if self.fila_execucoes and self.fila_execucoes.empty():
-                            logger.info("Fila vazia. Task processadora pausada.")
+                            logger.info("[PROCESSAR] Fila vazia. Task processadora pausada.")
                             self.rodando = False
                             break
                         else:
                             fila_size = self.fila_execucoes.qsize() if self.fila_execucoes else 0
-                            logger.info(f"Fila ainda tem itens ({fila_size}), continuando...")
+                            logger.info(f"[PROCESSAR] Fila ainda tem itens ({fila_size}), continuando...")
                             continue
                 
-                logger.info(f"Execução obtida da fila: Empresa {execucao.empresa_id}")
+                logger.info(f"[PROCESSAR] Iniciando processamento da execução: Empresa {execucao.empresa_id}")
                 
                 # Aplica delay entre lançamentos de navegadores se configurado
                 configuracoes = await self._obter_configuracoes()
@@ -486,17 +503,27 @@ class ExecutionService:
             
             try:
                 # AGORA USA AWAIT - função é async
+                logger.info(f"[{execucao.empresa_id}] Chamando abrir_dashboard_nfse com CNPJ: {cnpj_str}")
+                logger.info(f"[{execucao.empresa_id}] Parâmetros: headless={headless}, timeout={timeout_ms}, viewport={viewport_config}")
+                
                 resultado_auth = await abrir_dashboard_nfse(
                     cnpj=cnpj_str,
                     headless=headless,
                     timeout=timeout_ms,
                     viewport=viewport_config
                 )
+                logger.info(f"[{execucao.empresa_id}] abrir_dashboard_nfse retornou: sucesso={resultado_auth.get('sucesso')}")
                 self._adicionar_log(execucao, "abrir_dashboard_nfse concluído")
             except Exception as e:
-                error_msg = f"Erro ao executar abrir_dashboard_nfse: {str(e)}"
+                import traceback
+                error_type = type(e).__name__
+                error_str = str(e) if str(e) else repr(e)
+                error_traceback = traceback.format_exc()
+                
+                error_msg = f"Erro ao executar abrir_dashboard_nfse: [{error_type}] {error_str}"
+                logger.error(f"[{execucao.empresa_id}] ❌ {error_msg}")
+                logger.error(f"[{execucao.empresa_id}] ❌ Traceback completo:\n{error_traceback}")
                 self._adicionar_log(execucao, f"❌ {error_msg}")
-                logger.error(f"Erro detalhado: {error_msg}", exc_info=True)
                 raise
             
             if not resultado_auth.get("sucesso"):

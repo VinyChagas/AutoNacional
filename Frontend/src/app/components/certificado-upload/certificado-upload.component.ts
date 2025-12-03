@@ -313,15 +313,31 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
       }
 
     } catch (error: any) {
+      console.error('❌ Erro ao aplicar senha:', error);
       this.senhaValida = false;
+      
+      // Tratamento detalhado de erros
       if (error.message) {
+        console.error('❌ Mensagem de erro:', error.message);
         this.mensagemSenha = error.message;
-      } else if (error.error?.message) {
-        this.mensagemSenha = error.error.message;
-      } else if (error.error?.detail) {
-        this.mensagemSenha = error.error.detail;
+      } else if (error.error) {
+        console.error('❌ Erro detalhado:', error.error);
+        if (typeof error.error === 'object') {
+          if (error.error.message) {
+            this.mensagemSenha = error.error.message;
+          } else if (error.error.detail) {
+            this.mensagemSenha = error.error.detail;
+          } else if (error.error.success === false && error.error.message) {
+            this.mensagemSenha = error.error.message;
+          } else {
+            this.mensagemSenha = 'Erro ao processar certificado. Verifique o console para mais detalhes.';
+          }
+        } else {
+          this.mensagemSenha = error.error.toString();
+        }
       } else {
-        this.mensagemSenha = 'Senha incorreta ou erro ao processar certificado';
+        console.error('❌ Erro desconhecido:', error);
+        this.mensagemSenha = 'Erro desconhecido ao processar certificado. Verifique se o servidor está rodando.';
       }
     } finally {
       this.importando = false;

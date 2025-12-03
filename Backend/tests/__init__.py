@@ -1,4 +1,0 @@
-"""
-Testes do backend.
-"""
-

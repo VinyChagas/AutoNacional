@@ -1,0 +1,22 @@
+{
+  "id": 1,
+  "headless": false,
+  "company_timeout_seconds": 300,
+  "max_retries_per_step": 3,
+  "min_action_delay_ms": 500,
+  "max_concurrent_browsers": 3,
+  "default_concurrent_browsers": 3,
+  "browser_launch_delay_ms": 1000,
+  "viewport_preset": "FULLHD",
+  "viewport_width": null,
+  "viewport_height": null,
+  "downloads_base_path": "./downloads",
+  "downloads_pattern": "{cnpj}/{ano}/{mes}",
+  "logs_path": "./logs",
+  "temp_path": "./temp",
+  "log_level": "INFO",
+  "save_error_screenshots": true,
+  "generate_pdf_report": true,
+  "log_retention_days": 30,
+  "max_errors_in_panel": 100
+}

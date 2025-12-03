@@ -9,9 +9,7 @@ Esta refatoração reorganizou o backend seguindo princípios de arquitetura lim
 ```
 Backend/
 ├── main.py                          # Ponto de entrada limpo (refatorado)
-├── cert_storage.py                  # Mantido para compatibilidade (deprecated)
 ├── src/
-│   ├── main.py                      # Alternativa de entrada (usa config centralizada)
 │   ├── infrastructure/              # ✨ NOVO - Componentes técnicos
 │   │   ├── __init__.py
 │   │   ├── logger.py                # Centralização de logs
@@ -140,7 +138,7 @@ Backend/
 - Toda lógica de negócio movida para services
 
 ### `src/playwright_nfse.py`
-- Atualizado para usar `CertificateService` ao invés de `cert_storage`
+- Atualizado para usar `CertificateService` (cert_storage.py foi removido)
 - Imports atualizados para nova estrutura
 
 ### `src/core/db.py`
@@ -211,11 +209,11 @@ Este método:
 3. **Validação**: Adicionar validação de dados com Pydantic
 4. **Error Handling**: Melhorar tratamento de erros específicos
 5. **Monitoring**: Adicionar métricas e monitoramento
-6. **Deprecation**: Marcar `cert_storage.py` como deprecated e remover no futuro
+6. **Limpeza**: Arquivos deprecated foram removidos (cert_storage.py, src/main.py, etc.)
 
 ## 📝 Notas Importantes
 
-- O arquivo `cert_storage.py` na raiz foi mantido para compatibilidade, mas está **deprecated**
+- O arquivo `cert_storage.py` foi removido - use `CertificateService` em `src/services/certificate_service.py`
 - Todos os novos desenvolvimentos devem usar `CertificateService`
 - A configuração `FERNET_KEY` é inicializada automaticamente se não existir
 - O logger está configurado globalmente e pode ser usado em qualquer módulo
