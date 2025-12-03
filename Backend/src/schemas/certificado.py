@@ -35,6 +35,7 @@ class CertificadoUpdate(BaseModel):
     """Schema para atualização de certificado."""
     empresa: Optional[str] = Field(None, description="Nome da empresa")
     data_vencimento: Optional[date] = Field(None, description="Data de vencimento do certificado")
+    contabilidade_id: Optional[int] = Field(None, description="ID da contabilidade associada")
 
 
 class CertificadoResponse(CertificadoBase):
