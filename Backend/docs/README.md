@@ -66,15 +66,21 @@ REM Localização: Backend\db\certificados.db
 
 ```
 Backend/
-├── main.py                    # API FastAPI principal (upload de certificados)
-├── cert_storage.py            # Módulo de armazenamento seguro de certificados
+├── main.py                    # API FastAPI principal (ponto de entrada)
+├── run_server.py              # Script para iniciar servidor (configura event loop)
 ├── requirements.txt           # Dependências Python
 ├── .env                       # Variáveis de ambiente (FERNET_KEY)
 ├── db/                        # Banco de dados SQLite (gerado automaticamente)
 │   └── certificados.db       # Banco SQLite com metadados de certificados
 ├── certificados_armazenados/  # Certificados criptografados (gerado automaticamente)
 ├── src/
-│   ├── main.py               # API FastAPI alternativa (routers modulares)
+│   ├── infrastructure/       # Componentes técnicos (config, logger)
+│   ├── services/             # Lógica de negócio (certificate, execution)
+│   ├── routers/              # Rotas HTTP (endpoints)
+│   ├── repositories/         # Acesso a dados
+│   ├── models/               # Modelos de dados
+│   ├── utils/                # Funções auxiliares
+│   ├── core/                 # Configurações core
 │   ├── db/                   # Camada de persistência SQLAlchemy
 │   │   ├── session.py        # Configuração do banco e sessões
 │   │   ├── models.py         # Modelos ORM (CertificadoDigital)

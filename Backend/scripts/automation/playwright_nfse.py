@@ -204,7 +204,7 @@ async def criar_contexto_com_certificado(
     correta com FastAPI e asyncio, permitindo execução concorrente.
     
     Esta função:
-    1. Carrega o certificado A1 (.pfx) e senha usando cert_storage
+    1. Carrega o certificado A1 (.pfx) e senha usando CertificateService
     2. Inicia o Playwright Async API e configura o Chromium para usar o certificado
     3. Usa a funcionalidade nativa do Playwright (client_certificates) para
        autenticação via certificado cliente sem popups de seleção
