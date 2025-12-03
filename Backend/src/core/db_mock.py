@@ -47,6 +47,42 @@ def _criar_tabelas(conn: sqlite3.Connection):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Tabela de contabilidades
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS contabilidades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_contabilidade TEXT NOT NULL,
+            cnpj TEXT UNIQUE NOT NULL,
+            email TEXT,
+            telefone TEXT,
+            responsavel TEXT,
+            data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_contabilidades_cnpj ON contabilidades (cnpj)")
+    
+    # Tabela de certificados digitais com regra ON DELETE SET NULL para FK contabilidade_id
+    # Regra: exclusão da contabilidade NÃO apaga certificados, mas os desvincula (contabilidade_id vira NULL)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS certificados_digitais (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cnpj TEXT NOT NULL,
+            arquivo TEXT,
+            data_validade TEXT,
+            empresa_id TEXT,
+            contabilidade_id INTEGER,
+            data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(contabilidade_id) REFERENCES contabilidades(id) ON DELETE SET NULL
+        )
+    """)
+    # ALTER TABLE para adicionar FK se já existir (fallback)
+    try:
+        cursor.execute("PRAGMA foreign_keys=off;")
+        cursor.execute("ALTER TABLE certificados_digitais ADD COLUMN contabilidade_id INTEGER;")
+        cursor.execute("PRAGMA foreign_keys=on;")
+    except sqlite3.OperationalError:
+        pass  # coluna já existe, ignora erro
     
     conn.commit()
 

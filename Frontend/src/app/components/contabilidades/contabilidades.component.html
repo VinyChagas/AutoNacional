@@ -1,0 +1,219 @@
+<div class="w-full py-12 px-4">
+  <div class="max-w-7xl mx-auto">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-4xl font-bold text-[#0C0D0A] mb-2">Contabilidades</h1>
+        <p class="text-[#1E2615]">Gerencie as contabilidades parceiras do sistema</p>
+      </div>
+      <button
+        (click)="abrirFormulario()"
+        class="btn-primary px-6 py-3 rounded-xl font-semibold flex items-center gap-2 hover:scale-105 transition-transform"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+        </svg>
+        Nova Contabilidade
+      </button>
+    </div>
+
+    <!-- Mensagens de feedback -->
+    <div *ngIf="erro" class="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-xl">
+      {{ erro }}
+    </div>
+    <div *ngIf="sucesso" class="mb-6 p-4 bg-green-100 border border-green-400 text-green-700 rounded-xl">
+      {{ sucesso }}
+    </div>
+
+    <!-- Formulário Modal -->
+    <div *ngIf="exibindoFormulario" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="glass-strong rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold text-[#0C0D0A]">
+            {{ editandoId ? 'Editar Contabilidade' : 'Nova Contabilidade' }}
+          </h2>
+          <button
+            (click)="fecharFormulario()"
+            class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors"
+          >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+
+        <form [formGroup]="formulario" (ngSubmit)="salvar()" class="space-y-6">
+          <!-- Nome da Contabilidade -->
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-2">
+              Nome da Contabilidade <span class="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              formControlName="nome_contabilidade"
+              class="w-full px-4 py-3 rounded-xl border border-[#8BCB70]/30 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all"
+              [class.border-red-500]="formulario.get('nome_contabilidade')?.invalid && formulario.get('nome_contabilidade')?.touched"
+              placeholder="Nome fantasia ou razão social"
+            />
+            <div *ngIf="formulario.get('nome_contabilidade')?.invalid && formulario.get('nome_contabilidade')?.touched" class="text-red-500 text-sm mt-1">
+              <span *ngIf="formulario.get('nome_contabilidade')?.errors?.['required']">Campo obrigatório</span>
+              <span *ngIf="formulario.get('nome_contabilidade')?.errors?.['minlength']">Mínimo de 3 caracteres</span>
+            </div>
+          </div>
+
+          <!-- CNPJ -->
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-2">
+              CNPJ <span class="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              formControlName="cnpj"
+              class="w-full px-4 py-3 rounded-xl border border-[#8BCB70]/30 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all"
+              [class.border-red-500]="formulario.get('cnpj')?.invalid && formulario.get('cnpj')?.touched"
+              placeholder="00.000.000/0000-00"
+              [readonly]="editandoId"
+            />
+            <div *ngIf="formulario.get('cnpj')?.invalid && formulario.get('cnpj')?.touched" class="text-red-500 text-sm mt-1">
+              <span *ngIf="formulario.get('cnpj')?.errors?.['required']">Campo obrigatório</span>
+              <span *ngIf="formulario.get('cnpj')?.errors?.['cnpjInvalido']">CNPJ inválido (deve ter 14 dígitos)</span>
+            </div>
+          </div>
+
+          <!-- Responsável -->
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-2">Responsável</label>
+            <input
+              type="text"
+              formControlName="responsavel"
+              class="w-full px-4 py-3 rounded-xl border border-[#8BCB70]/30 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all"
+              placeholder="Nome do responsável"
+            />
+          </div>
+
+          <!-- Telefone -->
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-2">Telefone</label>
+            <input
+              type="text"
+              formControlName="telefone"
+              class="w-full px-4 py-3 rounded-xl border border-[#8BCB70]/30 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all"
+              placeholder="(00) 00000-0000"
+            />
+          </div>
+
+          <!-- E-mail -->
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-2">E-mail</label>
+            <input
+              type="email"
+              formControlName="email"
+              class="w-full px-4 py-3 rounded-xl border border-[#8BCB70]/30 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] transition-all"
+              [class.border-red-500]="formulario.get('email')?.invalid && formulario.get('email')?.touched"
+              placeholder="email@exemplo.com"
+            />
+            <div *ngIf="formulario.get('email')?.invalid && formulario.get('email')?.touched" class="text-red-500 text-sm mt-1">
+              <span *ngIf="formulario.get('email')?.errors?.['email']">E-mail inválido</span>
+            </div>
+          </div>
+
+          <!-- Botões -->
+          <div class="flex gap-4 pt-4">
+            <button
+              type="submit"
+              [disabled]="carregando || formulario.invalid"
+              class="flex-1 btn-primary px-6 py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 transition-transform"
+            >
+              <span *ngIf="!carregando">{{ editandoId ? 'Atualizar' : 'Cadastrar' }}</span>
+              <span *ngIf="carregando">Salvando...</span>
+            </button>
+            <button
+              type="button"
+              (click)="fecharFormulario()"
+              class="px-6 py-3 rounded-xl border border-[#8BCB70]/30 text-[#0C0D0A] font-semibold hover:bg-[#8BCB70]/10 transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Listagem -->
+    <div *ngIf="carregando && contabilidades.length === 0" class="text-center py-12">
+      <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-[#8BCB70]"></div>
+      <p class="mt-4 text-[#1E2615]">Carregando contabilidades...</p>
+    </div>
+
+    <div *ngIf="!carregando && contabilidades.length === 0" class="text-center py-12">
+      <svg class="w-16 h-16 text-[#8BCB70]/50 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+      </svg>
+      <p class="text-[#1E2615] text-lg mb-4">Nenhuma contabilidade cadastrada</p>
+      <button
+        (click)="abrirFormulario()"
+        class="btn-primary px-6 py-3 rounded-xl font-semibold"
+      >
+        Cadastrar Primeira Contabilidade
+      </button>
+    </div>
+
+    <!-- Tabela -->
+    <div *ngIf="contabilidades.length > 0" class="glass-strong rounded-2xl overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead class="bg-[#8BCB70]/10">
+            <tr>
+              <th class="px-6 py-4 text-left text-sm font-semibold text-[#0C0D0A]">Nome</th>
+              <th class="px-6 py-4 text-left text-sm font-semibold text-[#0C0D0A]">CNPJ</th>
+              <th class="px-6 py-4 text-left text-sm font-semibold text-[#0C0D0A]">Responsável</th>
+              <th class="px-6 py-4 text-left text-sm font-semibold text-[#0C0D0A]">E-mail</th>
+              <th class="px-6 py-4 text-center text-sm font-semibold text-[#0C0D0A]">Certificados</th>
+              <th class="px-6 py-4 text-center text-sm font-semibold text-[#0C0D0A]">Ações</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#8BCB70]/10">
+            <tr *ngFor="let contabilidade of contabilidades" class="hover:bg-[#8BCB70]/5] transition-colors">
+              <td class="px-6 py-4 text-[#0C0D0A] font-medium">{{ contabilidade.nome_contabilidade }}</td>
+              <td class="px-6 py-4 text-[#1E2615]">{{ formatarCNPJ(contabilidade.cnpj) }}</td>
+              <td class="px-6 py-4 text-[#1E2615]">{{ contabilidade.responsavel || '-' }}</td>
+              <td class="px-6 py-4 text-[#1E2615]">{{ contabilidade.email || '-' }}</td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-[#8BCB70]/20 text-[#0C0D0A]">
+                  {{ contabilidade.certificados_vinculados || 0 }}
+                </span>
+              </td>
+              <td class="px-6 py-4">
+                <div class="flex justify-center gap-2">
+                  <button
+                    (click)="abrirFormulario(contabilidade)"
+                    class="p-2 text-[#8BCB70] hover:bg-[#8BCB70]/10 rounded-lg transition-colors"
+                    title="Editar"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                    </svg>
+                  </button>
+                  <button
+                    (click)="excluir(contabilidade)"
+                    class="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Excluir"
+                    [disabled]="carregando"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+

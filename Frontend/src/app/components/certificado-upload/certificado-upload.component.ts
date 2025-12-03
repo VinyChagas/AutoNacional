@@ -1,7 +1,10 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { RouterModule } from '@angular/router';
 import { CertificadoService, Certificado, CertificadoValidacaoLoteResponse, CertificadoImportacaoLoteResponse } from '../../services/certificado.service';
+import { ContabilidadeService } from '../../services/contabilidade.service';
+import { Contabilidade } from '../../models/contabilidade.model';
 import { Subject, takeUntil } from 'rxjs';
 import jsPDF from 'jspdf';
 // @ts-ignore - jspdf-autotable não tem tipos TypeScript completos
@@ -26,7 +29,7 @@ interface SortState {
 @Component({
   selector: 'app-certificado-upload',
   standalone: true,
-  imports: [ReactiveFormsModule, FormsModule, CommonModule],
+  imports: [ReactiveFormsModule, FormsModule, CommonModule, RouterModule],
   templateUrl: './certificado-upload.component.html',
   styleUrls: ['./certificado-upload.component.scss'],
 })
@@ -45,10 +48,17 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   modalAberto = false;
   certificadoAtual: CertificadoPendente | null = null;
   senhaForm: FormGroup;
+  contabilidadeForm: FormGroup;
   validandoSenha = false;
   senhaValida: boolean | null = null;
   mensagemSenha = '';
   importando = false;
+  
+  // Fluxo de dois passos
+  passoAtual: 1 | 2 = 1;
+  dadosExtraidos: any = null;
+  contabilidades: Contabilidade[] = [];
+  carregandoContabilidades = false;
   
   // Upload em lote
   carregando = false;
@@ -82,10 +92,14 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
 
   constructor(
     private fb: FormBuilder,
-    private certificadoService: CertificadoService
+    private certificadoService: CertificadoService,
+    private contabilidadeService: ContabilidadeService
   ) {
     this.senhaForm = this.fb.group({
       senha: ['', [Validators.required]]
+    });
+    this.contabilidadeForm = this.fb.group({
+      contabilidade_id: ['', [Validators.required]]
     });
   }
 
@@ -204,10 +218,14 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   abrirModalSenha(certificado: CertificadoPendente) {
     this.certificadoAtual = certificado;
     this.senhaForm.patchValue({ senha: '' });
+    this.contabilidadeForm.patchValue({ contabilidade_id: '' });
     this.senhaValida = null;
     this.mensagemSenha = '';
     this.importando = false;
+    this.passoAtual = 1;
+    this.dadosExtraidos = null;
     this.modalAberto = true;
+    this.carregarContabilidades();
   }
 
   fecharModal() {
@@ -217,7 +235,24 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     this.mensagemSenha = '';
     this.validandoSenha = false;
     this.importando = false;
+    this.passoAtual = 1;
+    this.dadosExtraidos = null;
     this.senhaForm.reset();
+    this.contabilidadeForm.reset();
+  }
+
+  carregarContabilidades() {
+    this.carregandoContabilidades = true;
+    this.contabilidadeService.listar().subscribe({
+      next: (response) => {
+        this.contabilidades = response.contabilidades || [];
+        this.carregandoContabilidades = false;
+      },
+      error: (error) => {
+        console.error('Erro ao carregar contabilidades:', error);
+        this.carregandoContabilidades = false;
+      }
+    });
   }
 
   async validarSenha() {
@@ -237,9 +272,9 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     const senha = this.senhaForm.get('senha')?.value;
 
     try {
-      // Importa o certificado e extrai informações
+      // Passo 1: Extrai informações do certificado (sem salvar)
       const resultado = await new Promise<any>((resolve, reject) => {
-        this.certificadoService.importarCertificado(
+        this.certificadoService.extrairInformacoesCertificado(
           this.certificadoAtual!.file,
           senha
         ).subscribe({
@@ -248,19 +283,79 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         });
       });
 
-      // Verifica se a importação foi bem-sucedida
+      // Verifica se a extração foi bem-sucedida
       if (resultado.success && resultado.cnpj && resultado.empresa) {
+        // Salva os dados extraídos e avança para o passo 2
+        this.dadosExtraidos = {
+          ...resultado,
+          senha: senha // Guarda a senha temporariamente para o passo 2
+        };
+        this.passoAtual = 2;
         this.senhaValida = true;
-        this.mensagemSenha = 'Certificado importado com sucesso!';
+        this.mensagemSenha = 'Certificado validado! Selecione a contabilidade.';
+      } else {
+        // Erro na validação
+        this.senhaValida = false;
+        this.mensagemSenha = resultado.message || 'Erro ao validar certificado';
+      }
 
-        // Extrai CNPJ limpo (sem formatação)
-        const cnpjLimpo = resultado.cnpj.replace(/[^\d]/g, '');
+    } catch (error: any) {
+      console.error('❌ Erro ao validar certificado:', error);
+      this.senhaValida = false;
+      
+      // Tratamento detalhado de erros
+      if (error.message) {
+        this.mensagemSenha = error.message;
+      } else if (error.error) {
+        if (typeof error.error === 'object') {
+          this.mensagemSenha = error.error.message || error.error.detail || 'Erro ao processar certificado';
+        } else {
+          this.mensagemSenha = error.error.toString();
+        }
+      } else {
+        this.mensagemSenha = 'Erro desconhecido ao processar certificado. Verifique se o servidor está rodando.';
+      }
+    } finally {
+      this.importando = false;
+    }
+  }
+
+  async confirmarVinculacao() {
+    if (!this.contabilidadeForm.valid || !this.dadosExtraidos) {
+      if (!this.contabilidadeForm.get('contabilidade_id')?.value) {
+        this.mensagemSenha = 'Por favor, selecione uma contabilidade';
+      }
+      return;
+    }
+
+    this.importando = true;
+    this.mensagemSenha = '';
+
+    const contabilidadeId = parseInt(this.contabilidadeForm.get('contabilidade_id')?.value);
+    const contabilidadeSelecionada = this.contabilidades.find(c => c.id === contabilidadeId);
+
+    try {
+      // Passo 2: Importa o certificado com contabilidade_id
+      const resultado = await new Promise<any>((resolve, reject) => {
+        this.certificadoService.importarCertificadoComContabilidade(
+          this.certificadoAtual!.file,
+          this.dadosExtraidos.senha,
+          contabilidadeId
+        ).subscribe({
+          next: resolve,
+          error: reject
+        });
+      });
+
+      if (resultado.success) {
+        // Extrai CNPJ limpo
+        const cnpjLimpo = this.dadosExtraidos.cnpj.replace(/[^\d]/g, '');
         
-        // Faz upload do certificado com o CNPJ extraído
+        // Faz upload do certificado
         await new Promise((resolve, reject) => {
           this.certificadoService.uploadCertificado(
             cnpjLimpo,
-            senha,
+            this.dadosExtraidos.senha,
             this.certificadoAtual!.file
           ).subscribe({
             next: resolve,
@@ -269,22 +364,21 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         });
 
         // Cria objeto de certificado com dados extraídos
-        const dataValidade = resultado.dataVencimento ? new Date(resultado.dataVencimento) : null;
+        const dataValidade = this.dadosExtraidos.dataVencimento ? new Date(this.dadosExtraidos.dataVencimento) : null;
         const diasAteExpiracao = this.certificadoService.calcularDiasAteExpiracao(dataValidade);
         const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
-
-        // Usa o nome da empresa retornado pela API (já vem sem o CNPJ após ":")
-        // Se não vier, usa o nome do arquivo como fallback
-        const nomeEmpresa = resultado.empresa || this.certificadoAtual.file.name;
+        const nomeEmpresa = this.dadosExtraidos.empresa || this.certificadoAtual!.file.name;
 
         const novoCertificado: Certificado = {
-          id: this.certificadoAtual.id,
+          id: this.certificadoAtual!.id,
           cnpj: cnpjLimpo,
           nomeArquivo: nomeEmpresa,
           dataUpload: new Date(),
           dataValidade,
           diasAteExpiracao,
-          status
+          status,
+          contabilidade_id: contabilidadeId,
+          contabilidade_nome: contabilidadeSelecionada?.nome_contabilidade
         };
 
         this.certificadoService.adicionarCertificadoLocal(novoCertificado);
@@ -294,11 +388,9 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
           c => c.id !== this.certificadoAtual!.id
         );
 
-        // Aguarda um pouco para mostrar mensagem de sucesso
+        // Fecha modal e abre próximo se houver
         setTimeout(() => {
           this.fecharModal();
-          
-          // Abre próximo certificado pendente se houver
           if (this.certificadosPendentes.length > 0) {
             setTimeout(() => {
               this.abrirModalSenha(this.certificadosPendentes[0]);
@@ -307,41 +399,22 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         }, 1500);
 
       } else {
-        // Erro na importação
-        this.senhaValida = false;
-        this.mensagemSenha = resultado.message || 'Erro ao importar certificado';
+        this.mensagemSenha = resultado.message || 'Erro ao vincular certificado à contabilidade';
       }
 
     } catch (error: any) {
-      console.error('❌ Erro ao aplicar senha:', error);
-      this.senhaValida = false;
-      
-      // Tratamento detalhado de erros
-      if (error.message) {
-        console.error('❌ Mensagem de erro:', error.message);
-        this.mensagemSenha = error.message;
-      } else if (error.error) {
-        console.error('❌ Erro detalhado:', error.error);
-        if (typeof error.error === 'object') {
-          if (error.error.message) {
-            this.mensagemSenha = error.error.message;
-          } else if (error.error.detail) {
-            this.mensagemSenha = error.error.detail;
-          } else if (error.error.success === false && error.error.message) {
-            this.mensagemSenha = error.error.message;
-          } else {
-            this.mensagemSenha = 'Erro ao processar certificado. Verifique o console para mais detalhes.';
-          }
-        } else {
-          this.mensagemSenha = error.error.toString();
-        }
-      } else {
-        console.error('❌ Erro desconhecido:', error);
-        this.mensagemSenha = 'Erro desconhecido ao processar certificado. Verifique se o servidor está rodando.';
-      }
+      console.error('❌ Erro ao vincular certificado:', error);
+      this.mensagemSenha = error.error?.message || error.message || 'Erro ao vincular certificado à contabilidade';
     } finally {
       this.importando = false;
     }
+  }
+
+  voltarParaPasso1() {
+    this.passoAtual = 1;
+    this.dadosExtraidos = null;
+    this.contabilidadeForm.reset();
+    this.mensagemSenha = '';
   }
 
   aplicarFiltrosEOrdenacao() {

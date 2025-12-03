@@ -112,6 +112,42 @@
                 }">Execução</span>
         </a>
 
+        <!-- Ícone Contabilidades -->
+        <a 
+          routerLink="/contabilidades" 
+          routerLinkActive="active"
+          class="nav-icon group relative flex flex-col items-center transition-all duration-300"
+        >
+          <div class="relative">
+            <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <div class="relative p-2 rounded-lg transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70]/30 scale-105': currentRoute === 'contabilidades',
+                   'bg-transparent scale-100': currentRoute !== 'contabilidades'
+                 }">
+              <svg class="w-5 h-5 transition-all duration-300"
+                   [ngClass]="{
+                     'text-[#8BCB70]': currentRoute === 'contabilidades',
+                     'text-[#1E2615]/60 group-hover:text-[#8BCB70]': currentRoute !== 'contabilidades'
+                   }"
+                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+              </svg>
+            </div>
+            <!-- Marcador ativo -->
+            <div class="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70] shadow-md shadow-[#8BCB70]/50 scale-125': currentRoute === 'contabilidades',
+                   'bg-transparent': currentRoute !== 'contabilidades'
+                 }"></div>
+          </div>
+          <span class="text-[10px] mt-1 font-medium transition-colors duration-300 leading-tight"
+                [ngClass]="{
+                  'text-[#8BCB70]': currentRoute === 'contabilidades',
+                  'text-[#1E2615]/60 group-hover:text-[#1E2615]': currentRoute !== 'contabilidades'
+                }">Contabilidades</span>
+        </a>
+
         <!-- Ícone Configurações -->
         <a 
           routerLink="/configuracoes" 

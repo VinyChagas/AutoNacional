@@ -1,0 +1,33 @@
+.btn-primary {
+  background: linear-gradient(135deg, #8BCB70 0%, #7EBFB3 100%);
+  color: #0C0D0A;
+  transition: all 0.3s ease;
+
+  &:hover:not(:disabled) {
+    box-shadow: 0 4px 15px rgba(139, 203, 112, 0.4);
+    transform: translateY(-2px);
+  }
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(139, 203, 112, 0.2);
+}
+
+.card-futuristic {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(139, 203, 112, 0.3);
+  transition: all 0.3s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(139, 203, 112, 0.2);
+    border-color: rgba(139, 203, 112, 0.5);
+  }
+}
+
+
+
+

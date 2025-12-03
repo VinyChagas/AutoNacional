@@ -12,6 +12,7 @@ class CertificadoInfo(BaseModel):
     cnpj: str
     cnpj_limpo: Optional[str] = None
     dataVencimento: Optional[str] = None
+    contabilidade_id: Optional[int] = None  # Novo campo para vínculo
 
 
 class CertificadoUploadResponse(BaseModel):

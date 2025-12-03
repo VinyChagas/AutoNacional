@@ -226,6 +226,9 @@ try:
     from src.routers.settings import router as settings_router
     logger.info("✅ Router Settings importado")
     
+    from src.routers.contabilidade import router as contabilidade_router
+    logger.info("✅ Router Contabilidade importado")
+    
     # Registra routers
     logger.info("🔄 Registrando routers na aplicação...")
     app.include_router(nfse_router)
@@ -234,6 +237,7 @@ try:
     app.include_router(credenciais_router)
     app.include_router(certificado_router)
     app.include_router(settings_router)
+    app.include_router(contabilidade_router)
     
     # Lista todas as rotas registradas para debug
     logger.info("📋 Rotas registradas na aplicação:")

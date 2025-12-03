@@ -12,6 +12,8 @@ export interface Certificado {
   diasAteExpiracao: number | null;
   status: 'valido' | 'vencido' | 'proximo_vencimento';
   senha?: string; // Não armazenar em produção
+  contabilidade_id?: number;
+  contabilidade_nome?: string;
 }
 
 export interface CertificadoImportado {
@@ -140,43 +142,51 @@ export class CertificadoService {
     return 'valido';
   }
 
-  importarCertificado(file: File, senha: string): Observable<CertificadoImportado> {
+  extrairInformacoesCertificado(file: File, senha: string): Observable<CertificadoImportado> {
     const formData = new FormData();
     formData.append('certificado', file);
     formData.append('senha', senha);
 
-    const url = `${this.baseUrl}/certificados/importar`;
-    console.log(`[CertificadoService] Fazendo requisição POST para: ${url}`);
-    console.log(`[CertificadoService] Arquivo: ${file.name}, Tamanho: ${file.size} bytes`);
+    const url = `${this.baseUrl}/certificados/extrair`;
+    console.log(`[CertificadoService] Extraindo informações do certificado: ${url}`);
 
     return this.http.post<CertificadoImportado>(url, formData).pipe(
       catchError((error: HttpErrorResponse) => {
         console.error('❌ Erro HTTP na requisição:', error);
-        console.error('❌ Status:', error.status);
-        console.error('❌ Status Text:', error.statusText);
-        console.error('❌ Error Message:', error.message);
-        console.error('❌ Error Object:', error.error);
-        console.error('❌ URL:', error.url || url);
-        
-        // Erro "0 Unknown Error" geralmente significa que a requisição não chegou ao servidor
-        if (error.status === 0) {
-          console.error('⚠️ Erro 0 (Unknown Error) - Possíveis causas:');
-          console.error('   1. Servidor não está rodando');
-          console.error('   2. CORS bloqueando a requisição');
-          console.error('   3. Problema de conectividade');
-          console.error('   4. Timeout na requisição');
-        }
-        
-        // Se o backend retornou um JSON com success: false, retorna ele
         if (error.error && typeof error.error === 'object' && 'success' in error.error) {
           return throwError(() => error.error as CertificadoImportado);
         }
-        // Caso contrário, cria um objeto de erro padrão
         return throwError(() => ({
           success: false,
-          message: error.status === 0 
-            ? 'Erro de conexão. Verifique se o servidor está rodando e se há problemas de CORS.'
-            : (error.error?.message || error.message || 'Erro ao importar certificado')
+          message: error.error?.message || error.message || 'Erro ao extrair informações do certificado'
+        } as CertificadoImportado));
+      })
+    );
+  }
+
+  importarCertificado(file: File, senha: string): Observable<CertificadoImportado> {
+    // Mantido para compatibilidade, mas agora usa extrairInformacoesCertificado
+    return this.extrairInformacoesCertificado(file, senha);
+  }
+
+  importarCertificadoComContabilidade(file: File, senha: string, contabilidadeId: number): Observable<CertificadoImportado> {
+    const formData = new FormData();
+    formData.append('certificado', file);
+    formData.append('senha', senha);
+    formData.append('contabilidade_id', contabilidadeId.toString());
+
+    const url = `${this.baseUrl}/certificados/importar`;
+    console.log(`[CertificadoService] Importando certificado com contabilidade_id: ${contabilidadeId}`);
+
+    return this.http.post<CertificadoImportado>(url, formData).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ Erro HTTP na requisição:', error);
+        if (error.error && typeof error.error === 'object' && 'success' in error.error) {
+          return throwError(() => error.error as CertificadoImportado);
+        }
+        return throwError(() => ({
+          success: false,
+          message: error.error?.message || error.message || 'Erro ao importar certificado'
         } as CertificadoImportado));
       })
     );
