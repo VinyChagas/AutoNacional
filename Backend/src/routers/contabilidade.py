@@ -1,11 +1,59 @@
 from fastapi import APIRouter, HTTPException, Path, status, Query
-from typing import List
+from typing import List, Dict
+
+from sqlalchemy import func
+
 from ..schemas.contabilidade import (
-    ContabilidadeCreate, ContabilidadeUpdate, ContabilidadeResponse, ContabilidadeListResponse
+    ContabilidadeCreate,
+    ContabilidadeUpdate,
+    ContabilidadeResponse,
+    ContabilidadeListResponse,
 )
 from ..core.db import get_conn
+from ..db.session import SessionLocal
+from ..db import models
 
 router = APIRouter(prefix="/contabilidades", tags=["Contabilidades"])
+
+
+def _get_certificados_count_for_ids(contabilidade_ids: List[int]) -> Dict[int, int]:
+    """
+    Conta quantos certificados existem em certificados.db para cada contabilidade.
+
+    Usa a tabela SQLAlchemy `certificados` (models.Certificado), que é onde os
+    certificados são realmente persistidos pelo fluxo de importação.
+    """
+    if not contabilidade_ids:
+        return {}
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(models.Certificado.contabilidade_id, func.count(models.Certificado.id))
+            .filter(models.Certificado.contabilidade_id.in_(contabilidade_ids))
+            .group_by(models.Certificado.contabilidade_id)
+            .all()
+        )
+        return {cont_id: int(qtd or 0) for cont_id, qtd in rows if cont_id is not None}
+    finally:
+        db.close()
+
+
+def _get_certificados_count(contabilidade_id: int) -> int:
+    """Conta certificados para uma única contabilidade."""
+    if not contabilidade_id:
+        return 0
+
+    db = SessionLocal()
+    try:
+        qtd = (
+            db.query(func.count(models.Certificado.id))
+            .filter(models.Certificado.contabilidade_id == contabilidade_id)
+            .scalar()
+        )
+        return int(qtd or 0)
+    finally:
+        db.close()
 
 def _row_to_dict(row, cursor):
     """Converte uma row para dict, compatível com SQLite e PostgreSQL."""
@@ -49,16 +97,20 @@ def criar_contabilidade(body: ContabilidadeCreate):
         if not contabilidade_id:
             raise HTTPException(status_code=500, detail="Erro ao obter ID da contabilidade criada")
         
-        cursor.execute("""
-            SELECT *, 
-            (SELECT COUNT(*) FROM certificados_digitais WHERE contabilidade_id = contabilidades.id) AS certificados_vinculados 
-            FROM contabilidades WHERE id = ?
-        """, (contabilidade_id,))
+        cursor.execute(
+            """
+            SELECT *
+            FROM contabilidades
+            WHERE id = ?
+        """,
+            (contabilidade_id,),
+        )
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=500, detail="Erro ao buscar contabilidade recém-criada")
         
         row_dict = _row_to_dict(row, cursor)
+        row_dict["certificados_vinculados"] = _get_certificados_count(contabilidade_id)
         return ContabilidadeResponse(**row_dict)
     except Exception as e:
         import logging
@@ -73,8 +125,7 @@ def listar_contabilidades(skip: int = Query(0, ge=0), limit: int = Query(100, le
     try:
         cursor = conn.cursor()
         sql = """
-            SELECT *, 
-            (SELECT COUNT(*) FROM certificados_digitais WHERE contabilidade_id = contabilidades.id) AS certificados_vinculados 
+            SELECT *
             FROM contabilidades
         """
         if somente_ativas:
@@ -83,9 +134,23 @@ def listar_contabilidades(skip: int = Query(0, ge=0), limit: int = Query(100, le
         cursor.execute(sql, (limit, skip))
         rows = cursor.fetchall()
         
-        contabilidades = []
+        contabilidades_dicts = []
+        contabilidade_ids: List[int] = []
         for row in rows:
             row_dict = _row_to_dict(row, cursor)
+            # Garante que temos o ID numérico para fazer o mapeamento
+            cont_id = row_dict.get("id")
+            if isinstance(cont_id, int):
+                contabilidade_ids.append(cont_id)
+            contabilidades_dicts.append(row_dict)
+
+        # Busca contagem de certificados no banco de certificados (certificados.db)
+        certificados_por_contabilidade = _get_certificados_count_for_ids(contabilidade_ids)
+
+        contabilidades = []
+        for row_dict in contabilidades_dicts:
+            cont_id = row_dict.get("id")
+            row_dict["certificados_vinculados"] = certificados_por_contabilidade.get(cont_id, 0)
             contabilidades.append(ContabilidadeResponse(**row_dict))
         
         return ContabilidadeListResponse(
@@ -104,16 +169,20 @@ def get_contabilidade(contabilidade_id: int = Path(..., ge=1)):
     conn = get_conn()
     try:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT *, 
-            (SELECT COUNT(*) FROM certificados_digitais WHERE contabilidade_id = contabilidades.id) AS certificados_vinculados 
-            FROM contabilidades WHERE id = ?
-        """, (contabilidade_id,))
+        cursor.execute(
+            """
+            SELECT *
+            FROM contabilidades
+            WHERE id = ?
+        """,
+            (contabilidade_id,),
+        )
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Contabilidade não encontrada")
         
         row_dict = _row_to_dict(row, cursor)
+        row_dict["certificados_vinculados"] = _get_certificados_count(contabilidade_id)
         return ContabilidadeResponse(**row_dict)
     except HTTPException:
         raise
@@ -144,16 +213,19 @@ def atualizar_contabilidade(contabilidade_id: int, body: ContabilidadeUpdate):
         cursor.execute(sql, tuple(values))
         conn.commit()
         
-        cursor.execute("""
-            SELECT *, 
-            (SELECT COUNT(*) FROM certificados_digitais WHERE contabilidade_id = contabilidades.id) AS certificados_vinculados 
-            FROM contabilidades WHERE id = ?
-        """, (contabilidade_id,))
+        cursor.execute(
+            """
+            SELECT *
+            FROM contabilidades
+            WHERE id = ?
+        """,
+            (contabilidade_id,),
+        )
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Contabilidade não encontrada após atualização")
-        
         row_dict = _row_to_dict(row, cursor)
+        row_dict["certificados_vinculados"] = _get_certificados_count(contabilidade_id)
         return ContabilidadeResponse(**row_dict)
     except HTTPException:
         raise
@@ -174,11 +246,12 @@ def excluir_contabilidade(contabilidade_id: int):
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Contabilidade não encontrada")
         
-        cursor.execute("SELECT COUNT(*) FROM certificados_digitais WHERE contabilidade_id = ?", (contabilidade_id,))
-        row = cursor.fetchone()
-        certificados_vinculados = row[0] if row and isinstance(row, (tuple, list)) else (row[0] if isinstance(row, dict) else 0)
+        # Busca apenas para log/consistência – atualmente não bloqueia a exclusão
+        certificados_vinculados = _get_certificados_count(contabilidade_id)
         
-        # Adotando a regra ON DELETE SET NULL: exclusão é permitida e certificados são desvinculados
+        # Regra: exclusão da contabilidade não apaga certificados na base de certificados,
+        # apenas os deixa "órfãos" em relação à contabilidade. Caso queira, podemos
+        # futuramente limpar ou zerar o vínculo nesses registros.
         cursor.execute("DELETE FROM contabilidades WHERE id = ?", (contabilidade_id,))
         conn.commit()
         return None

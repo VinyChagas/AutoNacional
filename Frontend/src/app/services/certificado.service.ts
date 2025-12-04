@@ -69,6 +69,10 @@ export class CertificadoService {
     this.carregarCertificados();
   }
 
+  private limparCNPJ(cnpj: string): string {
+    return cnpj ? cnpj.replace(/[^\d]/g, '') : '';
+  }
+
   private carregarCertificados() {
     const stored = localStorage.getItem(this.storageKey);
     if (stored) {
@@ -106,7 +110,16 @@ export class CertificadoService {
 
   adicionarCertificadoLocal(certificado: Certificado) {
     const certificados = this.certificadosSubject.value;
-    certificados.push(certificado);
+    const cnpjLimpo = this.limparCNPJ(certificado.cnpj);
+
+    // Upsert por CNPJ: se já existir, atualiza; senão, adiciona.
+    const index = certificados.findIndex(c => this.limparCNPJ(c.cnpj) === cnpjLimpo);
+    if (index !== -1) {
+      certificados[index] = { ...certificados[index], ...certificado, id: certificados[index].id };
+    } else {
+      certificados.push(certificado);
+    }
+
     this.salvarCertificados(certificados);
   }
 
@@ -119,9 +132,35 @@ export class CertificadoService {
     }
   }
 
-  removerCertificado(id: string) {
-    const certificados = this.certificadosSubject.value.filter(c => c.id !== id);
-    this.salvarCertificados(certificados);
+  removerCertificado(certificado: Certificado) {
+    // Remove primeiro no backend (tabela certificados) para que a contagem
+    // nas contabilidades fique sempre consistente.
+    const cnpjLimpo = this.limparCNPJ(certificado.cnpj);
+
+    this.http.delete<void>(`${this.baseUrl}/certificados/metadados/cnpj/${cnpjLimpo}`)
+      .pipe(
+        catchError((error: HttpErrorResponse) => {
+          console.error('❌ Erro ao remover certificado no backend:', error);
+          return throwError(() => error);
+        })
+      )
+      .subscribe({
+        next: () => {
+          // Atualiza lista local / localStorage
+          const certificados = this.certificadosSubject.value.filter(c => c.id !== certificado.id);
+          this.salvarCertificados(certificados);
+        },
+        error: (error) => {
+          // Se o backend retornar 404 (já não existe no banco), seguimos com a remoção local
+          if (error.status === 404) {
+            const certificados = this.certificadosSubject.value.filter(c => c.id !== certificado.id);
+            this.salvarCertificados(certificados);
+            return;
+          }
+
+          alert(error.error?.detail || error.message || 'Erro ao remover certificado.');
+        }
+      });
   }
 
   calcularDiasAteExpiracao(dataValidade: Date | null): number | null {

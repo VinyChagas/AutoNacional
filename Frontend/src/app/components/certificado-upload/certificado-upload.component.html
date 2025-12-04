@@ -280,7 +280,7 @@
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button
-                      (click)="removerCertificado(certificado.id)"
+                      (click)="removerCertificado(certificado)"
                       class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors font-semibold"
                     >
                       Remover
@@ -475,7 +475,7 @@
           @if (mensagemSenha) {
             <div class="p-4 rounded-xl border" [ngClass]="{
               'bg-[#8BCB70]/30 text-white border-[#8BCB70]/50': senhaValida === true,
-              'bg-red-400/30 text-white border-red-400/50': senhaValida === false || passoAtual === 2
+              'bg-red-400/30 text-white border-red-400/50': senhaValida === false
             }">
               <span class="text-sm font-semibold">{{ mensagemSenha }}</span>
             </div>

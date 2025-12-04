@@ -89,74 +89,26 @@ def _criar_tabelas(conn: sqlite3.Connection):
 
 def popular_banco_mock():
     """
-    Popula o banco mock com empresas baseadas nos certificados existentes.
-    
-    Extrai CNPJs dos nomes dos arquivos de certificado e cria empresas.
+    (Modo atual) Mantém o banco mock *zerado* de empresas.
+
+    Antes este método lia os arquivos de certificados e criava empresas mock.
+    Para o seu cenário, queremos um banco totalmente vazio, então:
+    - apagamos todos os registros da tabela `empresas`
+    - não criamos nada novo
     """
-    import sys
-    backend_dir = Path(__file__).parent.parent.parent
-    
-    # Adiciona src ao path para importar configurações
-    src_path = backend_dir / "src"
-    if str(src_path) not in sys.path:
-        sys.path.insert(0, str(src_path))
-    
-    try:
-        from infrastructure.config import CERTIFICATES_DIR
-        BASE_DIR = CERTIFICATES_DIR
-    except ImportError:
-        # Fallback: define BASE_DIR diretamente
-        BASE_DIR = backend_dir / "certificados_armazenados"
-    
     conn = get_mock_conn()
     cursor = conn.cursor()
-    
-    # Busca todos os arquivos .pfx.enc
-    certificados_dir = Path(BASE_DIR)
-    arquivos_pfx = list(certificados_dir.glob("*.pfx.enc"))
-    
-    empresas_criadas = 0
-    empresas_atualizadas = 0
-    
-    for arquivo_pfx in arquivos_pfx:
-        # Extrai CNPJ do nome do arquivo (formato: CNPJ.pfx.enc)
-        cnpj = arquivo_pfx.stem.replace(".pfx", "").strip()
-        
-        # Valida CNPJ (deve ter 14 dígitos)
-        cnpj_limpo = cnpj.replace(".", "").replace("/", "").replace("-", "").strip()
-        if len(cnpj_limpo) != 14 or not cnpj_limpo.isdigit():
-            logger.warning(f"CNPJ inválido no arquivo {arquivo_pfx.name}: {cnpj_limpo}")
-            continue
-        
-        # Verifica se empresa já existe
-        cursor.execute("SELECT id FROM empresas WHERE cnpj = ?", (cnpj_limpo,))
-        empresa_existente = cursor.fetchone()
-        
-        if empresa_existente:
-            empresas_atualizadas += 1
-            continue
-        
-        # Cria empresa mock
-        empresa_id = f"empresa-{cnpj_limpo}"
-        razao_social = f"Empresa {cnpj_limpo[:8]}"
-        regime = "SIMPLES"  # Default
-        
-        try:
-            cursor.execute("""
-                INSERT INTO empresas (id, cnpj, razao_social, regime, ativo)
-                VALUES (?, ?, ?, ?, 1)
-            """, (empresa_id, cnpj_limpo, razao_social, regime))
-            empresas_criadas += 1
-            logger.info(f"✅ Empresa criada: {razao_social} (CNPJ: {cnpj_limpo})")
-        except sqlite3.IntegrityError:
-            # Empresa já existe
-            empresas_atualizadas += 1
-    
-    conn.commit()
-    conn.close()
-    
-    logger.info(f"📊 Banco mock populado: {empresas_criadas} empresas criadas, {empresas_atualizadas} já existiam")
-    return empresas_criadas, empresas_atualizadas
+    try:
+        cursor.execute("DELETE FROM empresas")
+        conn.commit()
+        empresas_criadas = 0
+        empresas_atualizadas = 0
+        logger.info(
+            f"📊 Banco mock LIMPO: {empresas_criadas} empresas criadas, {empresas_atualizadas} já existiam"
+        )
+        return empresas_criadas, empresas_atualizadas
+    finally:
+        conn.close()
 
 
 def get_mock_conn_dict():

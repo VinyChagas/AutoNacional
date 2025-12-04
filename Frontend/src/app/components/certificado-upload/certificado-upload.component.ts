@@ -323,6 +323,7 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   async confirmarVinculacao() {
     if (!this.contabilidadeForm.valid || !this.dadosExtraidos) {
       if (!this.contabilidadeForm.get('contabilidade_id')?.value) {
+        this.senhaValida = false;
         this.mensagemSenha = 'Por favor, selecione uma contabilidade';
       }
       return;
@@ -370,7 +371,8 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         const nomeEmpresa = this.dadosExtraidos.empresa || this.certificadoAtual!.file.name;
 
         const novoCertificado: Certificado = {
-          id: this.certificadoAtual!.id,
+          // Usa CNPJ limpo como ID estável no frontend para evitar duplicados
+          id: cnpjLimpo,
           cnpj: cnpjLimpo,
           nomeArquivo: nomeEmpresa,
           dataUpload: new Date(),
@@ -399,11 +401,13 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         }, 1500);
 
       } else {
+        this.senhaValida = false;
         this.mensagemSenha = resultado.message || 'Erro ao vincular certificado à contabilidade';
       }
 
     } catch (error: any) {
       console.error('❌ Erro ao vincular certificado:', error);
+      this.senhaValida = false;
       this.mensagemSenha = error.error?.message || error.message || 'Erro ao vincular certificado à contabilidade';
     } finally {
       this.importando = false;
@@ -473,9 +477,9 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     this.certificadosFiltrados = resultado;
   }
 
-  removerCertificado(id: string) {
+  removerCertificado(certificado: Certificado) {
     if (confirm('Tem certeza que deseja remover este certificado?')) {
-      this.certificadoService.removerCertificado(id);
+      this.certificadoService.removerCertificado(certificado);
     }
   }
 
@@ -780,7 +784,7 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
             const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
             
             const novoCertificado: Certificado = {
-              id: `${Date.now()}-${Math.random()}-${index}`,
+              id: cnpjLimpo,
               cnpj: cnpjLimpo,
               nomeArquivo: item.empresa || item.nome_arquivo,
               dataUpload: new Date(),
@@ -858,7 +862,7 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
             const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
             
             const novoCertificado: Certificado = {
-              id: `${Date.now()}-${Math.random()}`,
+              id: cnpjLimpo,
               cnpj: cnpjLimpo,
               nomeArquivo: item.empresa || item.nome_arquivo,
               dataUpload: new Date(),

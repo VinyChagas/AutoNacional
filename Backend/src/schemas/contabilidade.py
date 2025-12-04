@@ -38,3 +38,5 @@ class ContabilidadeListResponse(BaseModel):
 
 
 
+
+
