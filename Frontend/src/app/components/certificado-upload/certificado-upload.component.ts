@@ -2,10 +2,11 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
 import { CertificadoService, Certificado, CertificadoValidacaoLoteResponse, CertificadoImportacaoLoteResponse } from '../../services/certificado.service';
 import { ContabilidadeService } from '../../services/contabilidade.service';
 import { Contabilidade } from '../../models/contabilidade.model';
-import { Subject, takeUntil } from 'rxjs';
+import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 import jsPDF from 'jspdf';
 // @ts-ignore - jspdf-autotable não tem tipos TypeScript completos
 import autoTable from 'jspdf-autotable';
@@ -15,6 +16,19 @@ interface CertificadoPendente {
   file: File;
   cnpj: string;
   id: string;
+  senha?: string; // Senha temporária para retomar
+  dadosExtraidos?: any; // Dados extraídos do certificado
+  contabilidadeId?: number; // Contabilidade selecionada (se houver)
+}
+
+interface CertificadoPendentePersistente {
+  fileName: string;
+  cnpj: string;
+  id: string;
+  senha?: string;
+  dadosExtraidos?: any;
+  contabilidadeId?: number;
+  dataCriacao: string;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -38,6 +52,11 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   certificadosFiltrados: Certificado[] = [];
   certificadosPendentes: CertificadoPendente[] = [];
   
+  // Seleção global de contabilidade
+  contabilidadeGlobalSelecionada: number | null = null;
+  contabilidades: Contabilidade[] = [];
+  carregandoContabilidades = false;
+  
   // Nova lógica de filtragem e ordenação
   sortState: SortState = { column: null, direction: null };
   searchColumn: SearchColumn = 'cnpj';
@@ -57,8 +76,9 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   // Fluxo de dois passos
   passoAtual: 1 | 2 = 1;
   dadosExtraidos: any = null;
-  contabilidades: Contabilidade[] = [];
-  carregandoContabilidades = false;
+  
+  // Certificados pendentes persistentes
+  private readonly STORAGE_KEY_PENDENTES = 'certificados_pendentes_configuracao';
   
   // Upload em lote
   carregando = false;
@@ -88,12 +108,17 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     { value: 'status', label: 'Status' }
   ];
   
+  // Seleção múltipla para exclusão
+  certificadosSelecionados: Set<string> = new Set();
+  excluindoMultiplos = false;
+  
   private destroy$ = new Subject<void>();
 
   constructor(
     private fb: FormBuilder,
     private certificadoService: CertificadoService,
-    private contabilidadeService: ContabilidadeService
+    private contabilidadeService: ContabilidadeService,
+    private http: HttpClient
   ) {
     this.senhaForm = this.fb.group({
       senha: ['', [Validators.required]]
@@ -104,6 +129,13 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    // Carrega contabilidades ao inicializar
+    this.carregarContabilidades();
+    
+    // Carrega certificados pendentes persistentes
+    this.carregarCertificadosPendentes();
+    
+    // Observa mudanças nos certificados
     this.certificadoService.certificados$
       .pipe(takeUntil(this.destroy$))
       .subscribe(certificados => {
@@ -199,13 +231,43 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         return;
       }
       
-      // Adiciona todos os arquivos à lista de pendentes
+      // Se houver múltiplos arquivos, oferece opção de importação em lote
+      if (arquivosValidos.length > 1) {
+        const escolha = confirm(
+          `${arquivosValidos.length} arquivo(s) selecionado(s).\n\n` +
+          `Deseja importar em lote com a mesma senha para todos?\n\n` +
+          `• SIM: Abre modal de importação em lote\n` +
+          `• NÃO: Importa um por um (fluxo individual)`
+        );
+        
+        if (escolha) {
+          // Importação em lote
+          this.arquivosImportacaoLote = arquivosValidos;
+          this.senhaImportacaoLote = '';
+          this.resultadosImportacao = null;
+          this.modalImportacaoLoteAberto = true;
+          
+          // Reseta o input de arquivo
+          input.value = '';
+          return;
+        }
+      }
+      
+      // Fluxo individual (um por um)
       arquivosValidos.forEach(file => {
-        this.certificadosPendentes.push({
+        // Verifica se há dados pendentes para restaurar
+        const dadosRestaurados = this.restaurarDadosPendenteSeExistir(file.name);
+        
+        const pendente: CertificadoPendente = {
           file,
           cnpj: '', // CNPJ será extraído automaticamente pelo backend
-          id: `${Date.now()}-${Math.random()}`
-        });
+          id: `${Date.now()}-${Math.random()}`,
+          senha: dadosRestaurados?.senha,
+          dadosExtraidos: dadosRestaurados?.dadosExtraidos,
+          contabilidadeId: dadosRestaurados?.contabilidadeId || this.contabilidadeGlobalSelecionada || undefined
+        };
+        
+        this.certificadosPendentes.push(pendente);
       });
       
       // Abre modal para o primeiro certificado pendente
@@ -217,18 +279,51 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
 
   abrirModalSenha(certificado: CertificadoPendente) {
     this.certificadoAtual = certificado;
-    this.senhaForm.patchValue({ senha: '' });
-    this.contabilidadeForm.patchValue({ contabilidade_id: '' });
+    
+    // Se o certificado pendente já tem senha e dados extraídos, vai direto para o passo 2
+    if (certificado.senha && certificado.dadosExtraidos) {
+      this.senhaForm.patchValue({ senha: certificado.senha });
+      this.dadosExtraidos = certificado.dadosExtraidos;
+      this.passoAtual = 2;
+      this.senhaValida = true;
+      
+      // Se houver contabilidade global ou pré-selecionada, usa ela
+      const contabilidadeId = this.contabilidadeGlobalSelecionada || certificado.contabilidadeId;
+      if (contabilidadeId) {
+        this.contabilidadeForm.patchValue({ contabilidade_id: contabilidadeId.toString() });
+      } else {
+        this.contabilidadeForm.patchValue({ contabilidade_id: '' });
+      }
+    } else {
+      this.senhaForm.patchValue({ senha: certificado.senha || '' });
+      this.passoAtual = 1;
+      this.dadosExtraidos = null;
+      
+      // Se houver contabilidade global, pré-preenche
+      if (this.contabilidadeGlobalSelecionada) {
+        this.contabilidadeForm.patchValue({ contabilidade_id: this.contabilidadeGlobalSelecionada.toString() });
+      } else {
+        this.contabilidadeForm.patchValue({ contabilidade_id: certificado.contabilidadeId?.toString() || '' });
+      }
+    }
+    
     this.senhaValida = null;
     this.mensagemSenha = '';
     this.importando = false;
-    this.passoAtual = 1;
-    this.dadosExtraidos = null;
     this.modalAberto = true;
-    this.carregarContabilidades();
+    
+    // Carrega contabilidades se ainda não foram carregadas
+    if (this.contabilidades.length === 0) {
+      this.carregarContabilidades();
+    }
   }
 
   fecharModal() {
+    // Se o modal foi fechado e há dados parciais, salva como pendente
+    if (this.certificadoAtual && (this.senhaForm.get('senha')?.value || this.dadosExtraidos)) {
+      this.salvarCertificadoPendente();
+    }
+    
     this.modalAberto = false;
     this.certificadoAtual = null;
     this.senhaValida = null;
@@ -253,6 +348,16 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         this.carregandoContabilidades = false;
       }
     });
+  }
+
+  onContabilidadeGlobalChange(contabilidadeId: string | number | null) {
+    if (contabilidadeId === '' || contabilidadeId === null || contabilidadeId === 'null') {
+      this.contabilidadeGlobalSelecionada = null;
+    } else {
+      const id = typeof contabilidadeId === 'string' ? parseInt(contabilidadeId) : contabilidadeId;
+      this.contabilidadeGlobalSelecionada = isNaN(id) ? null : id;
+    }
+    this.aplicarFiltrosEOrdenacao();
   }
 
   async validarSenha() {
@@ -290,9 +395,21 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
           ...resultado,
           senha: senha // Guarda a senha temporariamente para o passo 2
         };
+        
+        // Atualiza o certificado pendente com senha e dados extraídos
+        if (this.certificadoAtual) {
+          this.certificadoAtual.senha = senha;
+          this.certificadoAtual.dadosExtraidos = this.dadosExtraidos;
+        }
+        
         this.passoAtual = 2;
         this.senhaValida = true;
         this.mensagemSenha = 'Certificado validado! Selecione a contabilidade.';
+        
+        // Se houver contabilidade global selecionada, pré-preenche o formulário
+        if (this.contabilidadeGlobalSelecionada) {
+          this.contabilidadeForm.patchValue({ contabilidade_id: this.contabilidadeGlobalSelecionada.toString() });
+        }
       } else {
         // Erro na validação
         this.senhaValida = false;
@@ -321,18 +438,33 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   }
 
   async confirmarVinculacao() {
-    if (!this.contabilidadeForm.valid || !this.dadosExtraidos) {
-      if (!this.contabilidadeForm.get('contabilidade_id')?.value) {
+    // Determina a contabilidade a usar (global ou do formulário)
+    let contabilidadeId: number;
+    
+    if (this.contabilidadeGlobalSelecionada !== null) {
+      // Usa a contabilidade global se estiver selecionada
+      contabilidadeId = this.contabilidadeGlobalSelecionada;
+      // Atualiza o formulário para refletir isso
+      this.contabilidadeForm.patchValue({ contabilidade_id: contabilidadeId.toString() });
+    } else {
+      // Usa a contabilidade do formulário
+      if (!this.contabilidadeForm.valid || !this.contabilidadeForm.get('contabilidade_id')?.value) {
         this.senhaValida = false;
         this.mensagemSenha = 'Por favor, selecione uma contabilidade';
+        return;
       }
+      contabilidadeId = parseInt(this.contabilidadeForm.get('contabilidade_id')?.value);
+    }
+
+    if (!this.dadosExtraidos) {
+      this.senhaValida = false;
+      this.mensagemSenha = 'Erro: dados do certificado não encontrados';
       return;
     }
 
     this.importando = true;
     this.mensagemSenha = '';
 
-    const contabilidadeId = parseInt(this.contabilidadeForm.get('contabilidade_id')?.value);
     const contabilidadeSelecionada = this.contabilidades.find(c => c.id === contabilidadeId);
 
     try {
@@ -385,18 +517,29 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
 
         this.certificadoService.adicionarCertificadoLocal(novoCertificado);
 
-        // Remove da lista de pendentes
+        // Remove da lista de pendentes (tanto em memória quanto persistente)
         this.certificadosPendentes = this.certificadosPendentes.filter(
           c => c.id !== this.certificadoAtual!.id
         );
+        this.removerCertificadoPendente(this.certificadoAtual!.id);
 
         // Fecha modal e abre próximo se houver
         setTimeout(() => {
           this.fecharModal();
+          
+          // Tenta abrir próximo pendente (em memória ou persistente)
           if (this.certificadosPendentes.length > 0) {
             setTimeout(() => {
               this.abrirModalSenha(this.certificadosPendentes[0]);
             }, 500);
+          } else {
+            // Verifica se há pendentes persistentes para retomar
+            const proximoPendente = this.obterProximoCertificadoPendente();
+            if (proximoPendente) {
+              setTimeout(() => {
+                this.retomarCertificadoPendente(proximoPendente);
+              }, 500);
+            }
           }
         }, 1500);
 
@@ -424,7 +567,14 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
   aplicarFiltrosEOrdenacao() {
     let resultado = [...this.certificados];
 
-    // 1. Filtro de busca por texto
+    // 1. Filtro por contabilidade global (primeiro filtro aplicado)
+    if (this.contabilidadeGlobalSelecionada !== null) {
+      resultado = resultado.filter(certificado => 
+        certificado.contabilidade_id === this.contabilidadeGlobalSelecionada
+      );
+    }
+
+    // 2. Filtro de busca por texto
     if (this.searchValue.trim()) {
       const searchLower = this.searchValue.trim().toLowerCase();
       resultado = resultado.filter(certificado => {
@@ -433,7 +583,7 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
       });
     }
 
-    // 2. Filtro de vencidos
+    // 3. Filtro de vencidos
     if (this.filtroVencidos) {
       resultado = resultado.filter(c => 
         c.status === 'vencido' || (c.diasAteExpiracao !== null && c.diasAteExpiracao <= 0)
@@ -481,6 +631,116 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     if (confirm('Tem certeza que deseja remover este certificado?')) {
       this.certificadoService.removerCertificado(certificado);
     }
+  }
+
+  // Seleção múltipla
+  toggleSelecionarCertificado(certificadoId: string) {
+    if (this.certificadosSelecionados.has(certificadoId)) {
+      this.certificadosSelecionados.delete(certificadoId);
+    } else {
+      this.certificadosSelecionados.add(certificadoId);
+    }
+  }
+
+  estaSelecionado(certificadoId: string): boolean {
+    return this.certificadosSelecionados.has(certificadoId);
+  }
+
+  toggleSelecionarTodos() {
+    if (this.todosSelecionados) {
+      this.certificadosSelecionados.clear();
+    } else {
+      this.certificadosFiltrados.forEach(cert => {
+        this.certificadosSelecionados.add(cert.id);
+      });
+    }
+  }
+
+  get todosSelecionados(): boolean {
+    return this.certificadosFiltrados.length > 0 && 
+           this.certificadosFiltrados.every(cert => this.certificadosSelecionados.has(cert.id));
+  }
+
+  get nenhumSelecionado(): boolean {
+    return this.certificadosSelecionados.size === 0;
+  }
+
+  get quantidadeSelecionados(): number {
+    return this.certificadosSelecionados.size;
+  }
+
+  async excluirCertificadosSelecionados() {
+    const quantidade = this.certificadosSelecionados.size;
+    if (quantidade === 0) {
+      alert('Nenhum certificado selecionado.');
+      return;
+    }
+
+    const confirmacao = confirm(
+      `Tem certeza que deseja excluir ${quantidade} certificado(s) selecionado(s)?\n\nEsta ação não pode ser desfeita.`
+    );
+
+    if (!confirmacao) {
+      return;
+    }
+
+    this.excluindoMultiplos = true;
+    const certificadosParaExcluir = [...this.certificadosFiltrados.filter(cert => 
+      this.certificadosSelecionados.has(cert.id)
+    )];
+
+    let sucesso = 0;
+    let falhas = 0;
+    const erros: string[] = [];
+
+    // Exclui cada certificado sequencialmente
+    for (const certificado of certificadosParaExcluir) {
+      try {
+        const cnpjLimpo = certificado.cnpj.replace(/[^\d]/g, '');
+        
+        try {
+          await firstValueFrom(
+            this.http.delete<void>(`http://localhost:8000/api/certificados/metadados/cnpj/${cnpjLimpo}`)
+          );
+          
+          // Remove da lista local usando o serviço para manter consistência
+          this.certificadoService['certificadosSubject'].next(
+            this.certificadoService['certificadosSubject'].value.filter(c => c.id !== certificado.id)
+          );
+          sucesso++;
+        } catch (error: any) {
+          // Se o backend retornar 404 (já não existe no banco), seguimos com a remoção local
+          if (error.status === 404) {
+            this.certificadoService['certificadosSubject'].next(
+              this.certificadoService['certificadosSubject'].value.filter(c => c.id !== certificado.id)
+            );
+            sucesso++;
+          } else {
+            falhas++;
+            erros.push(`${certificado.nomeArquivo} (${this.formatarCNPJ(certificado.cnpj)}): ${error.error?.detail || error.message || 'Erro desconhecido'}`);
+          }
+        }
+        
+        // Pequeno delay entre exclusões para não sobrecarregar o servidor
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error: any) {
+        falhas++;
+        erros.push(`${certificado.nomeArquivo} (${this.formatarCNPJ(certificado.cnpj)}): ${error.message || 'Erro desconhecido'}`);
+      }
+    }
+
+    // Limpa seleção após exclusão
+    this.certificadosSelecionados.clear();
+
+    // Mostra resultado
+    if (falhas === 0) {
+      alert(`${sucesso} certificado(s) excluído(s) com sucesso!`);
+    } else {
+      const mensagemErro = erros.length > 0 ? `\n\nErros:\n${erros.slice(0, 5).join('\n')}${erros.length > 5 ? `\n... e mais ${erros.length - 5} erro(s)` : ''}` : '';
+      alert(`${sucesso} certificado(s) excluído(s) com sucesso.\n${falhas} certificado(s) falharam ao excluir.${mensagemErro}`);
+    }
+
+    this.excluindoMultiplos = false;
   }
 
   formatarCNPJ(cnpj: string): string {
@@ -734,6 +994,12 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     this.senhaImportacaoLote = '';
     this.resultadosImportacao = null;
     this.importandoLote = false;
+    
+    // Reseta o input de arquivo para permitir nova seleção
+    const fileInput = document.querySelector('input[type="file"][accept=".pfx,.p12"]') as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = '';
+    }
   }
 
   async aplicarSenhaParaTodos() {
@@ -762,9 +1028,13 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
       // Prepara lista de arquivos para importação em lote
       const arquivosParaImportar = this.certificadosPendentes.map(cp => cp.file);
 
-      // Chama o endpoint de importação em lote
+      // Chama o endpoint de importação em lote com contabilidade_id se houver contabilidade global selecionada
       const resultado = await new Promise<CertificadoImportacaoLoteResponse>((resolve, reject) => {
-        this.certificadoService.importarCertificadosLote(arquivosParaImportar, senha).subscribe({
+        this.certificadoService.importarCertificadosLote(
+          arquivosParaImportar, 
+          senha,
+          this.contabilidadeGlobalSelecionada
+        ).subscribe({
           next: resolve,
           error: reject
         });
@@ -839,18 +1109,71 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // Verifica se há contabilidade global selecionada
+    if (this.contabilidadeGlobalSelecionada === null) {
+      const confirmar = confirm(
+        'Nenhuma contabilidade foi selecionada globalmente.\n\n' +
+        'Os certificados serão importados sem vínculo à contabilidade.\n\n' +
+        'Deseja continuar mesmo assim?'
+      );
+      if (!confirmar) {
+        return;
+      }
+    }
+
     this.importandoLote = true;
     this.resultadosImportacao = null;
 
     try {
+      // Importa os certificados em lote com contabilidade_id se houver contabilidade global selecionada
       const resultado = await new Promise<CertificadoImportacaoLoteResponse>((resolve, reject) => {
-        this.certificadoService.importarCertificadosLote(this.arquivosImportacaoLote, this.senhaImportacaoLote).subscribe({
+        this.certificadoService.importarCertificadosLote(
+          this.arquivosImportacaoLote, 
+          this.senhaImportacaoLote,
+          this.contabilidadeGlobalSelecionada
+        ).subscribe({
           next: resolve,
           error: reject
         });
       });
 
       this.resultadosImportacao = resultado;
+      
+      // Nota: Se contabilidade foi passada no importarCertificadosLote, os certificados já foram vinculados.
+      // O código abaixo é mantido para compatibilidade com certificados já importados sem vínculo.
+      if (this.contabilidadeGlobalSelecionada !== null && resultado.resultados) {
+        const certificadosParaVincular = resultado.resultados
+          .filter(item => item.sucesso && item.cnpj)
+          .map(item => {
+            // Encontra o arquivo original correspondente
+            const arquivoOriginal = this.arquivosImportacaoLote.find(f => 
+              f.name === item.nome_arquivo
+            );
+            return { item, arquivo: arquivoOriginal };
+          })
+          .filter(({ arquivo }) => arquivo !== undefined);
+
+        // Vincula cada certificado à contabilidade
+        for (const { item, arquivo } of certificadosParaVincular) {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              this.certificadoService.importarCertificadoComContabilidade(
+                arquivo!,
+                this.senhaImportacaoLote,
+                this.contabilidadeGlobalSelecionada!
+              ).subscribe({
+                next: () => resolve(),
+                error: (err) => {
+                  console.warn(`Erro ao vincular certificado ${item.nome_arquivo} à contabilidade:`, err);
+                  resolve(); // Continua mesmo se houver erro na vinculação
+                }
+              });
+            });
+          } catch (err) {
+            console.warn(`Erro ao vincular certificado ${item.nome_arquivo}:`, err);
+          }
+        }
+      }
       
       // Adiciona os certificados importados com sucesso à lista local
       if (resultado.resultados) {
@@ -861,6 +1184,10 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
             const diasAteExpiracao = this.certificadoService.calcularDiasAteExpiracao(dataValidade);
             const status = this.certificadoService.obterStatusCertificado(diasAteExpiracao);
             
+            const contabilidadeSelecionada = this.contabilidades.find(c => 
+              c.id === this.contabilidadeGlobalSelecionada
+            );
+            
             const novoCertificado: Certificado = {
               id: cnpjLimpo,
               cnpj: cnpjLimpo,
@@ -868,7 +1195,9 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
               dataUpload: new Date(),
               dataValidade,
               diasAteExpiracao,
-              status
+              status,
+              contabilidade_id: this.contabilidadeGlobalSelecionada || undefined,
+              contabilidade_nome: contabilidadeSelecionada?.nome_contabilidade
             };
             
             this.certificadoService.adicionarCertificadoLocal(novoCertificado);
@@ -882,5 +1211,182 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
     } finally {
       this.importandoLote = false;
     }
+  }
+
+  // ============================================================================
+  // Métodos para gerenciar certificados pendentes persistentes
+  // ============================================================================
+
+  private carregarCertificadosPendentes() {
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY_PENDENTES);
+      if (stored) {
+        const pendentes: CertificadoPendentePersistente[] = JSON.parse(stored);
+        // Não converte para CertificadoPendente aqui, apenas mantém em memória para contagem
+        // A conversão será feita quando o usuário clicar para retomar
+      }
+    } catch (e) {
+      console.error('Erro ao carregar certificados pendentes:', e);
+    }
+  }
+
+  private salvarCertificadoPendente() {
+    if (!this.certificadoAtual) return;
+
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY_PENDENTES);
+      const pendentes: CertificadoPendentePersistente[] = stored ? JSON.parse(stored) : [];
+
+      // Remove se já existir
+      const index = pendentes.findIndex(p => p.id === this.certificadoAtual!.id);
+      if (index !== -1) {
+        pendentes.splice(index, 1);
+      }
+
+      // Adiciona/atualiza o pendente
+      const pendente: CertificadoPendentePersistente = {
+        fileName: this.certificadoAtual.file.name,
+        cnpj: this.certificadoAtual.cnpj,
+        id: this.certificadoAtual.id,
+        senha: this.certificadoAtual.senha,
+        dadosExtraidos: this.certificadoAtual.dadosExtraidos,
+        contabilidadeId: this.contabilidadeGlobalSelecionada || this.certificadoAtual.contabilidadeId || undefined,
+        dataCriacao: new Date().toISOString()
+      };
+
+      pendentes.push(pendente);
+      localStorage.setItem(this.STORAGE_KEY_PENDENTES, JSON.stringify(pendentes));
+    } catch (e) {
+      console.error('Erro ao salvar certificado pendente:', e);
+    }
+  }
+
+  private removerCertificadoPendente(id: string) {
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY_PENDENTES);
+      if (stored) {
+        const pendentes: CertificadoPendentePersistente[] = JSON.parse(stored);
+        const filtrados = pendentes.filter(p => p.id !== id);
+        localStorage.setItem(this.STORAGE_KEY_PENDENTES, JSON.stringify(filtrados));
+      }
+    } catch (e) {
+      console.error('Erro ao remover certificado pendente:', e);
+    }
+  }
+
+  obterCertificadosPendentesCount(): number {
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY_PENDENTES);
+      if (stored) {
+        const pendentes: CertificadoPendentePersistente[] = JSON.parse(stored);
+        
+        // Se houver contabilidade global selecionada, filtra por ela
+        if (this.contabilidadeGlobalSelecionada !== null) {
+          return pendentes.filter(p => 
+            p.contabilidadeId === this.contabilidadeGlobalSelecionada || !p.contabilidadeId
+          ).length;
+        }
+        
+        return pendentes.length;
+      }
+      return 0;
+    } catch (e) {
+      console.error('Erro ao contar certificados pendentes:', e);
+      return 0;
+    }
+  }
+
+  private obterProximoCertificadoPendente(): CertificadoPendentePersistente | null {
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY_PENDENTES);
+      if (stored) {
+        const pendentes: CertificadoPendentePersistente[] = JSON.parse(stored);
+        
+        // Filtra por contabilidade se houver seleção global
+        let filtrados = pendentes;
+        if (this.contabilidadeGlobalSelecionada !== null) {
+          filtrados = pendentes.filter(p => 
+            p.contabilidadeId === this.contabilidadeGlobalSelecionada || !p.contabilidadeId
+          );
+        }
+        
+        // Ordena por data de criação (mais antigo primeiro)
+        filtrados.sort((a, b) => 
+          new Date(a.dataCriacao).getTime() - new Date(b.dataCriacao).getTime()
+        );
+        
+        return filtrados.length > 0 ? filtrados[0] : null;
+      }
+      return null;
+    } catch (e) {
+      console.error('Erro ao obter próximo certificado pendente:', e);
+      return null;
+    }
+  }
+
+  async retomarCertificadoPendente(pendente: CertificadoPendentePersistente) {
+    // Como não podemos recriar o objeto File do localStorage, vamos:
+    // 1. Informar ao usuário que precisa selecionar o arquivo novamente
+    // 2. Armazenar temporariamente os dados do pendente para restaurar quando o arquivo for selecionado
+    // 3. Remover o pendente da lista persistente
+    
+    const mensagem = pendente.dadosExtraidos && pendente.senha
+      ? `Para continuar a configuração do certificado "${pendente.fileName}", por favor selecione o arquivo novamente. Os dados já preenchidos serão restaurados automaticamente.`
+      : `Para continuar a configuração do certificado "${pendente.fileName}", por favor selecione o arquivo novamente.`;
+    
+    // Armazena temporariamente os dados para restaurar quando o arquivo for selecionado
+    if (pendente.dadosExtraidos && pendente.senha) {
+      sessionStorage.setItem('certificado_pendente_restaurar', JSON.stringify({
+        fileName: pendente.fileName,
+        senha: pendente.senha,
+        dadosExtraidos: pendente.dadosExtraidos,
+        contabilidadeId: pendente.contabilidadeId
+      }));
+    }
+    
+    alert(mensagem);
+    
+    // Remove o pendente da lista persistente
+    this.removerCertificadoPendente(pendente.id);
+    
+    // Foca no input de arquivo para facilitar a seleção
+    const fileInput = document.querySelector('input[type="file"][accept=".pfx,.p12"]') as HTMLInputElement;
+    if (fileInput) {
+      fileInput.click();
+    }
+  }
+
+  async retomarProximoCertificadoPendente() {
+    const proximo = this.obterProximoCertificadoPendente();
+    if (proximo) {
+      await this.retomarCertificadoPendente(proximo);
+    } else {
+      alert('Não há certificados pendentes para retomar.');
+    }
+  }
+
+  private restaurarDadosPendenteSeExistir(fileName: string): CertificadoPendente | null {
+    try {
+      const stored = sessionStorage.getItem('certificado_pendente_restaurar');
+      if (stored) {
+        const dados: any = JSON.parse(stored);
+        if (dados.fileName === fileName) {
+          // Remove da sessionStorage após usar
+          sessionStorage.removeItem('certificado_pendente_restaurar');
+          return dados;
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao restaurar dados pendentes:', e);
+    }
+    return null;
+  }
+
+  get contabilidadeSelecionadaNome(): string {
+    if (!this.contabilidadeGlobalSelecionada) {
+      return '';
+    }
+    const contabilidade = this.contabilidades.find(c => c.id == this.contabilidadeGlobalSelecionada);
+    return contabilidade?.nome_contabilidade || '';
   }
 }

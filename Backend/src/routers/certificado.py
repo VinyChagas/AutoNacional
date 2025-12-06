@@ -6,7 +6,7 @@ de certificados digitais ICP-Brasil, além de CRUD para metadados.
 """
 
 from datetime import date, datetime
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, status, Query
 from fastapi.responses import JSONResponse
 # Remover a linha abaixo pois não está sendo usada e causa warning
@@ -887,7 +887,8 @@ async def validar_certificados_lote(
 )
 async def importar_certificados_lote(
     certificados: List[UploadFile] = File(...),
-    senha: str = Form(...)
+    senha: str = Form(...),
+    contabilidade_id: Optional[int] = Form(None)
 ) -> CertificadoImportacaoLoteResponse:
     """
     Importa múltiplos certificados digitais em lote usando uma senha única.
@@ -898,6 +899,7 @@ async def importar_certificados_lote(
     Args:
         certificados: Lista de arquivos .pfx ou .p12
         senha: Senha única para usar em todos os certificados
+        contabilidade_id: ID da contabilidade para vincular os certificados (opcional)
         
     Returns:
         CertificadoImportacaoLoteResponse com resultados da importação
@@ -912,6 +914,21 @@ async def importar_certificados_lote(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Senha não pode estar vazia"
         )
+    
+    # Valida contabilidade se fornecida
+    if contabilidade_id is not None:
+        from ..core.db import get_conn
+        conn = get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM contabilidades WHERE id = ?", (contabilidade_id,))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Contabilidade id {contabilidade_id} não encontrada"
+                )
+        finally:
+            conn.close()
     
     certificate_service = get_certificate_service()
     
@@ -987,12 +1004,13 @@ async def importar_certificados_lote(
                                     else:
                                         data_vencimento = informacoes.dataVencimento
                                     
-                                    # Cria registro no banco
+                                    # Cria registro no banco com vínculo à contabilidade (se fornecido)
                                     criar_certificado(
                                         db=db,
                                         cnpj=informacoes.cnpj_limpo,
                                         empresa=informacoes.empresa,
-                                        data_vencimento=data_vencimento
+                                        data_vencimento=data_vencimento,
+                                        contabilidade_id=contabilidade_id
                                     )
                                     logger.info(f"Metadados do certificado salvos no banco: CNPJ {informacoes.cnpj_limpo}")
                                 except ValueError as ve:

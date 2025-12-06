@@ -250,7 +250,7 @@ export class CertificadoService {
     );
   }
 
-  importarCertificadosLote(arquivos: File[], senha: string): Observable<CertificadoImportacaoLoteResponse> {
+  importarCertificadosLote(arquivos: File[], senha: string, contabilidadeId?: number | null): Observable<CertificadoImportacaoLoteResponse> {
     const formData = new FormData();
     
     // Adiciona todos os arquivos
@@ -260,6 +260,11 @@ export class CertificadoService {
     
     // Adiciona a senha
     formData.append('senha', senha);
+    
+    // Adiciona contabilidade_id se fornecido
+    if (contabilidadeId !== null && contabilidadeId !== undefined) {
+      formData.append('contabilidade_id', contabilidadeId.toString());
+    }
 
     return this.http.post<CertificadoImportacaoLoteResponse>(`${this.baseUrl}/certificados/importar-lote`, formData).pipe(
       catchError((error: HttpErrorResponse) => {
@@ -268,4 +273,23 @@ export class CertificadoService {
       })
     );
   }
+
+  listarCertificadosPorContabilidade(contabilidadeId: number): Observable<{ certificados: CertificadoResponse[], total: number }> {
+    return this.http.get<{ certificados: CertificadoResponse[], total: number }>(
+      `${this.baseUrl}/certificados/contabilidade/${contabilidadeId}`
+    ).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ Erro HTTP ao buscar certificados por contabilidade:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+}
+
+export interface CertificadoResponse {
+  id: number;
+  cnpj: string;
+  empresa: string;
+  data_vencimento: string;
+  contabilidade_id?: number;
 }
