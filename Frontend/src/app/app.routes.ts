@@ -4,6 +4,7 @@ import { HomeComponent } from './components/home/home.component';
 import { CertificadoUploadComponent } from './components/certificado-upload/certificado-upload.component';
 import { ExecucaoComponent } from './components/execucao/execucao.component';
 import { ConfiguracoesComponent } from './components/configuracoes/configuracoes.component';
+import { ContabilidadesComponent } from './components/contabilidades/contabilidades.component';
 
 export const routes: Routes = [
   {
@@ -34,6 +35,11 @@ export const routes: Routes = [
         path: 'configuracoes',
         component: ConfiguracoesComponent,
         data: { animation: 'configuracoes' }
+      },
+      {
+        path: 'contabilidades',
+        component: ContabilidadesComponent,
+        data: { animation: 'contabilidades' }
       }
     ]
   }

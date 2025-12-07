@@ -1,8 +1,10 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CertificadoService, Certificado } from '../../services/certificado.service';
+import { CertificadoService, Certificado, CertificadoResponse } from '../../services/certificado.service';
 import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest } from '../../services/execucao.service';
+import { ContabilidadeService } from '../../services/contabilidade.service';
+import { Contabilidade } from '../../models/contabilidade.model';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 
 @Component({
@@ -16,6 +18,19 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   certificadosValidos: Certificado[] = [];
   certificadosCarregados: Certificado[] = [];
   execucoes: ExecucaoEmpresa[] = [];
+  
+  // Contabilidade
+  contabilidades: Contabilidade[] = [];
+  contabilidadeSelecionada: number | null = null;
+  carregandoContabilidades = false;
+  
+  // Modal de seleção de certificados
+  modalSelecaoAberto = false;
+  certificadosDisponiveis: CertificadoResponse[] = [];
+  certificadosSelecionados: Set<number> = new Set();
+  todosSelecionados = false;
+  carregandoCertificadosDisponiveis = false;
+  buscaEmpresa: string = ''; // Campo de busca por nome da empresa
   
   carregandoCertificados = false;
   headlessMode = false;
@@ -32,10 +47,15 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   constructor(
     private certificadoService: CertificadoService,
-    private execucaoService: ExecucaoService
+    private execucaoService: ExecucaoService,
+    private contabilidadeService: ContabilidadeService,
+    private cdr: ChangeDetectorRef
   ) {}
 
   ngOnInit() {
+    // Carrega contabilidades
+    this.carregarContabilidades();
+    
     // Observa mudanças nos certificados
     this.certificadoService.certificados$
       .pipe(takeUntil(this.destroy$))
@@ -45,6 +65,18 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           c => c.status !== 'vencido'
         );
       });
+  }
+
+  async carregarContabilidades() {
+    this.carregandoContabilidades = true;
+    try {
+      const response = await firstValueFrom(this.contabilidadeService.listar());
+      this.contabilidades = response.contabilidades;
+    } catch (error) {
+      console.error('Erro ao carregar contabilidades:', error);
+    } finally {
+      this.carregandoContabilidades = false;
+    }
   }
 
   ngOnDestroy() {
@@ -71,7 +103,36 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   // Getter para verificar se há execuções em andamento
   get temExecucoesEmAndamento(): boolean {
-    return this.execucoes.some(e => e.status === 'executando' || e.status === 'fila');
+    return this.execucoes.some(e => e.status === 'executando' || (e.status === 'fila' && e.mensagem !== 'Aguardando início...'));
+  }
+
+  // Getter para verificar se pode habilitar botão "Carregar Empresas Validadas"
+  get podeCarregarEmpresas(): boolean {
+    return this.contabilidadeSelecionada !== null && !this.carregandoCertificados;
+  }
+
+  // Getter para verificar se pode habilitar botão "Iniciar"
+  get podeIniciar(): boolean {
+    return this.execucoes.length > 0 && 
+           this.execucoes.some(e => e.status === 'fila' && e.mensagem === 'Aguardando início...') &&
+           !this.carregandoCertificados &&
+           !this.temExecucoesEmAndamento;
+  }
+
+  // Formata data de vencimento
+  formatarDataVencimento(dataVencimento: string): string {
+    const data = new Date(dataVencimento);
+    return data.toLocaleDateString('pt-BR');
+  }
+
+  // Calcula dias até vencimento
+  calcularDiasAteVencimento(dataVencimento: string): number {
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const vencimento = new Date(dataVencimento);
+    vencimento.setHours(0, 0, 0, 0);
+    const diffTime = vencimento.getTime() - hoje.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }
 
   // Bloco de 30 CNPJs em foco
@@ -104,48 +165,221 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   async carregarEmpresasValidadas() {
-    console.log('[CarregarEmpresas] Iniciando carregamento de empresas validadas...');
-    console.log('[CarregarEmpresas] Certificados válidos disponíveis:', this.certificadosValidos.length);
-    
-    if (this.certificadosValidos.length === 0) {
-      console.error('[CarregarEmpresas] Nenhum certificado válido encontrado');
-      alert('Nenhum certificado válido encontrado.');
+    // Valida se há contabilidade selecionada
+    if (!this.contabilidadeSelecionada) {
+      alert('Por favor, selecione uma contabilidade primeiro.');
       return;
     }
 
-    // Valida competência antes de carregar
+    // Abre modal de seleção
+    await this.abrirModalSelecaoCertificados();
+  }
+
+  async abrirModalSelecaoCertificados() {
+    if (!this.contabilidadeSelecionada) {
+      return;
+    }
+
+    this.carregandoCertificadosDisponiveis = true;
+    this.modalSelecaoAberto = true;
+    // Não limpa seleções ao abrir o modal - mantém seleções anteriores se houver
+    // this.certificadosSelecionados.clear();
+    this.buscaEmpresa = ''; // Limpa apenas a busca
+
+    try {
+      const response = await firstValueFrom(
+        this.certificadoService.listarCertificadosPorContabilidade(this.contabilidadeSelecionada!)
+      );
+      
+      // Filtra apenas certificados validados (não vencidos)
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+      
+      this.certificadosDisponiveis = response.certificados.filter(cert => {
+        if (!cert.data_vencimento) return false;
+        const dataVencimento = new Date(cert.data_vencimento);
+        dataVencimento.setHours(0, 0, 0, 0);
+        return dataVencimento >= hoje;
+      });
+      
+      // Inicializa lista filtrada com todos os certificados
+      this.filtrarCertificados();
+      
+      // Atualiza estado de "todos selecionados" após carregar
+      this.atualizarEstadoTodosSelecionados();
+    } catch (error: any) {
+      console.error('Erro ao carregar certificados:', error);
+      alert('Erro ao carregar certificados validados. Verifique se o backend está rodando.');
+      this.modalSelecaoAberto = false;
+    } finally {
+      this.carregandoCertificadosDisponiveis = false;
+    }
+  }
+
+  fecharModalSelecao() {
+    // Não limpa seleções ao fechar - mantém para caso o usuário reabra
+    // this.certificadosSelecionados.clear();
+    this.modalSelecaoAberto = false;
+    this.buscaEmpresa = '';
+    // Atualiza estado ao fechar
+    this.atualizarEstadoTodosSelecionados();
+  }
+
+  // Lista filtrada de certificados (atualizada em tempo real)
+  certificadosFiltrados: CertificadoResponse[] = [];
+
+  // Método para filtrar certificados
+  filtrarCertificados() {
+    if (!this.buscaEmpresa || this.buscaEmpresa.trim() === '') {
+      this.certificadosFiltrados = [...this.certificadosDisponiveis];
+      this.cdr.markForCheck();
+      return;
+    }
+    
+    const termoBusca = this.buscaEmpresa.toLowerCase().trim();
+    const termoBuscaLimpo = termoBusca.replace(/[^\d]/g, '');
+    
+    this.certificadosFiltrados = this.certificadosDisponiveis.filter(cert => {
+      const nomeEmpresa = (cert.empresa || '').toLowerCase();
+      const cnpjLimpo = (cert.cnpj || '').replace(/[^\d]/g, '');
+      
+      // Busca no nome da empresa
+      if (nomeEmpresa.includes(termoBusca)) {
+        return true;
+      }
+      
+      // Busca no CNPJ (apenas se o termo tiver números)
+      if (termoBuscaLimpo.length > 0 && cnpjLimpo.includes(termoBuscaLimpo)) {
+        return true;
+      }
+      
+      return false;
+    });
+    
+    this.cdr.markForCheck();
+  }
+
+  atualizarEstadoTodosSelecionados() {
+    if (this.certificadosFiltrados.length === 0) {
+      this.todosSelecionados = false;
+      return;
+    }
+    // Verifica se todos os certificados FILTRADOS estão selecionados
+    this.todosSelecionados = this.certificadosFiltrados.every(cert => 
+      this.certificadosSelecionados.has(cert.id)
+    );
+  }
+
+  toggleSelecionarTodos() {
+    if (this.todosSelecionados) {
+      // Desmarca apenas os certificados filtrados
+      this.certificadosFiltrados.forEach(cert => {
+        this.certificadosSelecionados.delete(cert.id);
+      });
+    } else {
+      // Marca apenas os certificados filtrados
+      this.certificadosFiltrados.forEach(cert => {
+        this.certificadosSelecionados.add(cert.id);
+      });
+    }
+    this.atualizarEstadoTodosSelecionados();
+  }
+
+  toggleSelecionarCertificado(certificadoId: number) {
+    if (this.certificadosSelecionados.has(certificadoId)) {
+      this.certificadosSelecionados.delete(certificadoId);
+    } else {
+      this.certificadosSelecionados.add(certificadoId);
+    }
+    // Atualiza estado de "todos selecionados" baseado nos filtrados
+    this.atualizarEstadoTodosSelecionados();
+  }
+
+
+  estaSelecionado(certificadoId: number): boolean {
+    return this.certificadosSelecionados.has(certificadoId);
+  }
+
+  async confirmarSelecaoCertificados() {
+    if (this.certificadosSelecionados.size === 0) {
+      alert('Por favor, selecione pelo menos um certificado.');
+      return;
+    }
+
+    // Fecha o modal
+    this.modalSelecaoAberto = false;
+
+    // Converte certificados selecionados para o formato esperado
+    const certificadosSelecionados = this.certificadosDisponiveis.filter(cert =>
+      this.certificadosSelecionados.has(cert.id)
+    );
+
+    // Cria execuções pendentes (sem iniciar ainda)
+    this.execucoes = certificadosSelecionados.map(cert => {
+      const cnpjLimpo = cert.cnpj.replace(/[^\d]/g, '');
+      return {
+        id: `pendente-${cert.id}-${cnpjLimpo}`,
+        empresa_id: cnpjLimpo, // Usa CNPJ como ID temporário
+        cnpj: cnpjLimpo,
+        nomeEmpresa: cert.empresa,
+        status: 'fila' as StatusExecucao,
+        progresso: 0,
+        logs: [],
+        mensagem: 'Aguardando início...',
+        dataInicio: new Date(),
+        mostrarLogs: false
+      };
+    });
+
+    // Limpa seleções
+    this.certificadosSelecionados.clear();
+    this.todosSelecionados = false;
+  }
+
+  async iniciar() {
+    console.log('[Iniciar] Iniciando execução das empresas carregadas...');
+    console.log('[Iniciar] Execuções carregadas:', this.execucoes.length);
+
+    // Valida competência antes de iniciar
     if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
-      console.error('[CarregarEmpresas] Competência inválida:', this.competencia);
+      console.error('[Iniciar] Competência inválida:', this.competencia);
       alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
       return;
     }
 
-    console.log('[CarregarEmpresas] Competência válida:', this.competencia);
-    this.carregandoCertificados = true;
+    // Verifica se há empresas carregadas
+    if (this.execucoes.length === 0) {
+      alert('Nenhuma empresa carregada. Por favor, carregue as empresas validadas primeiro.');
+      return;
+    }
+
+    // Verifica se já há execuções em andamento
+    const executandoOuFila = this.execucoes.filter(
+      e => e.status === 'executando' || (e.status === 'fila' && e.mensagem !== 'Aguardando início...')
+    );
     
+    if (executandoOuFila.length > 0) {
+      console.warn('[Iniciar] Já existem execuções em andamento:', executandoOuFila.length);
+      alert('Já existem execuções em andamento ou na fila. Aguarde a conclusão ou limpe as execuções.');
+      return;
+    }
+
+    // Prepara lista de empresas para adicionar à fila
+    const empresas = this.execucoes
+      .filter(exec => exec.status === 'fila' && exec.mensagem === 'Aguardando início...')
+      .map(exec => ({
+        empresa_id: exec.empresa_id || exec.cnpj,
+        cnpj: exec.cnpj
+      }));
+
+    if (empresas.length === 0) {
+      alert('Nenhuma empresa pendente para iniciar.');
+      return;
+    }
+
+    this.carregandoCertificados = true;
+
     try {
-      // Prepara lista de empresas para adicionar à fila
-      const empresas = this.certificadosValidos
-        .filter(cert => cert.cnpj) // Filtra certificados sem CNPJ
-        .map(cert => {
-          const cnpjLimpo = cert.cnpj.replace(/[^\d]/g, '');
-          if (cnpjLimpo.length !== 14) {
-            console.warn(`CNPJ inválido para certificado: ${cert.cnpj} (limpo: ${cnpjLimpo})`);
-            return null;
-          }
-          return {
-            empresa_id: cnpjLimpo, // Usa CNPJ como ID temporário
-            cnpj: cnpjLimpo // CNPJ limpo
-          };
-        })
-        .filter(emp => emp !== null) as Array<{ empresa_id: string; cnpj: string }>; // Remove nulls
-
-      if (empresas.length === 0) {
-        alert('Nenhuma empresa válida encontrada. Verifique se os certificados têm CNPJ válido.');
-        this.carregandoCertificados = false;
-        return;
-      }
-
       const request: MultiplasExecucoesRequest = {
         empresas: empresas,
         competencia: this.competencia,
@@ -153,49 +387,31 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         headless: this.headlessMode
       };
 
-      // Log para debug
-      console.log('[CarregarEmpresas] Enviando requisição ao backend:', JSON.stringify(request, null, 2));
-      console.log('[CarregarEmpresas] URL do serviço:', 'http://localhost:8000/api/execucao/multiplas');
-      console.log('[CarregarEmpresas] Número de empresas na requisição:', empresas.length);
+      console.log('[Iniciar] Enviando requisição ao backend:', JSON.stringify(request, null, 2));
 
       // Chama backend para adicionar todas à fila
-      console.log('[CarregarEmpresas] Fazendo chamada HTTP...');
       const response = await firstValueFrom(
         this.execucaoService.adicionarMultiplasExecucoes(request)
       );
-      console.log('[CarregarEmpresas] Resposta recebida do backend:', response);
-      console.log('[CarregarEmpresas] Detalhes da resposta:', {
-        sucesso: response.sucesso,
-        erros: response.erros,
-        numExecucoes: response.execucoes?.length || 0,
-        execucoes: response.execucoes?.map(e => ({
-          empresa_id: e.empresa_id,
-          cnpj: e.cnpj,
-          status: e.status
-        }))
+
+      console.log('[Iniciar] Resposta recebida do backend:', response);
+
+      // Cria um mapa de CNPJ para execução existente
+      const execMap = new Map<string, ExecucaoEmpresa>();
+      this.execucoes.forEach(exec => {
+        execMap.set(exec.cnpj, exec);
       });
 
-      // Atualiza certificados carregados
-      this.certificadosCarregados = [...this.certificadosValidos];
-
-      // Cria um mapa de CNPJ para certificado para facilitar busca
-      const certMap = new Map<string, Certificado>();
-      this.certificadosValidos.forEach(cert => {
-        const cnpjLimpo = cert.cnpj.replace(/[^\d]/g, '');
-        certMap.set(cnpjLimpo, cert);
-      });
-
-      // Cria execuções na fila com os dados retornados do backend
-      // Usa CNPJ como chave para garantir correspondência correta
+      // Atualiza execuções com os dados retornados do backend
       this.execucoes = response.execucoes.map((exec) => {
         const cnpjLimpo = exec.cnpj || '';
-        const cert = certMap.get(cnpjLimpo);
+        const execExistente = execMap.get(cnpjLimpo);
         
         return {
-          id: `${Date.now()}-${exec.empresa_id}-${cnpjLimpo}`,
+          id: execExistente?.id || `${Date.now()}-${exec.empresa_id}-${cnpjLimpo}`,
           empresa_id: exec.empresa_id,
           cnpj: cnpjLimpo,
-          nomeEmpresa: cert?.nomeArquivo || cnpjLimpo,
+          nomeEmpresa: execExistente?.nomeEmpresa || cnpjLimpo,
           status: this.mapearStatusBackendParaFrontend(exec.status),
           progresso: exec.progresso || 0,
           logs: exec.logs || [],
@@ -206,10 +422,10 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       });
 
       // Inicia polling para todas as execuções simultaneamente
-      console.log('[CarregarEmpresas] Iniciando polling para', this.execucoes.length, 'execuções');
+      console.log('[Iniciar] Iniciando polling para', this.execucoes.length, 'execuções');
       this.execucoes.forEach((execucao) => {
         const empresaId = execucao.empresa_id || execucao.cnpj;
-        console.log('[CarregarEmpresas] Iniciando polling para empresa:', empresaId, 'execução ID:', execucao.id);
+        console.log('[Iniciar] Iniciando polling para empresa:', empresaId, 'execução ID:', execucao.id);
         this.iniciarPollingStatus(execucao, empresaId);
       });
 
@@ -222,16 +438,9 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       }
 
     } catch (error: any) {
-      console.error('[CarregarEmpresas] Erro ao carregar empresas:', error);
-      console.error('[CarregarEmpresas] Detalhes do erro:', {
-        status: error.status,
-        statusText: error.statusText,
-        error: error.error,
-        message: error.message,
-        stack: error.stack
-      });
+      console.error('[Iniciar] Erro ao iniciar execuções:', error);
       
-      let mensagemErro = 'Erro desconhecido ao carregar empresas.';
+      let mensagemErro = 'Erro desconhecido ao iniciar execuções.';
       if (error.status === 0) {
         mensagemErro = 'Não foi possível conectar ao servidor. Verifique se o backend está rodando em http://localhost:8000';
       } else if (error.status === 404) {
@@ -244,53 +453,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         mensagemErro = error.message;
       }
       
-      alert(`Erro ao carregar empresas: ${mensagemErro}`);
+      alert(`Erro ao iniciar execuções: ${mensagemErro}`);
     } finally {
       this.carregandoCertificados = false;
-      console.log('[CarregarEmpresas] Carregamento finalizado');
+      console.log('[Iniciar] Inicialização finalizada');
     }
-  }
-
-  executarTodos() {
-    console.log('[ExecutarTodos] Iniciando execução de todos os certificados...');
-    console.log('[ExecutarTodos] Certificados válidos:', this.certificadosValidos.length);
-    console.log('[ExecutarTodos] Certificados carregados:', this.certificadosCarregados.length);
-    console.log('[ExecutarTodos] Execuções atuais:', this.execucoes.length);
-    console.log('[ExecutarTodos] Competência:', this.competencia);
-
-    // Verifica se há empresas carregadas
-    if (this.certificadosCarregados.length === 0) {
-      console.warn('[ExecutarTodos] Nenhum certificado carregado. Redirecionando para carregar empresas...');
-      if (this.certificadosValidos.length === 0) {
-        alert('Nenhum certificado válido encontrado. Por favor, carregue os certificados primeiro.');
-        return;
-      }
-      // Se há certificados válidos mas não carregados, carrega automaticamente
-      this.carregarEmpresasValidadas();
-      return;
-    }
-
-    // Verifica se já há execuções em andamento
-    const executandoOuFila = this.execucoes.filter(
-      e => e.status === 'executando' || e.status === 'fila'
-    );
-    
-    if (executandoOuFila.length > 0) {
-      console.warn('[ExecutarTodos] Já existem execuções em andamento:', executandoOuFila.length);
-      alert('Já existem execuções em andamento ou na fila. Aguarde a conclusão ou limpe as execuções.');
-      return;
-    }
-
-    // Se não há execuções, carrega as empresas (que já adiciona à fila)
-    if (this.execucoes.length === 0) {
-      console.log('[ExecutarTodos] Nenhuma execução anterior. Carregando empresas validadas...');
-      this.carregarEmpresasValidadas();
-      return;
-    }
-
-    // Se já há execuções na fila, apenas informa que estão sendo processadas
-    console.log('[ExecutarTodos] Execuções já na fila:', this.execucoes.length);
-    alert('As empresas já estão na fila e serão executadas automaticamente conforme o limite de concorrência.');
   }
 
   // Método removido - não é mais necessário executar sequencialmente

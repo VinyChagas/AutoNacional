@@ -6,10 +6,13 @@ de certificados digitais ICP-Brasil, além de CRUD para metadados.
 """
 
 from datetime import date, datetime
-from typing import List
+from typing import List, Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, status, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
+# Remover a linha abaixo pois não está sendo usada e causa warning
+# from sqlalchemy.orm import Session
+
+from sqlalchemy import func
 
 from ..services.certificate_service import get_certificate_service
 from ..utils.certificado_utils import validar_pfx, extrair_informacoes_certificado
@@ -28,6 +31,7 @@ from ..schemas.certificado import (
     CertificadoListResponse,
 )
 from ..db.session import get_db, init_db
+from ..db import models as db_models
 from ..db.crud_certificado import (
     criar_certificado,
     obter_certificado_por_id,
@@ -260,125 +264,215 @@ async def upload_certificado(
         )
 
 
-@router.post("/importar", response_model=CertificadoImportResponse, summary="Importar certificado e extrair informações")
-async def importar_certificado(
+@router.post("/extrair", response_model=CertificadoImportResponse, summary="Extrair informações do certificado (sem salvar)")
+async def extrair_informacoes_certificado(
     certificado: UploadFile = File(...),
     senha: str = Form(...)
 ) -> CertificadoImportResponse:
     """
-    Endpoint para importar certificado digital e extrair informações automaticamente.
-    
-    Recebe apenas o arquivo e a senha, retorna CNPJ, nome da empresa e data de vencimento.
-    
-    Args:
-        certificado: Arquivo .pfx ou .p12
-        senha: Senha do certificado
-        
-    Returns:
-        CertificadoImportResponse com informações extraídas
-        
-    Raises:
-        HTTPException: Se houver erro na validação ou extração
+    Endpoint para extrair informações do certificado digital sem salvar.
+    Usado no passo 1 do fluxo de importação.
     """
     try:
-        # Validação do arquivo
+        # Validação inicial do arquivo, senha, etc.
         if not certificado.filename:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "success": False,
-                    "message": "Nome do arquivo não fornecido"
-                }
+                content={"success": False, "message": "Nome do arquivo não fornecido"}
             )
-        
         filename_lower = certificado.filename.lower()
         if not (filename_lower.endswith('.pfx') or filename_lower.endswith('.p12')):
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "success": False,
-                    "message": f"Arquivo deve ser um certificado .pfx ou .p12. Recebido: {certificado.filename}"
-                }
+                content={"success": False, "message": f"Arquivo deve ser um certificado .pfx ou .p12. Recebido: {certificado.filename}"}
             )
-        
-        # Validação da senha
         if not senha or not senha.strip():
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "success": False,
-                    "message": "Senha não pode estar vazia"
-                }
+                content={"success": False, "message": "Senha não pode estar vazia"}
             )
-        
-        # Lê o conteúdo do arquivo
         conteudo = await certificado.read()
-        
         if not conteudo:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "success": False,
-                    "message": "Arquivo vazio ou não foi possível ler o conteúdo"
-                }
+                content={"success": False, "message": "Arquivo vazio ou não foi possível ler o conteúdo"}
             )
-        
-        # Extrai informações do certificado usando o service
+
         certificate_service = get_certificate_service()
         informacoes = certificate_service.validar_e_extrair_info(conteudo, senha, debug=False)
-        
-        # Valida se CNPJ foi encontrado
         if not informacoes.cnpj_limpo:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "success": False,
-                    "message": "Não foi possível extrair o CNPJ do certificado. Verifique se é um certificado ICP-Brasil válido."
-                }
+                content={"success": False, "message": "Não foi possível extrair o CNPJ do certificado. Verifique se é um certificado ICP-Brasil válido."}
             )
         
-        # Salva metadados no banco de dados (se disponível)
+        # Retorna apenas informações extraídas (não salva)
+        return CertificadoImportResponse(
+            success=True,
+            empresa=informacoes.empresa,
+            cnpj=informacoes.cnpj,
+            dataVencimento=informacoes.dataVencimento
+        )
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=e.status_code,
+            content={"success": False, "message": e.detail}
+        )
+    except Exception as e:
+        logger.error(f"Erro ao processar certificado: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"success": False, "message": f"Erro ao processar certificado: {str(e)}"}
+        )
+
+
+@router.post("/importar", response_model=CertificadoImportResponse, summary="Importar certificado e extrair informações")
+async def importar_certificado(
+    certificado: UploadFile = File(...),
+    senha: str = Form(...),
+    contabilidade_id: int = Form(...)
+) -> CertificadoImportResponse:
+    """
+    Endpoint para importar certificado digital e salvar com vínculo à contabilidade.
+    Usado no passo 2 do fluxo de importação.
+    """
+    try:
+        # Validação inicial do arquivo, senha, etc.
+        if not certificado.filename:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"success": False, "message": "Nome do arquivo não fornecido"}
+            )
+        filename_lower = certificado.filename.lower()
+        if not (filename_lower.endswith('.pfx') or filename_lower.endswith('.p12')):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"success": False, "message": f"Arquivo deve ser um certificado .pfx ou .p12. Recebido: {certificado.filename}"}
+            )
+        if not senha or not senha.strip():
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"success": False, "message": "Senha não pode estar vazia"}
+            )
+        conteudo = await certificado.read()
+        if not conteudo:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"success": False, "message": "Arquivo vazio ou não foi possível ler o conteúdo"}
+            )
+        # Valida contabilidade
+        from ..core.db import get_conn
+        conn = get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM contabilidades WHERE id = ?", (contabilidade_id,))
+            row = cursor.fetchone()
+            if not row:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"success": False, "message": f"Contabilidade de id {contabilidade_id} não encontrada"}
+                )
+        finally:
+            conn.close()
+
+        certificate_service = get_certificate_service()
+        informacoes = certificate_service.validar_e_extrair_info(conteudo, senha, debug=False)
+        if not informacoes.cnpj_limpo:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"success": False, "message": "Não foi possível extrair o CNPJ do certificado. Verifique se é um ICP-Brasil válido."}
+            )
         try:
             from ..db.session import get_db
             from ..db.crud_certificado import criar_certificado, obter_certificado_por_cnpj
-            
-            # Obtém sessão do banco
             db_gen = get_db()
             db = next(db_gen)
-            
             try:
-                # Verifica se já existe
+                # Converte data de vencimento (se existir)
+                data_vencimento = None
+                if informacoes.dataVencimento:
+                    if isinstance(informacoes.dataVencimento, str):
+                        data_vencimento = converter_data_vencimento_iso(informacoes.dataVencimento)
+                    else:
+                        data_vencimento = informacoes.dataVencimento
+
                 certificado_existente = obter_certificado_por_cnpj(db, informacoes.cnpj_limpo)
-                
-                if not certificado_existente and informacoes.dataVencimento:
+
+                if not certificado_existente:
+                    # Não existe ainda: cria registro com vínculo na contabilidade
                     try:
-                        # Converte data de vencimento de string ISO para date
-                        if isinstance(informacoes.dataVencimento, str):
-                            data_vencimento = converter_data_vencimento_iso(informacoes.dataVencimento)
-                        else:
-                            # Se já for date, usa diretamente
-                            data_vencimento = informacoes.dataVencimento
-                        
-                        # Cria registro no banco
                         criar_certificado(
                             db=db,
                             cnpj=informacoes.cnpj_limpo,
                             empresa=informacoes.empresa,
-                            data_vencimento=data_vencimento
+                            data_vencimento=data_vencimento,
+                            contabilidade_id=contabilidade_id,
                         )
-                        logger.info(f"Metadados do certificado salvos no banco: CNPJ {informacoes.cnpj_limpo}")
-                    except ValueError as ve:
-                        logger.warning(f"Erro ao converter data de vencimento: {ve}")
                     except Exception as e:
-                        logger.warning(f"Erro ao criar metadados no banco: {e}")
-                elif certificado_existente:
-                    logger.info(f"Metadados do certificado já existem no banco: CNPJ {informacoes.cnpj_limpo}")
+                        return JSONResponse(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            content={"success": False, "message": str(e)},
+                        )
+                else:
+                    # Já existe no banco: se estiver vinculado a outra contabilidade, bloqueia
+                    contabilidade_atual_id = certificado_existente.contabilidade_id
+                    if contabilidade_atual_id and contabilidade_atual_id != contabilidade_id:
+                        # Busca nome da contabilidade atual no banco core (Postgres/SQLite mock)
+                        try:
+                            from ..core.db import get_conn
+                            conn2 = get_conn()
+                            try:
+                                cur = conn2.cursor()
+                                cur.execute(
+                                    "SELECT nome_contabilidade FROM contabilidades WHERE id = ?",
+                                    (contabilidade_atual_id,),
+                                )
+                                row2 = cur.fetchone()
+                                nome_atual = None
+                                if row2:
+                                    # row2 pode ser dict ou tupla
+                                    if isinstance(row2, dict):
+                                        nome_atual = row2.get("nome_contabilidade")
+                                    else:
+                                        nome_atual = row2[0]
+                            finally:
+                                conn2.close()
+                        except Exception:
+                            nome_atual = None
+
+                        nome_msg = f' na contabilidade "{nome_atual}"' if nome_atual else ""
+                        return JSONResponse(
+                            status_code=status.HTTP_409_CONFLICT,
+                            content={
+                                "success": False,
+                                "message": (
+                                    f"Já existe certificado para o CNPJ {informacoes.cnpj_limpo}{nome_msg}. "
+                                    "Remova ou altere o vínculo antes de cadastrá-lo em outra contabilidade."
+                                ),
+                            },
+                        )
+
+                    # Caso contrário (mesma contabilidade ou sem vínculo), atualiza dados
+                    try:
+                        certificado_existente.empresa = informacoes.empresa
+                        if data_vencimento is not None:
+                            certificado_existente.data_vencimento = data_vencimento
+                        certificado_existente.contabilidade_id = contabilidade_id
+                        db.add(certificado_existente)
+                        db.commit()
+                        db.refresh(certificado_existente)
+                    except Exception as e:
+                        return JSONResponse(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            content={"success": False, "message": str(e)},
+                        )
             finally:
                 db.close()
         except Exception as e:
-            # Não falha a importação se houver erro ao salvar metadados
-            logger.warning(f"Erro ao salvar metadados no banco (não crítico): {str(e)}")
-        
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"success": False, "message": f"Erro ao salvar metadados: {str(e)}"},
+            )
         # Retorna informações extraídas
         return CertificadoImportResponse(
             success=True,
@@ -386,23 +480,16 @@ async def importar_certificado(
             cnpj=informacoes.cnpj,
             dataVencimento=informacoes.dataVencimento
         )
-        
     except HTTPException as e:
         return JSONResponse(
             status_code=e.status_code,
-            content={
-                "success": False,
-                "message": e.detail
-            }
+            content={"success": False, "message": e.detail}
         )
     except Exception as e:
         logger.error(f"Erro ao processar certificado: {str(e)}", exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "success": False,
-                "message": f"Erro ao processar certificado: {str(e)}"
-            }
+            content={"success": False, "message": f"Erro ao processar certificado: {str(e)}"}
         )
 
 
@@ -419,7 +506,7 @@ async def importar_certificado(
 def listar_certificados_metadados(
     skip: int = Query(0, ge=0, description="Número de registros para pular"),
     limit: int = Query(100, ge=1, le=1000, description="Número máximo de registros"),
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ) -> CertificadoListResponse:
     """
     Lista todos os certificados cadastrados no banco de dados.
@@ -450,7 +537,7 @@ def listar_certificados_metadados(
 )
 def buscar_certificado_por_id(
     certificado_id: int,
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ) -> CertificadoResponse:
     """
     Busca um certificado pelo ID.
@@ -481,7 +568,7 @@ def buscar_certificado_por_id(
 )
 def buscar_certificado_por_cnpj(
     cnpj: str,
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ) -> CertificadoResponse:
     """
     Busca um certificado pelo CNPJ.
@@ -513,7 +600,7 @@ def buscar_certificado_por_cnpj(
 )
 def criar_certificado_metadados(
     certificado: CertificadoCreate,
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ) -> CertificadoResponse:
     """
     Cria um novo registro de certificado no banco de dados.
@@ -570,7 +657,7 @@ def criar_certificado_metadados(
 def atualizar_certificado_metadados(
     certificado_id: int,
     certificado_update: CertificadoUpdate,
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ) -> CertificadoResponse:
     """
     Atualiza os metadados de um certificado existente.
@@ -608,7 +695,7 @@ def atualizar_certificado_metadados(
 )
 def deletar_certificado_metadados(
     certificado_id: int,
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ):
     """
     Deleta um certificado do banco de dados.
@@ -637,25 +724,42 @@ def deletar_certificado_metadados(
 )
 def deletar_certificado_por_cnpj_metadados(
     cnpj: str,
-    db: Session = Depends(get_db)
+    db: Any = Depends(get_db)
 ):
     """
     Deleta um certificado pelo CNPJ.
-    
-    Nota: Isso remove apenas os metadados do banco. O arquivo .pfx
-    criptografado continua no sistema de arquivos.
-    
-    Args:
-        cnpj: CNPJ da empresa (com ou sem formatação)
-        
-    Raises:
-        HTTPException: Se o certificado não for encontrado
+
+    - Aceita CNPJ com ou sem máscara.
+    - Garante remoção direta na tabela `certificados` (SQLite).
+    - Não remove o arquivo .pfx do disco, apenas os metadados.
     """
-    deletado = deletar_certificado_por_cnpj(db, cnpj)
-    if not deletado:
+    # Limpa CNPJ para garantir compatibilidade com o formato salvo no banco
+    cnpj_limpo = "".join(ch for ch in cnpj if ch.isdigit())
+    if not cnpj_limpo or len(cnpj_limpo) != 14:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"CNPJ inválido para remoção: {cnpj}",
+        )
+
+    # Remove qualquer registro que bata com o CNPJ limpo
+    try:
+        deletados = (
+            db.query(db_models.Certificado)
+            .filter(db_models.Certificado.cnpj == cnpj_limpo)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+    except Exception as e:
+        logger.error(f"Erro ao remover certificado por CNPJ {cnpj_limpo}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao remover certificado: {str(e)}",
+        )
+
+    if deletados == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Certificado com CNPJ {cnpj} não encontrado"
+            detail=f"Certificado com CNPJ {cnpj_limpo} não encontrado",
         )
 
 
@@ -783,7 +887,8 @@ async def validar_certificados_lote(
 )
 async def importar_certificados_lote(
     certificados: List[UploadFile] = File(...),
-    senha: str = Form(...)
+    senha: str = Form(...),
+    contabilidade_id: Optional[int] = Form(None)
 ) -> CertificadoImportacaoLoteResponse:
     """
     Importa múltiplos certificados digitais em lote usando uma senha única.
@@ -794,6 +899,7 @@ async def importar_certificados_lote(
     Args:
         certificados: Lista de arquivos .pfx ou .p12
         senha: Senha única para usar em todos os certificados
+        contabilidade_id: ID da contabilidade para vincular os certificados (opcional)
         
     Returns:
         CertificadoImportacaoLoteResponse com resultados da importação
@@ -808,6 +914,21 @@ async def importar_certificados_lote(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Senha não pode estar vazia"
         )
+    
+    # Valida contabilidade se fornecida
+    if contabilidade_id is not None:
+        from ..core.db import get_conn
+        conn = get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM contabilidades WHERE id = ?", (contabilidade_id,))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Contabilidade id {contabilidade_id} não encontrada"
+                )
+        finally:
+            conn.close()
     
     certificate_service = get_certificate_service()
     
@@ -883,12 +1004,13 @@ async def importar_certificados_lote(
                                     else:
                                         data_vencimento = informacoes.dataVencimento
                                     
-                                    # Cria registro no banco
+                                    # Cria registro no banco com vínculo à contabilidade (se fornecido)
                                     criar_certificado(
                                         db=db,
                                         cnpj=informacoes.cnpj_limpo,
                                         empresa=informacoes.empresa,
-                                        data_vencimento=data_vencimento
+                                        data_vencimento=data_vencimento,
+                                        contabilidade_id=contabilidade_id
                                     )
                                     logger.info(f"Metadados do certificado salvos no banco: CNPJ {informacoes.cnpj_limpo}")
                                 except ValueError as ve:
@@ -959,4 +1081,113 @@ async def importar_certificados_lote(
         falha=total_falha,
         resultados=resultados
     )
+
+
+@router.get(
+    "/contabilidade/{contabilidade_id}",
+    summary="Listar certificados vinculados a uma contabilidade",
+    response_model=CertificadoListResponse,
+)
+def listar_certificados_por_contabilidade(contabilidade_id: int, db: Any = Depends(get_db)):
+    """
+    Lista certificados vinculados a uma contabilidade específica.
+
+    Usa a tabela `certificados` (SQLAlchemy), que é onde os metadados são salvos
+    pelo fluxo de importação de certificados.
+    """
+    from ..core.db import get_conn
+
+    # Garante que a contabilidade existe no banco principal (Postgres/SQLite mock)
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM contabilidades WHERE id = ?", (contabilidade_id,))
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Contabilidade id {contabilidade_id} não encontrada",
+            )
+    finally:
+        conn.close()
+
+    # Busca certificados na base de certificados (certificados.db)
+    certificados_db = (
+        db.query(db_models.Certificado)
+        .filter(db_models.Certificado.contabilidade_id == contabilidade_id)
+        .order_by(db_models.Certificado.empresa.asc())
+        .all()
+    )
+
+    certificados = [CertificadoResponse.model_validate(c) for c in certificados_db]
+    return CertificadoListResponse(certificados=certificados, total=len(certificados))
+
+
+@router.get("/contabilidades", summary="Listar contabilidades com contagem de certificados")
+def listar_contabilidades_com_certificados():
+    """
+    Lista contabilidades com a contagem de certificados vinculados.
+
+    - Busca as contabilidades no banco principal (Postgres/SQLite mock)
+    - Conta certificados na base de certificados (certificados.db)
+    """
+    from ..core.db import get_conn
+
+    # 1) Busca contabilidades
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, nome_contabilidade, cnpj, responsavel, email
+            FROM contabilidades
+            ORDER BY nome_contabilidade ASC
+        """
+        )
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    contabilidades_raw: List[Dict[str, Any]] = [dict(r) for r in rows]
+    ids = [c["id"] for c in contabilidades_raw if isinstance(c.get("id"), int)]
+
+    # 2) Conta certificados na base de certificados (certificados.db)
+    db_gen = get_db()
+    db = next(db_gen)
+    try:
+        if ids:
+            counts_rows = (
+                db.query(
+                    db_models.Certificado.contabilidade_id,
+                    func.count(db_models.Certificado.id),
+                )
+                .filter(db_models.Certificado.contabilidade_id.in_(ids))
+                .group_by(db_models.Certificado.contabilidade_id)
+                .all()
+            )
+            counts = {
+                cont_id: int(qtd or 0)
+                for cont_id, qtd in counts_rows
+                if cont_id is not None
+            }
+        else:
+            counts = {}
+    finally:
+        db.close()
+
+    # 3) Monta resposta
+    contabilidades = []
+    for c in contabilidades_raw:
+        cont_id = c["id"]
+        contabilidades.append(
+            {
+                "id": cont_id,
+                "nome": c.get("nome_contabilidade") or c.get("nome"),
+                "cnpj": c.get("cnpj"),
+                "responsavel": c.get("responsavel"),
+                "email": c.get("email"),
+                "certificados": counts.get(cont_id, 0),
+            }
+        )
+
+    return {"contabilidades": contabilidades}
 

@@ -15,6 +15,7 @@ class CertificadoBase(BaseModel):
     cnpj: str = Field(..., description="CNPJ da empresa (14 dígitos)")
     empresa: str = Field(..., description="Nome da empresa")
     data_vencimento: date = Field(..., description="Data de vencimento do certificado")
+    contabilidade_id: Optional[int] = Field(None, description="ID da contabilidade associada")
     
     @validator('cnpj')
     def validar_cnpj(cls, v):
@@ -34,6 +35,7 @@ class CertificadoUpdate(BaseModel):
     """Schema para atualização de certificado."""
     empresa: Optional[str] = Field(None, description="Nome da empresa")
     data_vencimento: Optional[date] = Field(None, description="Data de vencimento do certificado")
+    contabilidade_id: Optional[int] = Field(None, description="ID da contabilidade associada")
 
 
 class CertificadoResponse(CertificadoBase):

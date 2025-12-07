@@ -24,3 +24,6 @@ pyopenssl>=24.3.0
 
 # Automação de Navegador
 playwright>=1.46.0
+
+# Debug e Desenvolvimento
+debugpy>=1.8.0

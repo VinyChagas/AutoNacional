@@ -9,6 +9,48 @@
       <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
     </div>
 
+    <!-- Seleção Global de Contabilidade -->
+    <div class="mb-6 glass-strong rounded-2xl p-4 border">
+      <div class="flex items-center gap-4 flex-wrap">
+        <label class="text-sm font-semibold text-[#0C0D0A] whitespace-nowrap">Contabilidade:</label>
+        <select
+          [ngModel]="contabilidadeGlobalSelecionada"
+          (ngModelChange)="onContabilidadeGlobalChange($event)"
+          class="px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 font-semibold min-w-[250px]"
+        >
+          <option [ngValue]="null">Todas as contabilidades</option>
+          @for (contabilidade of contabilidades; track contabilidade.id) {
+            <option [ngValue]="contabilidade.id">
+              {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
+            </option>
+          }
+        </select>
+        @if (contabilidadeGlobalSelecionada !== null) {
+          <span class="text-xs text-[#1E2615]/70">
+            Novos certificados importados serão vinculados automaticamente a esta contabilidade.
+          </span>
+        }
+      </div>
+    </div>
+
+    <!-- Indicador de Certificados Pendentes (Clicável) -->
+    @if (obterCertificadosPendentesCount() > 0) {
+      <div 
+        class="mb-4 glass-strong rounded-xl p-4 border border-[#7EBFB3]/50 cursor-pointer hover:bg-[#7EBFB3]/10 transition-colors"
+        (click)="retomarProximoCertificadoPendente()"
+      >
+        <div class="flex items-center gap-3">
+          <svg class="w-5 h-5 text-[#7EBFB3]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <p class="text-sm text-[#1E2615]">
+            <strong class="text-[#0C0D0A]">{{ obterCertificadosPendentesCount() }}</strong> certificado(s) aguardando configuração
+            <span class="text-[#7EBFB3] ml-2 underline">Clique para retomar</span>
+          </p>
+        </div>
+      </div>
+    }
+
     <!-- Botões de Upload -->
     <div class="mb-8 flex gap-4 flex-wrap">
       <label class="btn-futuristic inline-flex items-center px-8 py-4 rounded-xl cursor-pointer relative overflow-hidden group">
@@ -135,9 +177,47 @@
         </div>
       } @else {
         <div class="overflow-x-auto">
+          <!-- Barra de ações para seleção múltipla -->
+          @if (certificadosFiltrados.length > 0) {
+            <div class="mb-4 flex items-center justify-between p-4 glass rounded-xl border border-[#7EBFB3]/30">
+              <div class="flex items-center gap-4">
+                <span class="text-sm font-semibold text-[#1E2615]">
+                  {{ quantidadeSelecionados > 0 ? quantidadeSelecionados + ' certificado(s) selecionado(s)' : 'Nenhum certificado selecionado' }}
+                </span>
+              </div>
+              <button
+                (click)="excluirCertificadosSelecionados()"
+                [disabled]="nenhumSelecionado || excluindoMultiplos"
+                class="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
+              >
+                @if (excluindoMultiplos) {
+                  <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Excluindo...
+                } @else {
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                  </svg>
+                  Excluir Selecionados
+                }
+              </button>
+            </div>
+          }
+
           <table class="min-w-full divide-y divide-[#7EBFB3]/20">
             <thead class="bg-[#A9D9D4]/20">
               <tr>
+                <th class="px-6 py-4 text-left w-12">
+                  <input
+                    type="checkbox"
+                    [checked]="todosSelecionados"
+                    (change)="toggleSelecionarTodos()"
+                    class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2 cursor-pointer"
+                    [title]="todosSelecionados ? 'Desmarcar todos' : 'Selecionar todos'"
+                  />
+                </th>
                 <th 
                   class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
                   [ngClass]="{
@@ -234,12 +314,21 @@
                     }">{{ getSortIcon('status') }}</span>
                   </div>
                 </th>
+                <th class="px-6 py-4 text-left text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Contabilidade</th>
                 <th class="px-6 py-4 text-right text-xs font-bold text-[#0C0D0A] uppercase tracking-wider">Ações</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-[#7EBFB3]/10">
               @for (certificado of certificadosFiltrados; track certificado.id) {
-                <tr class="hover:bg-[#A9D9D4]/10 transition-colors">
+                <tr class="hover:bg-[#A9D9D4]/10 transition-colors" [ngClass]="{'bg-[#A9D9D4]/20': estaSelecionado(certificado.id)}">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      [checked]="estaSelecionado(certificado.id)"
+                      (change)="toggleSelecionarCertificado(certificado.id)"
+                      class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2 cursor-pointer"
+                    />
+                  </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm font-bold text-[#0C0D0A]">{{ formatarCNPJ(certificado.cnpj) }}</div>
                   </td>
@@ -272,9 +361,14 @@
                       {{ obterTextoStatus(certificado.status) }}
                     </span>
                   </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-[#1E2615]">
+                      {{ certificado.contabilidade_nome || '-' }}
+                    </div>
+                  </td>
                   <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button
-                      (click)="removerCertificado(certificado.id)"
+                      (click)="removerCertificado(certificado)"
                       class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors font-semibold"
                     >
                       Remover
@@ -288,23 +382,29 @@
       }
     </div>
 
-    <!-- Contador de Certificados Pendentes -->
+    <!-- Contador de Certificados Pendentes em Memória (durante importação) -->
     @if (certificadosPendentes.length > 0) {
       <div class="mt-4 glass-strong rounded-xl p-4 border border-[#7EBFB3]/50">
         <p class="text-sm text-[#1E2615]">
-          <strong>{{ certificadosPendentes.length }}</strong> certificado(s) aguardando configuração
+          <strong>{{ certificadosPendentes.length }}</strong> certificado(s) na fila de importação atual
         </p>
       </div>
     }
   </div>
 </div>
 
-<!-- Modal para Inserção de Senha -->
+<!-- Modal para Inserção de Senha e Seleção de Contabilidade -->
 @if (modalAberto && certificadoAtual) {
   <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModal()">
     <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
       <div class="flex items-center justify-between mb-6">
-        <h3 class="text-2xl font-bold text-white">Configurar Certificado</h3>
+        <h3 class="text-2xl font-bold text-white">
+          @if (passoAtual === 1) {
+            Configurar Certificado
+          } @else {
+            Vincular à Contabilidade
+          }
+        </h3>
         <button
           (click)="fecharModal()"
           class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
@@ -315,82 +415,202 @@
         </button>
       </div>
 
-      <div class="mb-6">
-        <p class="text-sm text-white/90 mb-3">
-          <strong class="text-white">Arquivo:</strong> {{ certificadoAtual.file.name }}
-        </p>
-        <p class="text-xs text-white/70 mt-2">
-          O CNPJ e as informações da empresa serão extraídos automaticamente do certificado.
-        </p>
-      </div>
-
-      <form [formGroup]="senhaForm" (ngSubmit)="validarSenha()" class="space-y-5">
-        <div>
-          <label for="senha" class="block text-sm font-semibold text-white mb-2">Senha do Certificado</label>
-          <input
-            id="senha"
-            type="password"
-            formControlName="senha"
-            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
-            [ngClass]="{
-              'border-[#7EBFB3]/50 focus:ring-[#8BCB70]': senhaValida === null,
-              'border-[#8BCB70] focus:ring-[#8BCB70] bg-[#8BCB70]/20': senhaValida === true,
-              'border-red-400 focus:ring-red-400 bg-red-400/20': senhaValida === false
-            }"
-            placeholder="Digite a senha do certificado"
-            [disabled]="importando"
-          />
-          @if (senhaForm.get('senha')?.invalid && senhaForm.get('senha')?.touched) {
-            <p class="text-white/80 text-sm mt-2">Senha é obrigatória</p>
-          }
+      <!-- Passo 1: Senha -->
+      @if (passoAtual === 1) {
+        <div class="mb-6">
+          <p class="text-sm text-white/90 mb-3">
+            <strong class="text-white">Arquivo:</strong> {{ certificadoAtual.file.name }}
+          </p>
+          <p class="text-xs text-white/70 mt-2">
+            O CNPJ e as informações da empresa serão extraídos automaticamente do certificado.
+          </p>
         </div>
 
-        <!-- Mensagem de Validação -->
-        @if (mensagemSenha) {
-          <div class="p-4 rounded-xl border" [ngClass]="{
-            'bg-[#8BCB70]/30 text-white border-[#8BCB70]/50': senhaValida === true,
-            'bg-red-400/30 text-white border-red-400/50': senhaValida === false
-          }">
-            <div class="flex items-center">
-              @if (senhaValida === true) {
-                <svg class="w-6 h-6 mr-3 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-              } @else {
-                <svg class="w-6 h-6 mr-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-              }
-              <span class="text-sm font-semibold">{{ mensagemSenha }}</span>
+        <form [formGroup]="senhaForm" (ngSubmit)="validarSenha()" class="space-y-5">
+          <div>
+            <label for="senha" class="block text-sm font-semibold text-white mb-2">Senha do Certificado</label>
+            <input
+              id="senha"
+              type="password"
+              formControlName="senha"
+              class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
+              [ngClass]="{
+                'border-[#7EBFB3]/50 focus:ring-[#8BCB70]': senhaValida === null,
+                'border-[#8BCB70] focus:ring-[#8BCB70] bg-[#8BCB70]/20': senhaValida === true,
+                'border-red-400 focus:ring-red-400 bg-red-400/20': senhaValida === false
+              }"
+              placeholder="Digite a senha do certificado"
+              [disabled]="importando"
+            />
+            @if (senhaForm.get('senha')?.invalid && senhaForm.get('senha')?.touched) {
+              <p class="text-white/80 text-sm mt-2">Senha é obrigatória</p>
+            }
+          </div>
+
+          <!-- Mensagem de Validação -->
+          @if (mensagemSenha) {
+            <div class="p-4 rounded-xl border" [ngClass]="{
+              'bg-[#8BCB70]/30 text-white border-[#8BCB70]/50': senhaValida === true,
+              'bg-red-400/30 text-white border-red-400/50': senhaValida === false
+            }">
+              <div class="flex items-center">
+                @if (senhaValida === true) {
+                  <svg class="w-6 h-6 mr-3 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                } @else {
+                  <svg class="w-6 h-6 mr-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                  </svg>
+                }
+                <span class="text-sm font-semibold">{{ mensagemSenha }}</span>
+              </div>
             </div>
-          </div>
-        }
+          }
 
-        <!-- Informação sobre certificados pendentes -->
-        @if (certificadosPendentes.length > 1) {
-          <div class="p-3 rounded-xl border border-[#7EBFB3]/50 bg-[#7EBFB3]/10 mb-4">
-            <p class="text-sm text-white/90">
-              <strong class="text-white">{{ certificadosPendentes.length - 1 }}</strong> certificado(s) aguardando importação
-            </p>
-          </div>
-        }
-
-        <div class="flex gap-4 pt-4">
-          <button
-            type="button"
-            (click)="fecharModal()"
-            class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
-            [disabled]="importando"
-          >
-            Cancelar
-          </button>
-          
+          <!-- Informação sobre certificados pendentes -->
           @if (certificadosPendentes.length > 1) {
+            <div class="p-3 rounded-xl border border-[#7EBFB3]/50 bg-[#7EBFB3]/10 mb-4">
+              <p class="text-sm text-white/90">
+                <strong class="text-white">{{ certificadosPendentes.length - 1 }}</strong> certificado(s) aguardando importação
+              </p>
+            </div>
+          }
+
+          <div class="flex gap-4 pt-4">
             <button
               type="button"
-              (click)="aplicarSenhaParaTodos()"
+              (click)="fecharModal()"
+              class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+              [disabled]="importando"
+            >
+              Cancelar
+            </button>
+            
+            <button
+              type="submit"
               [disabled]="!senhaForm.valid || importando"
-              class="flex-1 px-6 py-3 rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white border-2 border-[#7EBFB3] bg-[#7EBFB3]/20 hover:bg-[#7EBFB3]/30"
+              class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+            >
+              @if (importando) {
+                <span class="flex items-center justify-center">
+                  <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Validando...
+                </span>
+              } @else {
+                Validar e Continuar
+              }
+            </button>
+          </div>
+        </form>
+      }
+
+      <!-- Passo 2: Seleção de Contabilidade -->
+      @if (passoAtual === 2 && dadosExtraidos) {
+        <div class="mb-6">
+          <div class="p-4 rounded-xl border border-[#8BCB70]/50 bg-[#8BCB70]/10 mb-4">
+            <p class="text-sm text-white font-semibold mb-2">Informações do Certificado:</p>
+            <div class="space-y-1 text-sm text-white/90">
+              <p><strong>Empresa:</strong> {{ dadosExtraidos.empresa }}</p>
+              <p><strong>CNPJ:</strong> {{ dadosExtraidos.cnpj }}</p>
+              @if (dadosExtraidos.dataVencimento) {
+                <p><strong>Data de Vencimento:</strong> {{ dadosExtraidos.dataVencimento }}</p>
+              }
+            </div>
+          </div>
+        </div>
+
+        <form [formGroup]="contabilidadeForm" (ngSubmit)="confirmarVinculacao()" class="space-y-5">
+          <div>
+            @if (contabilidadeGlobalSelecionada !== null) {
+              <!-- Contabilidade Global Selecionada: Mostra apenas informação -->
+              <label class="block text-sm font-semibold text-white mb-2">
+                Contabilidade
+              </label>
+              @if (carregandoContabilidades) {
+                <div class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl text-white/70 bg-white/10">
+                  Carregando contabilidades...
+                </div>
+              } @else {
+                @for (contabilidade of contabilidades; track contabilidade.id) {
+                  @if (contabilidade.id === contabilidadeGlobalSelecionada) {
+                    <div class="w-full px-4 py-3 glass border border-[#8BCB70]/50 rounded-xl text-white bg-[#8BCB70]/20">
+                      <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span class="font-semibold">{{ contabilidade.nome_contabilidade }}</span>
+                        <span class="text-white/70">({{ formatarCNPJ(contabilidade.cnpj) }})</span>
+                      </div>
+                      <p class="text-xs text-white/70 mt-1">Selecionada globalmente na tela principal</p>
+                    </div>
+                  }
+                }
+              }
+            } @else {
+              <!-- Sem Contabilidade Global: Permite seleção -->
+              <label for="contabilidade_id" class="block text-sm font-semibold text-white mb-2">
+                Contabilidade <span class="text-red-400">*</span>
+              </label>
+              @if (carregandoContabilidades) {
+                <div class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl text-white/70 bg-white/10">
+                  Carregando contabilidades...
+                </div>
+              } @else {
+                <select
+                  id="contabilidade_id"
+                  formControlName="contabilidade_id"
+                  class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10"
+                  [ngClass]="{
+                    'border-[#7EBFB3]/50 focus:ring-[#8BCB70]': contabilidadeForm.get('contabilidade_id')?.valid || !contabilidadeForm.get('contabilidade_id')?.touched,
+                    'border-red-400 focus:ring-red-400 bg-red-400/20': contabilidadeForm.get('contabilidade_id')?.invalid && contabilidadeForm.get('contabilidade_id')?.touched
+                  }"
+                  [disabled]="importando || contabilidades.length === 0"
+                >
+                  <option value="" disabled>Selecione uma contabilidade</option>
+                  @for (contabilidade of contabilidades; track contabilidade.id) {
+                    <option [value]="contabilidade.id" class="text-[#0C0D0A]">
+                      {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
+                    </option>
+                  }
+                </select>
+                @if (contabilidades.length === 0 && !carregandoContabilidades) {
+                  <p class="text-white/80 text-sm mt-2">Nenhuma contabilidade cadastrada. <a routerLink="/contabilidades" class="text-[#8BCB70] underline">Cadastre uma contabilidade</a> primeiro.</p>
+                }
+                @if (contabilidadeForm.get('contabilidade_id')?.invalid && contabilidadeForm.get('contabilidade_id')?.touched) {
+                  <p class="text-red-400 text-sm mt-2">Selecione uma contabilidade</p>
+                }
+              }
+            }
+          </div>
+
+          <!-- Mensagem de Erro/Sucesso -->
+          @if (mensagemSenha) {
+            <div class="p-4 rounded-xl border" [ngClass]="{
+              'bg-[#8BCB70]/30 text-white border-[#8BCB70]/50': senhaValida === true,
+              'bg-red-400/30 text-white border-red-400/50': senhaValida === false
+            }">
+              <span class="text-sm font-semibold">{{ mensagemSenha }}</span>
+            </div>
+          }
+
+          <div class="flex gap-4 pt-4">
+            <button
+              type="button"
+              (click)="voltarParaPasso1()"
+              class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+              [disabled]="importando"
+            >
+              Voltar
+            </button>
+            
+            <button
+              type="submit"
+              [disabled]="(contabilidadeGlobalSelecionada === null && !contabilidadeForm.valid) || importando || contabilidades.length === 0"
+              class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
             >
               @if (importando) {
                 <span class="flex items-center justify-center">
@@ -401,30 +621,12 @@
                   Importando...
                 </span>
               } @else {
-                Aplicar para Todos ({{ certificadosPendentes.length }})
+                Confirmar e Importar
               }
             </button>
-          }
-          
-          <button
-            type="submit"
-            [disabled]="!senhaForm.valid || importando"
-            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
-          >
-            @if (importando) {
-              <span class="flex items-center justify-center">
-                <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Importando...
-              </span>
-            } @else {
-              Importar Certificado
-            }
-          </button>
-        </div>
-      </form>
+          </div>
+        </form>
+      }
     </div>
   </div>
 }
@@ -588,6 +790,30 @@
         
         @if (!resultadosImportacao) {
           <form (ngSubmit)="importarLote()" class="space-y-5">
+            @if (contabilidadeGlobalSelecionada !== null) {
+              <div class="p-4 rounded-xl border border-[#8BCB70]/50 bg-[#8BCB70]/20 mb-4">
+                <div class="flex items-center gap-2">
+                  <svg class="w-5 h-5 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  <p class="text-sm text-white">
+                    <strong>Contabilidade selecionada:</strong> 
+                    {{ contabilidadeSelecionadaNome }}
+                  </p>
+                </div>
+                <p class="text-xs text-white/70 mt-1">
+                  Todos os certificados importados serão vinculados automaticamente a esta contabilidade.
+                </p>
+              </div>
+            } @else {
+              <div class="p-4 rounded-xl border border-[#7EBFB3]/50 bg-[#7EBFB3]/10 mb-4">
+                <p class="text-sm text-white/90">
+                  <strong class="text-white">Atenção:</strong> Nenhuma contabilidade foi selecionada globalmente. 
+                  Os certificados serão importados sem vínculo à contabilidade.
+                </p>
+              </div>
+            }
+            
             <div>
               <label for="senhaImportacaoLote" class="block text-sm font-semibold text-white mb-2">Senha dos Certificados</label>
               <input
@@ -697,6 +923,15 @@
               >
                 Fechar
               </button>
+              @if (resultadosImportacao && resultadosImportacao.sucesso > 0) {
+                <button
+                  type="button"
+                  (click)="fecharModalImportacaoLote()"
+                  class="flex-1 px-6 py-3 btn-futuristic rounded-xl font-bold text-white"
+                >
+                  Concluir
+                </button>
+              }
             </div>
           </div>
         }
