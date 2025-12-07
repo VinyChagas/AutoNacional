@@ -11,7 +11,7 @@ import re
 import time
 from pathlib import Path
 from urllib.parse import urljoin
-from playwright.sync_api import Page, Download, TimeoutError as PlaywrightTimeoutError, APIResponse
+from playwright.sync_api import Page, Download, TimeoutError as PlaywrightTimeoutError  # type: ignore
 
 # Importa função para configurar caminho base de downloads
 try:
@@ -266,6 +266,200 @@ def formatar_competencia_para_pasta(competencia: str) -> str:
     return competencia.replace("/", "-")
 
 
+def normalizar_competencia(valor: str) -> str:
+    """
+    Normaliza a competência para comparação.
+    
+    Aceita formatos:
+    - "MM/AAAA" (ex: "10/2025") → mantém como está
+    - "MM-AAAA" (ex: "10-2025") → converte para "MM/AAAA"
+    - "MMAAAA" (ex: "102025") → converte para "MM/AAAA"
+    
+    Args:
+        valor: Competência em qualquer formato
+        
+    Returns:
+        Competência normalizada no formato "MM/AAAA"
+    """
+    if not valor:
+        logger.warning("⚠️ Competência vazia recebida na normalização")
+        return ""
+    
+    competencia_original = valor
+    competencia = valor.strip()
+    
+    # Se já está no formato "MM/AAAA", retorna como está
+    if "/" in competencia:
+        logger.debug(f"🔄 Normalização: '{competencia_original}' -> '{competencia}' (já tem /)")
+        return competencia
+    
+    # Se está no formato "MM-AAAA", converte para "MM/AAAA"
+    if "-" in competencia:
+        resultado = competencia.replace("-", "/")
+        logger.debug(f"🔄 Normalização: '{competencia_original}' -> '{resultado}' (substituiu -)")
+        return resultado
+    
+    # Se está no formato "MMAAAA" (ex: "102025"), converte para "MM/AAAA"
+    if len(competencia) == 6 and competencia.isdigit():
+        resultado = f"{competencia[:2]}/{competencia[2:]}"
+        logger.debug(f"🔄 Normalização: '{competencia_original}' -> '{resultado}' (formato MMMAAA)")
+        return resultado
+    
+    # Se não reconheceu o formato, retorna como está
+    logger.warning(f"⚠️ Formato de competência não reconhecido: '{competencia_original}', retornando como está")
+    return competencia
+
+
+def encontrar_botao_proxima_pagina(page: Page):
+    """
+    Encontra o botão "Próxima" página usando múltiplas estratégias robustas.
+    
+    Tenta as seguintes estratégias em ordem:
+    1. page.locator('i.fa-angle-right').first
+    2. page.locator('a:has(i.fa-angle-right)').first
+    3. page.locator('xpath=//i[@class="fa fa-angle-right"]')
+    4. page.locator('xpath=//a[.//i[contains(@class,"fa-angle-right")]]')
+    5. XPath fixo: /html/body/div[1]/div[3]/div[1]/ul/li[6]/a
+    
+    Args:
+        page: Página do Playwright
+        
+    Returns:
+        Locator do botão "Próxima" ou None se não encontrar
+        
+    Raises:
+        Exception: Se não conseguir encontrar o botão com nenhuma estratégia
+    """
+    estrategias = [
+        ("i.fa-angle-right", lambda: page.locator('i.fa-angle-right').first),
+        ("a:has(i.fa-angle-right)", lambda: page.locator('a:has(i.fa-angle-right)').first),
+        ("xpath=//i[@class=\"fa fa-angle-right\"]", lambda: page.locator('xpath=//i[@class="fa fa-angle-right"]').first),
+        ("xpath=//a[.//i[contains(@class,\"fa-angle-right\")]]", lambda: page.locator('xpath=//a[.//i[contains(@class,"fa-angle-right")]]').first),
+        ("xpath=/html/body/div[1]/div[3]/div[1]/ul/li[6]/a", lambda: page.locator('xpath=/html/body/div[1]/div[3]/div[1]/ul/li[6]/a').first),
+    ]
+    
+    for nome_estrategia, estrategia_func in estrategias:
+        try:
+            logger.debug(f"Tentando estratégia: {nome_estrategia}")
+            botao = estrategia_func()
+            count = botao.count()
+            if count > 0:
+                logger.debug(f"✅ Botão encontrado usando estratégia: {nome_estrategia}")
+                return botao
+        except Exception as e:
+            logger.debug(f"Estratégia {nome_estrategia} falhou: {e}")
+            continue
+    
+    raise Exception("Botão 'Próxima' não encontrado com nenhuma estratégia")
+
+
+def clicar_botao_proxima_pagina(page: Page) -> bool:
+    """
+    Clica no botão "Próxima" página e verifica se realmente mudou de página.
+    
+    Esta função implementa proteção contra loop infinito:
+    1. Verifica se o botão existe e está habilitado
+    2. Captura o texto da primeira linha ANTES do clique
+    3. Clica no botão
+    4. Verifica se o texto da primeira linha MUDOU após o clique
+    5. Se não mudou, significa que estamos na última página → retorna False
+    
+    Args:
+        page: Página do Playwright
+        
+    Returns:
+        True se conseguiu navegar para próxima página, False caso contrário
+    """
+    try:
+        # ETAPA 1: Encontrar o botão
+        botao = encontrar_botao_proxima_pagina(page)
+        
+        # ETAPA 2: Verificar se o botão está habilitado
+        try:
+            # Tenta pegar o elemento pai (link) para verificar disabled
+            parent_link = botao.locator("..")
+            is_disabled = parent_link.get_attribute("disabled")
+            class_attr = parent_link.get_attribute("class")
+            
+            # Verifica também o elemento LI pai (pode ter classe disabled)
+            try:
+                li_parent = parent_link.locator("..")
+                li_class = li_parent.get_attribute("class")
+                if li_class and "disabled" in li_class.lower():
+                    logger.info("Botão 'Próxima' está desabilitado (LI pai tem classe disabled)")
+                    return False
+            except Exception:
+                pass  # Não conseguiu verificar LI pai, continua
+            
+            if is_disabled or (class_attr and "disabled" in class_attr.lower()):
+                logger.info("Botão 'Próxima' está desabilitado (já está na última página)")
+                return False
+        except Exception:
+            # Se não conseguir verificar disabled, continua (pode não ter esse atributo)
+            logger.debug("Não foi possível verificar se botão está desabilitado")
+        
+        # Aguarda o elemento estar visível
+        botao.wait_for(state='visible', timeout=5000)
+        
+        # Verifica se está clicável
+        is_enabled = botao.is_enabled()
+        if not is_enabled:
+            logger.info("Botão 'Próxima' não está habilitado")
+            return False
+        
+        # ETAPA 3: Capturar o texto da primeira linha ANTES do clique
+        # Isso será usado para verificar se a página realmente mudou
+        try:
+            linhas_antes = page.locator("table tbody tr")
+            primeira_linha_antes = linhas_antes.nth(0)
+            texto_primeira_linha_antes = primeira_linha_antes.inner_text()
+            texto_primeira_linha_antes = texto_primeira_linha_antes.strip()
+            logger.debug(f"Texto da primeira linha ANTES do clique: '{texto_primeira_linha_antes[:50]}...'")
+        except Exception as e:
+            logger.warning(f"Não foi possível capturar texto da primeira linha antes do clique: {e}")
+            texto_primeira_linha_antes = None
+        
+        # ETAPA 4: Clicar no botão
+        logger.info("Clicando no botão 'Próxima'...")
+        botao.click()
+        
+        # ETAPA 5: Aguardar a tabela recarregar
+        page.wait_for_load_state("networkidle", timeout=10000)
+        page.wait_for_selector("table tbody tr", timeout=8000)
+        
+        # ETAPA 6: Verificar se a página realmente mudou
+        # Se o texto da primeira linha não mudou, significa que estamos na última página
+        if texto_primeira_linha_antes is not None:
+            try:
+                # Aguarda um pouco para garantir que a tabela estável
+                page.wait_for_timeout(500)
+                
+                # Captura o texto da primeira linha DEPOIS do clique
+                linhas_depois = page.locator("table tbody tr")
+                primeira_linha_depois = linhas_depois.nth(0)
+                texto_primeira_linha_depois = primeira_linha_depois.inner_text()
+                texto_primeira_linha_depois = texto_primeira_linha_depois.strip()
+                logger.debug(f"Texto da primeira linha DEPOIS do clique: '{texto_primeira_linha_depois[:50]}...'")
+                
+                # Compara os textos
+                if texto_primeira_linha_antes == texto_primeira_linha_depois:
+                    logger.warning("⚠️ A primeira linha não mudou após o clique. Estamos na última página ou o clique não funcionou.")
+                    logger.info("Evitando loop infinito: retornando False")
+                    return False
+                else:
+                    logger.debug("✅ A primeira linha mudou. Página realmente mudou.")
+            except Exception as e:
+                logger.warning(f"Erro ao verificar mudança de página: {e}. Assumindo que mudou.")
+                # Em caso de erro, assume que mudou para não bloquear o fluxo
+        
+        logger.info("✅ Navegação para próxima página concluída com sucesso")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Erro ao clicar no botão 'Próxima': {e}")
+        return False
+
+
 def baixar_arquivo_direto_sync(
     page: Page,
     seletor_link: str,
@@ -417,7 +611,7 @@ def baixar_arquivo_direto_sync(
     
     # ETAPA 6: Faz requisição HTTP direta
     logger.info(f"🌐 Fazendo requisição HTTP para: {full_url}")
-    response: APIResponse = page.request.get(full_url)
+    response = page.request.get(full_url)
     
     # ETAPA 7: Verifica status da resposta
     status = response.status
@@ -1217,10 +1411,12 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
     
     Args:
         page: Página do Playwright
-        competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
+        competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
         nome_empresa: Nome da empresa (opcional, para estrutura de pastas)
     """
-    logger.info(f"Iniciando processamento de Notas Emitidas para competência {competencia_alvo}")
+    # Normaliza a competência UMA VEZ no início para garantir comparação correta
+    competencia_alvo_normalizada = normalizar_competencia(competencia_alvo)
+    logger.info(f"Iniciando processamento de Notas Emitidas para competência {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
     
     while True:
         try:
@@ -1256,9 +1452,12 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
                     competencia_texto = celulas.nth(2).inner_text()
                     competencia_texto = competencia_texto.strip()
                     
-                    if competencia_texto == competencia_alvo:
+                    # Normaliza a competência da linha antes de comparar
+                    competencia_texto_normalizada = normalizar_competencia(competencia_texto)
+                    
+                    if competencia_texto_normalizada == competencia_alvo_normalizada:
                         encontrou_competencia = True
-                        logger.info(f"📋 Nota encontrada na linha {i+1}/{total_linhas} com competência {competencia_alvo}")
+                        logger.info(f"📋 Nota encontrada na linha {i+1}/{total_linhas} com competência {competencia_alvo_normalizada}")
                         
                         # Verifica se a nota é válida
                         nota_valida = verificar_nota_valida(linha)
@@ -1268,7 +1467,7 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
                             logger.info(f"✅ Nota válida confirmada na linha {i+1}. Iniciando download...")
                             logger.info(f"📊 Estatísticas: {notas_processadas} nota(s) processada(s), {notas_baixadas} baixada(s)")
                             try:
-                                baixar_arquivos_da_linha(page, linha, "emitida", competencia_alvo, nome_empresa)
+                                baixar_arquivos_da_linha(page, linha, "emitida", competencia_alvo_normalizada, nome_empresa)
                                 notas_baixadas += 1
                                 logger.info(f"✅ Download da linha {i+1} concluído com sucesso")
                                 logger.info(f"📊 Estatísticas atualizadas: {notas_processadas} processada(s), {notas_baixadas} baixada(s)")
@@ -1309,57 +1508,52 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             # Verifica se precisa continuar na próxima página
-            # Se a última linha ainda tem a competência alvo, continua
-            if encontrou_competencia and total_linhas > 0:
+            # REGRA: Se a última linha ainda tem a competência alvo → IR PARA A PRÓXIMA PÁGINA
+            # REGRA: Se a última linha NÃO tem a competência alvo → ENCERRAR EMITIDAS
+            if total_linhas > 0:
                 ultima_linha = linhas.nth(total_linhas - 1)
                 celulas_ultima = ultima_linha.locator("td")
                 
                 try:
-                    competencia_ultima = celulas_ultima.nth(2).inner_text()
-                    competencia_ultima = competencia_ultima.strip()
+                    competencia_ultima_texto = celulas_ultima.nth(2).inner_text()
+                    competencia_ultima_texto = competencia_ultima_texto.strip()
                     
-                    if competencia_ultima == competencia_alvo:
-                        # Ainda há notas da competência, vai para próxima página
-                        logger.info("Última linha ainda tem competência alvo. Navegando para próxima página...")
+                    # Normaliza a competência da última linha antes de comparar
+                    competencia_ultima_normalizada = normalizar_competencia(competencia_ultima_texto)
+                    
+                    logger.debug(f"Última linha - competência: '{competencia_ultima_texto}' (normalizada: '{competencia_ultima_normalizada}')")
+                    logger.debug(f"Competência alvo normalizada: '{competencia_alvo_normalizada}'")
+                    
+                    if competencia_ultima_normalizada == competencia_alvo_normalizada:
+                        # Ainda há notas da competência, tenta ir para próxima página
+                        logger.info("✅ Última linha ainda tem competência alvo. Tentando navegar para próxima página...")
                         
-                        try:
-                            # Tenta encontrar o botão de próxima página
-                            # Baseado no código existente: li:nth-of-type(8) i
-                            botao_proxima = page.locator("li:nth-of-type(8) i").first
-                            
-                            # Verifica se o botão existe e está habilitado
-                            if botao_proxima.count() > 0:
-                                # Verifica se não está desabilitado
-                                parent_link = botao_proxima.locator("..")  # Pega o elemento pai (link)
-                                is_disabled = parent_link.get_attribute("disabled")
-                                
-                                if not is_disabled:
-                                    botao_proxima.click()
-                                    page.wait_for_load_state("networkidle", timeout=10000)
-                                    page.wait_for_selector("table tbody tr", timeout=8000)
-                                    logger.info("Navegou para próxima página")
-                                    continue
-                                else:
-                                    logger.info("Botão de próxima página desabilitado. Encerrando.")
-                                    break
-                            else:
-                                logger.info("Botão de próxima página não encontrado. Encerrando.")
-                                break
-                                
-                        except Exception as e:
-                            logger.warning(f"Erro ao navegar para próxima página: {e}")
+                        # Usa a função robusta para encontrar e clicar no botão
+                        # Esta função verifica se o botão existe, está habilitado E se a página realmente mudou
+                        mudou_pagina = clicar_botao_proxima_pagina(page)
+                        
+                        if mudou_pagina:
+                            # Página mudou com sucesso, continua o loop
+                            logger.info("✅ Navegação bem-sucedida. Continuando processamento...")
+                            # Aguarda um pouco para garantir que a tabela está estável
+                            page.wait_for_timeout(500)
+                            continue
+                        else:
+                            # Não foi possível avançar de página (última página ou botão desabilitado)
+                            logger.info("⚠️ Não foi possível avançar de página. Evitando loop infinito.")
+                            logger.info("Encerrando processamento de Emitidas.")
                             break
                     else:
                         # Passou da competência desejada
-                        logger.info("Passou da competência alvo. Encerrando busca em Emitidas.")
+                        logger.info(f"❌ Última linha tem competência '{competencia_ultima_normalizada}' diferente da alvo '{competencia_alvo_normalizada}'. Encerrando busca em Emitidas.")
                         break
                         
                 except Exception as e:
                     logger.warning(f"Erro ao verificar última linha: {e}")
                     break
             else:
-                # Não encontrou mais notas da competência
-                logger.info("Nenhuma nota da competência encontrada nesta página. Encerrando Emitidas.")
+                # Não há linhas na tabela
+                logger.info("Nenhuma linha encontrada na tabela. Encerrando Emitidas.")
                 break
                 
         except PlaywrightTimeoutError:
@@ -1378,10 +1572,12 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
     
     Args:
         page: Página do Playwright
-        competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
+        competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
         nome_empresa: Nome da empresa (opcional, para estrutura de pastas)
     """
-    logger.info(f"Iniciando processamento de Notas Recebidas para competência {competencia_alvo}")
+    # Normaliza a competência UMA VEZ no início para garantir comparação correta
+    competencia_alvo_normalizada = normalizar_competencia(competencia_alvo)
+    logger.info(f"Iniciando processamento de Notas Recebidas para competência {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
     
     while True:
         try:
@@ -1417,9 +1613,12 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
                     competencia_texto = celulas.nth(2).inner_text()
                     competencia_texto = competencia_texto.strip()
                     
-                    if competencia_texto == competencia_alvo:
+                    # Normaliza a competência da linha antes de comparar
+                    competencia_texto_normalizada = normalizar_competencia(competencia_texto)
+                    
+                    if competencia_texto_normalizada == competencia_alvo_normalizada:
                         encontrou_competencia = True
-                        logger.info(f"📋 Nota encontrada na linha {i+1}/{total_linhas} com competência {competencia_alvo}")
+                        logger.info(f"📋 Nota encontrada na linha {i+1}/{total_linhas} com competência {competencia_alvo_normalizada}")
                         
                         # Verifica se a nota é válida
                         nota_valida = verificar_nota_valida(linha)
@@ -1429,7 +1628,7 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
                             logger.info(f"✅ Nota válida confirmada na linha {i+1}. Iniciando download...")
                             logger.info(f"📊 Estatísticas: {notas_processadas} nota(s) processada(s), {notas_baixadas} baixada(s)")
                             try:
-                                baixar_arquivos_da_linha(page, linha, "recebida", competencia_alvo, nome_empresa)
+                                baixar_arquivos_da_linha(page, linha, "recebida", competencia_alvo_normalizada, nome_empresa)
                                 notas_baixadas += 1
                                 logger.info(f"✅ Download da linha {i+1} concluído com sucesso")
                                 logger.info(f"📊 Estatísticas atualizadas: {notas_processadas} processada(s), {notas_baixadas} baixada(s)")
@@ -1470,56 +1669,52 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             # Verifica se precisa continuar na próxima página
-            # Se a última linha ainda tem a competência alvo, continua
-            if encontrou_competencia and total_linhas > 0:
+            # REGRA: Se a última linha ainda tem a competência alvo → IR PARA A PRÓXIMA PÁGINA
+            # REGRA: Se a última linha NÃO tem a competência alvo → ENCERRAR RECEBIDAS
+            if total_linhas > 0:
                 ultima_linha = linhas.nth(total_linhas - 1)
                 celulas_ultima = ultima_linha.locator("td")
                 
                 try:
-                    competencia_ultima = celulas_ultima.nth(2).inner_text()
-                    competencia_ultima = competencia_ultima.strip()
+                    competencia_ultima_texto = celulas_ultima.nth(2).inner_text()
+                    competencia_ultima_texto = competencia_ultima_texto.strip()
                     
-                    if competencia_ultima == competencia_alvo:
-                        # Ainda há notas da competência, vai para próxima página
-                        logger.info("Última linha ainda tem competência alvo. Navegando para próxima página...")
+                    # Normaliza a competência da última linha antes de comparar
+                    competencia_ultima_normalizada = normalizar_competencia(competencia_ultima_texto)
+                    
+                    logger.debug(f"Última linha - competência: '{competencia_ultima_texto}' (normalizada: '{competencia_ultima_normalizada}')")
+                    logger.debug(f"Competência alvo normalizada: '{competencia_alvo_normalizada}'")
+                    
+                    if competencia_ultima_normalizada == competencia_alvo_normalizada:
+                        # Ainda há notas da competência, tenta ir para próxima página
+                        logger.info("✅ Última linha ainda tem competência alvo. Tentando navegar para próxima página...")
                         
-                        try:
-                            # Tenta encontrar o botão de próxima página
-                            botao_proxima = page.locator("li:nth-of-type(8) i").first
-                            
-                            # Verifica se o botão existe e está habilitado
-                            if botao_proxima.count() > 0:
-                                # Verifica se não está desabilitado
-                                parent_link = botao_proxima.locator("..")  # Pega o elemento pai (link)
-                                is_disabled = parent_link.get_attribute("disabled")
-                                
-                                if not is_disabled:
-                                    botao_proxima.click()
-                                    page.wait_for_load_state("networkidle", timeout=10000)
-                                    page.wait_for_selector("table tbody tr", timeout=8000)
-                                    logger.info("Navegou para próxima página")
-                                    continue
-                                else:
-                                    logger.info("Botão de próxima página desabilitado. Encerrando.")
-                                    break
-                            else:
-                                logger.info("Botão de próxima página não encontrado. Encerrando.")
-                                break
-                                
-                        except Exception as e:
-                            logger.warning(f"Erro ao navegar para próxima página: {e}")
+                        # Usa a função robusta para encontrar e clicar no botão
+                        # Esta função verifica se o botão existe, está habilitado E se a página realmente mudou
+                        mudou_pagina = clicar_botao_proxima_pagina(page)
+                        
+                        if mudou_pagina:
+                            # Página mudou com sucesso, continua o loop
+                            logger.info("✅ Navegação bem-sucedida. Continuando processamento...")
+                            # Aguarda um pouco para garantir que a tabela está estável
+                            page.wait_for_timeout(500)
+                            continue
+                        else:
+                            # Não foi possível avançar de página (última página ou botão desabilitado)
+                            logger.info("⚠️ Não foi possível avançar de página. Evitando loop infinito.")
+                            logger.info("Encerrando processamento de Recebidas.")
                             break
                     else:
                         # Passou da competência desejada
-                        logger.info("Passou da competência alvo. Encerrando busca em Recebidas.")
+                        logger.info(f"❌ Última linha tem competência '{competencia_ultima_normalizada}' diferente da alvo '{competencia_alvo_normalizada}'. Encerrando busca em Recebidas.")
                         break
                         
                 except Exception as e:
                     logger.warning(f"Erro ao verificar última linha: {e}")
                     break
             else:
-                # Não encontrou mais notas da competência
-                logger.info("Nenhuma nota da competência encontrada nesta página. Encerrando Recebidas.")
+                # Não há linhas na tabela
+                logger.info("Nenhuma linha encontrada na tabela. Encerrando Recebidas.")
                 break
                 
         except PlaywrightTimeoutError:
@@ -1608,10 +1803,12 @@ def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str = None)
     
     Args:
         page: Página do Playwright (assume que já está logado no dashboard)
-        competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
+        competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
         nome_empresa: Nome da empresa (opcional, para estrutura de pastas)
     """
-    logger.info(f"🚀 Iniciando processamento de notas para competência: {competencia_alvo}")
+    # Normaliza a competência recebida como parâmetro
+    competencia_alvo_normalizada = normalizar_competencia(competencia_alvo)
+    logger.info(f"🚀 Iniciando processamento de notas para competência: {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
     
     try:
         # 1) Acessar "Notas fiscais emitidas"
@@ -1632,7 +1829,7 @@ def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str = None)
         logger.info("✅ Acessou Notas Emitidas com sucesso")
         
         # 2) Processar tabela de Notas Emitidas
-        processar_tabela_emitidas(page, competencia_alvo, nome_empresa)
+        processar_tabela_emitidas(page, competencia_alvo_normalizada, nome_empresa)
         
         # 4) Ir para "Notas fiscais recebidas"
         logger.info("Acessando menu 'Notas fiscais recebidas'...")
@@ -1652,7 +1849,7 @@ def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str = None)
         logger.info("✅ Acessou Notas Recebidas com sucesso")
         
         # 5) Processar tabela de Notas Recebidas
-        processar_tabela_recebidas(page, competencia_alvo, nome_empresa)
+        processar_tabela_recebidas(page, competencia_alvo_normalizada, nome_empresa)
         
         logger.info("🎉 Processamento completo finalizado!")
         

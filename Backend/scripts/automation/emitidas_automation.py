@@ -20,22 +20,22 @@ def processar_tabela_recebidas(page, competencia, context):
     
     Args:
         page: Página do Playwright
-        competencia: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
+        competencia: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
         context: Contexto do Playwright
     """
-    logging.info(f"🔄 Iniciando processamento de Notas Recebidas para competência {competencia}")
+    # Normaliza a competência UMA VEZ no início para garantir comparação correta
+    competencia_normalizada = _normalizar_competencia(competencia)
+    logging.info(f"🔄 Iniciando processamento de Notas Recebidas para competência {competencia} (normalizada: {competencia_normalizada})")
+    logging.info(f"   ⚠️  IMPORTANTE: A navegação será baseada APENAS na última linha da página, independente de quantas notas da competência foram encontradas.")
     
     # Contadores para estatísticas
     total_notas_encontradas = 0
     notas_validas_baixadas = 0
     notas_canceladas_ignoradas = 0
     
-    # Rastreia a página atual (sempre começa na página 1)
-    pagina_atual = 1
-    
     while True:
         try:
-            logging.info(f"📄 Processando página {pagina_atual} (Recebidas)")
+            logging.info("📄 Processando página atual (Recebidas)")
             linhas = page.locator("table tbody tr")
             total = linhas.count()
             
@@ -43,7 +43,7 @@ def processar_tabela_recebidas(page, competencia, context):
                 logging.info("Nenhuma linha encontrada na tabela. Encerrando.")
                 break
             
-            logging.info(f"📋 Processando {total} linhas na página {pagina_atual} (Recebidas)")
+            logging.info(f"📋 Processando {total} linhas na página atual (Recebidas)")
             
             # Variável para rastrear se encontrou notas da competência nesta página (para estatísticas)
             encontrou_competencia_na_pagina = False
@@ -69,12 +69,13 @@ def processar_tabela_recebidas(page, competencia, context):
                     empresa = celulas.nth(_get_col_index(page, "Emitida por")).inner_text().strip().replace("/", "-").replace("\\", "-")
                     numero_nota = celulas.nth(_get_col_index(page, "Emissão")).inner_text().strip().replace("/", "-") + f"_{i+1}"
                     
-                    # Verifica se a nota pertence à competência alvo
-                    if competencia_val == competencia:
+                    # Verifica se a nota pertence à competência alvo (usando competência já normalizada)
+                    competencia_val_normalizada = _normalizar_competencia(competencia_val)
+                    if competencia_val_normalizada == competencia_normalizada:
                         encontrou_competencia_na_pagina = True
                         total_notas_encontradas += 1
                         
-                        logging.info(f"📄 Nota encontrada na linha {i+1} com competência {competencia}")
+                        logging.info(f"📄 Nota encontrada na linha {i+1} com competência {competencia_normalizada}")
                         
                         # IMPORTANTE: Verifica se a nota está cancelada ANTES de tentar baixar
                         nota_valida = verificar_nota_valida(linha)
@@ -144,7 +145,7 @@ def processar_tabela_recebidas(page, competencia, context):
                     continue
             
             # Log de estatísticas da página
-            logging.info(f"📊 Resumo da página {pagina_atual} (Recebidas): {total_notas_encontradas} nota(s) encontrada(s), "
+            logging.info(f"📊 Resumo da página (Recebidas): {total_notas_encontradas} nota(s) encontrada(s), "
                         f"{notas_validas_baixadas} baixada(s), {notas_canceladas_ignoradas} cancelada(s) ignorada(s)")
             
             # ====================================================================
@@ -160,36 +161,76 @@ def processar_tabela_recebidas(page, competencia, context):
             
             if total > 0:
                 # SEMPRE verifica a última linha para decidir se continua ou encerra
-                ultima_linha = linhas.nth(total - 1)
-                celulas_ultima = ultima_linha.locator("td")
+                # IMPORTANTE: Recria os locators para evitar problemas com elementos "stale"
+                logging.info(f"🔍 Verificando última linha (linha {total}) para decidir navegação...")
                 
                 try:
-                    competencia_ultima = celulas_ultima.nth(_get_col_index(page, "Competência")).inner_text().strip()
+                    # Recria os locators da tabela para garantir que estão atualizados
+                    linhas_atualizadas = page.locator("table tbody tr")
+                    ultima_linha = linhas_atualizadas.nth(total - 1)
+                    
+                    # Aguarda a última linha estar visível
+                    ultima_linha.wait_for(state='visible', timeout=5000)
+                    
+                    celulas_ultima = ultima_linha.locator("td")
+                    
+                    # Obtém o índice da coluna Competência (recria para garantir que está atualizado)
+                    col_index_competencia = _get_col_index(page, "Competência")
+                    logging.info(f"   📍 Índice da coluna Competência: {col_index_competencia}")
+                    
+                    # Lê a competência da última linha
+                    competencia_ultima_raw = celulas_ultima.nth(col_index_competencia).inner_text()
+                    competencia_ultima = competencia_ultima_raw.strip()
+                    
+                    logging.info(f"   📋 Competência da última linha (raw): '{competencia_ultima}'")
+                    logging.info(f"   🎯 Competência alvo (já normalizada no início): '{competencia_normalizada}'")
+                    
+                    # Normaliza apenas a competência da última linha (a alvo já está normalizada no início da função)
+                    competencia_ultima_normalizada = _normalizar_competencia(competencia_ultima)
+                    
+                    # Log detalhado (agora em INFO para visibilidade)
+                    logging.info(f"   🔄 Competência última linha normalizada: '{competencia_ultima_normalizada}'")
+                    logging.info(f"   ⚖️  Comparação: '{competencia_ultima_normalizada}' == '{competencia_normalizada}' ? {competencia_ultima_normalizada == competencia_normalizada}")
+                    logging.info(f"   📌 REGRA: Se última linha tem a competência '{competencia_normalizada}' → navega para próxima página")
+                    logging.info(f"   📌 REGRA: Se última linha NÃO tem a competência → encerra (passou da competência)")
+                    logging.info(f"   ⚠️  IMPORTANTE: Esta decisão é baseada APENAS na última linha, independente de quantas notas da competência foram encontradas na página!")
                     
                     # Se a última linha ainda tem a competência alvo, há mais notas na próxima página
                     # IMPORTANTE: Isso vale mesmo que todas as notas da página atual sejam canceladas
-                    if competencia_ultima == competencia:
-                        logging.info(f"📄 Última linha da página {pagina_atual} ainda tem competência {competencia}.")
-                        logging.info(f"   Navegando para página {pagina_atual + 1} para continuar buscando...")
+                    # IMPORTANTE: Não importa quantas linhas da competência existem na página, apenas a última linha importa!
+                    if competencia_ultima_normalizada == competencia_normalizada:
+                        logging.info(f"✅ MATCH! Última linha tem a mesma competência '{competencia_normalizada}'.")
+                        logging.info("   ➡️  Navegando para próxima página para continuar buscando...")
                         
                         try:
-                            pagina_atual = navegar_proxima_pagina(page, pagina_atual)
+                            logging.info("   🔍 Chamando função navegar_proxima_pagina()...")
+                            navegar_proxima_pagina(page)
+                            logging.info("   ⏳ Aguardando tabela carregar após navegação...")
+                            # Aguarda a tabela carregar após navegação
+                            page.wait_for_selector("table tbody tr", timeout=8000)
+                            # Pequeno delay para garantir que a tabela está estável
+                            page.wait_for_timeout(500)
+                            logging.info("   ✅ Navegação concluída com sucesso! Continuando processamento...")
                             # Continua o loop para processar próxima página
                             continue
                         except Exception as e:
                             # Não há próxima página disponível ou erro ao navegar
-                            logging.info(f"⚠️  Não foi possível navegar para próxima página: {e}")
-                            logging.info("   Encerrando busca em Recebidas (não há mais páginas).")
+                            logging.error(f"❌ ERRO ao navegar para próxima página: {e}")
+                            import traceback
+                            logging.error(f"   Traceback completo:\n{traceback.format_exc()}")
+                            logging.info("   ⚠️  Encerrando busca em Recebidas (não há mais páginas ou erro na navegação).")
                             break
                     else:
                         # A última linha não tem mais a competência alvo
                         # Isso significa que já passou de todas as notas da competência
-                        logging.info(f"✅ Última linha da página {pagina_atual} tem competência '{competencia_ultima}'.")
-                        logging.info(f"   Passou da competência alvo '{competencia}'. Encerrando busca em Recebidas.")
+                        logging.info(f"❌ SEM MATCH! Última linha tem competência '{competencia_ultima_normalizada}'.")
+                        logging.info(f"   🛑 Passou da competência alvo '{competencia_normalizada}'. Encerrando busca em Recebidas.")
                         break
                         
                 except Exception as e:
-                    logging.warning(f"⚠️  Erro ao verificar última linha da página {pagina_atual}: {e}")
+                    logging.error(f"❌ Erro ao verificar última linha: {e}")
+                    import traceback
+                    logging.error(f"   Traceback: {traceback.format_exc()}")
                     logging.warning("   Encerrando por segurança.")
                     break
             else:
@@ -217,7 +258,7 @@ import os
 import sys
 import logging
 from pathlib import Path
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError  # pyright: ignore[reportMissingImports]
 from salvamento import salvar_arquivo
 
 def login(page):
@@ -285,54 +326,113 @@ def abrir_em_nova_aba(context, url):
 
 
 
-def navegar_para_pagina(page, numero_pagina):
+def navegar_proxima_pagina(page):
     """
-    Navega para uma página específica usando o elemento com data-original-title.
+    Navega para a próxima página usando o botão "Próxima".
+    
+    Usa o elemento: <a data-original-title="Próxima"><i class="fa fa-angle-right"></i></a>
+    XPath: /html/body/div[1]/div[3]/div[1]/ul/li[6]/a
     
     Args:
         page: Página do Playwright
-        numero_pagina: Número da página para navegar (ex: 2, 3, 4...)
         
     Raises:
-        Exception: Se não conseguir encontrar ou clicar no elemento da página
+        Exception: Se não conseguir encontrar ou clicar no botão "Próxima"
     """
+    logging.info("   🔍 Iniciando busca pelo botão 'Próxima'...")
     try:
-        # Monta o seletor baseado no data-original-title
-        seletor_pagina = f'a[data-original-title="Página {numero_pagina}"]'
-        elemento_pagina = page.locator(seletor_pagina)
+        # Tenta múltiplos seletores para encontrar o botão "Próxima" (em ordem de prioridade)
+        botao_proxima = None
+        estrategia_usada = None
         
-        # Verifica se o elemento existe
-        if elemento_pagina.count() == 0:
-            raise Exception(f"Elemento da página {numero_pagina} não encontrado. Seletor: {seletor_pagina}")
+        # Estratégia 1: Por XPath específico fornecido (mais confiável)
+        try:
+            logging.info("   📍 Tentativa 1: Buscando via XPath...")
+            botao_proxima = page.locator('xpath=/html/body/div[1]/div[3]/div[1]/ul/li[6]/a')
+            count = botao_proxima.count()
+            logging.info(f"   📊 Elementos encontrados via XPath: {count}")
+            if count > 0:
+                estrategia_usada = "XPath"
+                logging.info("   ✅ Botão 'Próxima' encontrado via XPath")
+            else:
+                raise Exception("Não encontrado via XPath")
+        except Exception as e1:
+            logging.info(f"   ⚠️  XPath falhou: {e1}")
+            # Estratégia 2: Por data-original-title="Próxima"
+            try:
+                logging.info("   📍 Tentativa 2: Buscando via data-original-title...")
+                botao_proxima = page.locator('a[data-original-title="Próxima"]')
+                count = botao_proxima.count()
+                logging.info(f"   📊 Elementos encontrados via data-original-title: {count}")
+                if count > 0:
+                    estrategia_usada = "data-original-title"
+                    logging.info("   ✅ Botão 'Próxima' encontrado via data-original-title")
+                else:
+                    raise Exception("Não encontrado via data-original-title")
+            except Exception as e2:
+                logging.info(f"   ⚠️  data-original-title falhou: {e2}")
+                # Estratégia 3: Por ícone fa-angle-right dentro do link
+                try:
+                    logging.info("   📍 Tentativa 3: Buscando via ícone fa-angle-right...")
+                    botao_proxima = page.locator('a:has(i.fa-angle-right)')
+                    count = botao_proxima.count()
+                    logging.info(f"   📊 Elementos encontrados via ícone: {count}")
+                    if count > 0:
+                        estrategia_usada = "ícone fa-angle-right"
+                        logging.info("   ✅ Botão 'Próxima' encontrado via ícone fa-angle-right")
+                    else:
+                        raise Exception("Não encontrado via ícone")
+                except Exception as e3:
+                    logging.error(f"   ❌ Todas as estratégias falharam!")
+                    logging.error(f"      XPath: {e1}")
+                    logging.error(f"      data-original-title: {e2}")
+                    logging.error(f"      ícone: {e3}")
+                    raise Exception("Botão 'Próxima' não encontrado com nenhuma estratégia")
+        
+        logging.info(f"   ✅ Botão encontrado usando estratégia: {estrategia_usada}")
+        
+        # Verifica se o botão está habilitado (não está desabilitado)
+        # O botão pode estar desabilitado se já estiver na última página
+        try:
+            logging.info("   🔍 Verificando se botão está habilitado...")
+            parent_element = botao_proxima.locator("..")
+            is_disabled = parent_element.get_attribute("disabled")
+            class_attr = parent_element.get_attribute("class")
+            logging.info(f"   📊 Atributo disabled: {is_disabled}, classe: {class_attr}")
+            if is_disabled or (class_attr and "disabled" in class_attr.lower()):
+                raise Exception("Botão 'Próxima' está desabilitado (já está na última página)")
+            logging.info("   ✅ Botão está habilitado")
+        except Exception as e:
+            # Se não conseguir verificar disabled, continua (pode não ter esse atributo)
+            logging.info(f"   ⚠️  Não foi possível verificar disabled: {e}")
+            logging.info("   ➡️  Continuando mesmo assim...")
         
         # Aguarda o elemento estar visível
-        elemento_pagina.wait_for(state='visible', timeout=5000)
+        logging.info("   ⏳ Aguardando botão ficar visível...")
+        botao_proxima.wait_for(state='visible', timeout=5000)
+        logging.info("   ✅ Botão está visível")
         
-        # Clica no elemento
-        elemento_pagina.click()
+        # Verifica se está clicável
+        logging.info("   🔍 Verificando se botão está clicável...")
+        is_enabled = botao_proxima.is_enabled()
+        logging.info(f"   📊 Botão está enabled: {is_enabled}")
+        
+        # Clica no botão
+        logging.info("   🖱️  Clicando no botão 'Próxima'...")
+        botao_proxima.click()
+        logging.info("   ✅ Clique realizado com sucesso")
         
         # Aguarda a tabela carregar após navegação
+        logging.info("   ⏳ Aguardando tabela carregar após navegação...")
         page.wait_for_selector("table tbody tr", timeout=8000)
-        logging.info(f"✅ Navegou para página {numero_pagina}")
+        logging.info("   ✅ Tabela carregada")
+        logging.info("   ✅ Navegação para próxima página concluída com sucesso!")
         
     except Exception as e:
-        logging.error(f"❌ Erro ao navegar para página {numero_pagina}: {e}")
+        logging.error(f"   ❌ ERRO ao navegar para próxima página: {e}")
+        import traceback
+        logging.error(f"   Traceback:\n{traceback.format_exc()}")
         raise
-
-def navegar_proxima_pagina(page, pagina_atual):
-    """
-    Navega para a próxima página incrementando o número da página atual.
-    
-    Args:
-        page: Página do Playwright
-        pagina_atual: Número da página atual (será incrementado)
-        
-    Returns:
-        Número da próxima página navegada
-    """
-    proxima_pagina = pagina_atual + 1
-    navegar_para_pagina(page, proxima_pagina)
-    return proxima_pagina
 
 def verificar_nota_cancelada(linha):
     """
@@ -420,22 +520,22 @@ def processar_tabela_emitidas(page, competencia, context):
     
     Args:
         page: Página do Playwright
-        competencia: Competência alvo no formato "MM/AAAA" (ex: "10/2025")
+        competencia: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
         context: Contexto do Playwright
     """
-    logging.info(f"🔄 Iniciando processamento de Notas Emitidas para competência {competencia}")
+    # Normaliza a competência UMA VEZ no início para garantir comparação correta
+    competencia_normalizada = _normalizar_competencia(competencia)
+    logging.info(f"🔄 Iniciando processamento de Notas Emitidas para competência {competencia} (normalizada: {competencia_normalizada})")
+    logging.info(f"   ⚠️  IMPORTANTE: A navegação será baseada APENAS na última linha da página, independente de quantas notas da competência foram encontradas.")
     
     # Contadores para estatísticas
     total_notas_encontradas = 0
     notas_validas_baixadas = 0
     notas_canceladas_ignoradas = 0
     
-    # Rastreia a página atual (sempre começa na página 1)
-    pagina_atual = 1
-    
     while True:
         try:
-            logging.info(f"📄 Processando página {pagina_atual} (Emitidas)")
+            logging.info("📄 Processando página atual (Emitidas)")
             linhas = page.locator("table tbody tr")
             total = linhas.count()
             
@@ -443,7 +543,7 @@ def processar_tabela_emitidas(page, competencia, context):
                 logging.info("Nenhuma linha encontrada na tabela. Encerrando.")
                 break
             
-            logging.info(f"📋 Processando {total} linhas na página {pagina_atual} (Emitidas)")
+            logging.info(f"📋 Processando {total} linhas na página atual (Emitidas)")
             
             # Variável para rastrear se encontrou notas da competência nesta página (para estatísticas)
             encontrou_competencia_na_pagina = False
@@ -469,12 +569,13 @@ def processar_tabela_emitidas(page, competencia, context):
                     empresa = celulas.nth(_get_col_index(page, "Emitida para")).inner_text().strip().replace("/", "-").replace("\\", "-")
                     numero_nota = celulas.nth(_get_col_index(page, "Emissão")).inner_text().strip().replace("/", "-") + f"_{i+1}"
                     
-                    # Verifica se a nota pertence à competência alvo
-                    if competencia_val == competencia:
+                    # Verifica se a nota pertence à competência alvo (usando competência já normalizada no início)
+                    competencia_val_normalizada = _normalizar_competencia(competencia_val)
+                    if competencia_val_normalizada == competencia_normalizada:
                         encontrou_competencia_na_pagina = True
                         total_notas_encontradas += 1
                         
-                        logging.info(f"📄 Nota encontrada na linha {i+1} com competência {competencia}")
+                        logging.info(f"📄 Nota encontrada na linha {i+1} com competência {competencia_normalizada}")
                         
                         # IMPORTANTE: Verifica se a nota está cancelada ANTES de tentar baixar
                         nota_valida = verificar_nota_valida(linha)
@@ -544,7 +645,7 @@ def processar_tabela_emitidas(page, competencia, context):
                     continue
             
             # Log de estatísticas da página
-            logging.info(f"📊 Resumo da página {pagina_atual}: {total_notas_encontradas} nota(s) encontrada(s), "
+            logging.info(f"📊 Resumo da página: {total_notas_encontradas} nota(s) encontrada(s), "
                         f"{notas_validas_baixadas} baixada(s), {notas_canceladas_ignoradas} cancelada(s) ignorada(s)")
             
             # ====================================================================
@@ -560,36 +661,76 @@ def processar_tabela_emitidas(page, competencia, context):
             
             if total > 0:
                 # SEMPRE verifica a última linha para decidir se continua ou encerra
-                ultima_linha = linhas.nth(total - 1)
-                celulas_ultima = ultima_linha.locator("td")
+                # IMPORTANTE: Recria os locators para evitar problemas com elementos "stale"
+                logging.info(f"🔍 Verificando última linha (linha {total}) para decidir navegação...")
                 
                 try:
-                    competencia_ultima = celulas_ultima.nth(_get_col_index(page, "Competência")).inner_text().strip()
+                    # Recria os locators da tabela para garantir que estão atualizados
+                    linhas_atualizadas = page.locator("table tbody tr")
+                    ultima_linha = linhas_atualizadas.nth(total - 1)
+                    
+                    # Aguarda a última linha estar visível
+                    ultima_linha.wait_for(state='visible', timeout=5000)
+                    
+                    celulas_ultima = ultima_linha.locator("td")
+                    
+                    # Obtém o índice da coluna Competência (recria para garantir que está atualizado)
+                    col_index_competencia = _get_col_index(page, "Competência")
+                    logging.info(f"   📍 Índice da coluna Competência: {col_index_competencia}")
+                    
+                    # Lê a competência da última linha
+                    competencia_ultima_raw = celulas_ultima.nth(col_index_competencia).inner_text()
+                    competencia_ultima = competencia_ultima_raw.strip()
+                    
+                    logging.info(f"   📋 Competência da última linha (raw): '{competencia_ultima}'")
+                    logging.info(f"   🎯 Competência alvo (já normalizada no início): '{competencia_normalizada}'")
+                    
+                    # Normaliza apenas a competência da última linha (a alvo já está normalizada no início da função)
+                    competencia_ultima_normalizada = _normalizar_competencia(competencia_ultima)
+                    
+                    # Log detalhado (agora em INFO para visibilidade)
+                    logging.info(f"   🔄 Competência última linha normalizada: '{competencia_ultima_normalizada}'")
+                    logging.info(f"   ⚖️  Comparação: '{competencia_ultima_normalizada}' == '{competencia_normalizada}' ? {competencia_ultima_normalizada == competencia_normalizada}")
+                    logging.info(f"   📌 REGRA: Se última linha tem a competência '{competencia_normalizada}' → navega para próxima página")
+                    logging.info(f"   📌 REGRA: Se última linha NÃO tem a competência → encerra (passou da competência)")
+                    logging.info(f"   ⚠️  IMPORTANTE: Esta decisão é baseada APENAS na última linha, independente de quantas notas da competência foram encontradas na página!")
                     
                     # Se a última linha ainda tem a competência alvo, há mais notas na próxima página
                     # IMPORTANTE: Isso vale mesmo que todas as notas da página atual sejam canceladas
-                    if competencia_ultima == competencia:
-                        logging.info(f"📄 Última linha da página {pagina_atual} ainda tem competência {competencia}.")
-                        logging.info(f"   Navegando para página {pagina_atual + 1} para continuar buscando...")
+                    # IMPORTANTE: Não importa quantas linhas da competência existem na página, apenas a última linha importa!
+                    if competencia_ultima_normalizada == competencia_normalizada:
+                        logging.info(f"✅ MATCH! Última linha tem a mesma competência '{competencia_normalizada}'.")
+                        logging.info("   ➡️  Navegando para próxima página para continuar buscando...")
                         
                         try:
-                            pagina_atual = navegar_proxima_pagina(page, pagina_atual)
+                            logging.info("   🔍 Chamando função navegar_proxima_pagina()...")
+                            navegar_proxima_pagina(page)
+                            logging.info("   ⏳ Aguardando tabela carregar após navegação...")
+                            # Aguarda a tabela carregar após navegação
+                            page.wait_for_selector("table tbody tr", timeout=8000)
+                            # Pequeno delay para garantir que a tabela está estável
+                            page.wait_for_timeout(500)
+                            logging.info("   ✅ Navegação concluída com sucesso! Continuando processamento...")
                             # Continua o loop para processar próxima página
                             continue
                         except Exception as e:
                             # Não há próxima página disponível ou erro ao navegar
-                            logging.info(f"⚠️  Não foi possível navegar para próxima página: {e}")
-                            logging.info("   Encerrando busca em Emitidas (não há mais páginas).")
+                            logging.error(f"❌ ERRO ao navegar para próxima página: {e}")
+                            import traceback
+                            logging.error(f"   Traceback completo:\n{traceback.format_exc()}")
+                            logging.info("   ⚠️  Encerrando busca em Emitidas (não há mais páginas ou erro na navegação).")
                             break
                     else:
                         # A última linha não tem mais a competência alvo
                         # Isso significa que já passou de todas as notas da competência
-                        logging.info(f"✅ Última linha da página {pagina_atual} tem competência '{competencia_ultima}'.")
-                        logging.info(f"   Passou da competência alvo '{competencia}'. Encerrando busca em Emitidas.")
+                        logging.info(f"❌ SEM MATCH! Última linha tem competência '{competencia_ultima_normalizada}'.")
+                        logging.info(f"   🛑 Passou da competência alvo '{competencia_normalizada}'. Encerrando busca em Emitidas.")
                         break
                         
                 except Exception as e:
-                    logging.warning(f"⚠️  Erro ao verificar última linha da página {pagina_atual}: {e}")
+                    logging.error(f"❌ Erro ao verificar última linha: {e}")
+                    import traceback
+                    logging.error(f"   Traceback: {traceback.format_exc()}")
                     logging.warning("   Encerrando por segurança.")
                     break
             else:
@@ -608,6 +749,45 @@ def processar_tabela_emitidas(page, competencia, context):
     logging.info(f"   ✅ Notas válidas baixadas: {notas_validas_baixadas}")
     logging.info(f"   ⚠️  Notas canceladas ignoradas: {notas_canceladas_ignoradas}")
     logging.info("=" * 80)
+
+def _normalizar_competencia(competencia: str) -> str:
+    """
+    Normaliza a competência para comparação.
+    
+    Aceita formatos:
+    - "MM/AAAA" (ex: "10/2025")
+    - "MMAAAA" (ex: "102025")
+    - "MM-AAAA" (ex: "10-2025")
+    
+    Retorna sempre no formato "MM/AAAA"
+    """
+    if not competencia:
+        logging.warning("   ⚠️  Competência vazia recebida na normalização")
+        return ""
+    
+    competencia_original = competencia
+    competencia = competencia.strip()
+    
+    # Se já está no formato "MM/AAAA", retorna como está
+    if "/" in competencia:
+        logging.debug(f"   🔄 Normalização: '{competencia_original}' -> '{competencia}' (já tem /)")
+        return competencia
+    
+    # Se está no formato "MM-AAAA", converte para "MM/AAAA"
+    if "-" in competencia:
+        resultado = competencia.replace("-", "/")
+        logging.debug(f"   🔄 Normalização: '{competencia_original}' -> '{resultado}' (substituiu -)")
+        return resultado
+    
+    # Se está no formato "MMAAAA" (ex: "102025"), converte para "MM/AAAA"
+    if len(competencia) == 6 and competencia.isdigit():
+        resultado = f"{competencia[:2]}/{competencia[2:]}"
+        logging.debug(f"   🔄 Normalização: '{competencia_original}' -> '{resultado}' (formato MMMAAA)")
+        return resultado
+    
+    # Se não reconheceu o formato, retorna como está
+    logging.warning(f"   ⚠️  Formato de competência não reconhecido: '{competencia_original}', retornando como está")
+    return competencia
 
 def _get_col_index(page, header_text):
     headers = page.locator("table thead tr th")
