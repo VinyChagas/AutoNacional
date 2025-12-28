@@ -49,3 +49,5 @@ Backend/src/db/
 Backend/downloads/
 
 *.pyc
+
+Backend/db_mock.sqlite
