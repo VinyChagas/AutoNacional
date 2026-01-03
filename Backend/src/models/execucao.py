@@ -58,6 +58,7 @@ class ExecucaoInfo(BaseModel):
     url_atual: Optional[str] = None
     titulo: Optional[str] = None
     headless: bool = False  # Se True, executa navegador em modo headless
+    tipo_autenticacao: str = "certificado"  # "certificado" ou "credenciais"
     
     # Campos de resultado
     qtd_notas_emitidas: int = 0

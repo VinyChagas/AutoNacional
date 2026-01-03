@@ -38,6 +38,9 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     tipo: 'certificado' | 'empresa';
     dataVencimento?: string;
   }> = [];
+  
+  // Mapa para armazenar tipo de autenticação de cada empresa
+  tiposAutenticacao: Map<string | number, 'certificado' | 'credenciais'> = new Map();
   empresasSelecionadas: Set<string | number> = new Set();
   todosSelecionados = false;
   carregandoCertificadosDisponiveis = false;
@@ -249,19 +252,29 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       
       // Combina certificados e empresas em uma lista unificada
       this.empresasUnificadas = [
-        ...this.certificadosDisponiveis.map(cert => ({
-          id: `cert-${cert.id}`,
-          cnpj: cert.cnpj,
-          nomeEmpresa: cert.empresa,
-          tipo: 'certificado' as const,
-          dataVencimento: cert.data_vencimento
-        })),
-        ...this.empresasDisponiveis.map(emp => ({
-          id: `emp-${emp.id}`,
-          cnpj: emp.cnpj,
-          nomeEmpresa: emp.razao_social,
-          tipo: 'empresa' as const
-        }))
+        ...this.certificadosDisponiveis.map(cert => {
+          const id = `cert-${cert.id}`;
+          // Armazena tipo de autenticação para certificados
+          this.tiposAutenticacao.set(id, 'certificado');
+          return {
+            id: id,
+            cnpj: cert.cnpj,
+            nomeEmpresa: cert.empresa,
+            tipo: 'certificado' as const,
+            dataVencimento: cert.data_vencimento
+          };
+        }),
+        ...this.empresasDisponiveis.map(emp => {
+          const id = `emp-${emp.id}`;
+          // Armazena tipo de autenticação para empresas (credenciais)
+          this.tiposAutenticacao.set(id, 'credenciais');
+          return {
+            id: id,
+            cnpj: emp.cnpj,
+            nomeEmpresa: emp.razao_social,
+            tipo: 'empresa' as const
+          };
+        })
       ];
       
       // Inicializa lista filtrada com todas as empresas unificadas
@@ -384,6 +397,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     // Cria execuções pendentes (sem iniciar ainda)
     this.execucoes = empresasSelecionadas.map(emp => {
       const cnpjLimpo = emp.cnpj.replace(/[^\d]/g, '');
+      const tipoAuth = this.tiposAutenticacao.get(emp.id) || (emp.tipo === 'certificado' ? 'certificado' : 'credenciais');
       return {
         id: `pendente-${emp.id}-${cnpjLimpo}`,
         empresa_id: cnpjLimpo, // Usa CNPJ como ID temporário
@@ -394,7 +408,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         logs: [],
         mensagem: 'Aguardando início...',
         dataInicio: new Date(),
-        mostrarLogs: false
+        mostrarLogs: false,
+        tipoAutenticacao: tipoAuth
       };
     });
 
@@ -456,7 +471,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       .filter(exec => exec.status === 'fila' && exec.mensagem === 'Aguardando início...')
       .map(exec => ({
         empresa_id: exec.empresa_id || exec.cnpj,
-        cnpj: exec.cnpj
+        cnpj: exec.cnpj,
+        tipo_autenticacao: exec.tipoAutenticacao || 'certificado'
       }));
 
     if (empresas.length === 0) {
@@ -505,7 +521,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           logs: exec.logs || [],
           mensagem: exec.mensagem || 'Aguardando execução...',
           dataInicio: exec.data_inicio ? new Date(exec.data_inicio) : new Date(),
-          mostrarLogs: false
+          mostrarLogs: false,
+          tipoAutenticacao: execExistente?.tipoAutenticacao || 'certificado' // Preserva tipo de autenticação
         };
       });
 

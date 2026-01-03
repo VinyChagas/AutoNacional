@@ -34,6 +34,7 @@ class EmpresaExecucaoRequest(BaseModel):
     """Modelo para requisição de execução de uma empresa."""
     empresa_id: str
     cnpj: str
+    tipo_autenticacao: Optional[str] = "certificado"  # "certificado" ou "credenciais"
 
 
 class MultiplasExecucoesRequest(BaseModel):
@@ -191,7 +192,7 @@ async def adicionar_multiplas_execucoes(
                     logger.warning(f"Erro ao buscar empresa por CNPJ {cnpj_limpo}: {e}. Usando empresa_id fornecido.")
                     # Continua com o empresa_id fornecido
                 
-                logger.info(f"Adicionando execução: empresa_id={empresa_id_real}, cnpj={cnpj_limpo}")
+                logger.info(f"Adicionando execução: empresa_id={empresa_id_real}, cnpj={cnpj_limpo}, tipo_autenticacao={empresa_req.tipo_autenticacao}")
                 
                 # Adiciona à fila
                 execucao_id = await execution_service.adicionar_execucao(
@@ -200,7 +201,8 @@ async def adicionar_multiplas_execucoes(
                     data_inicio=request.dataInicio,
                     data_fim=request.dataFim,
                     tipo=request.tipo,
-                    headless=request.headless
+                    headless=request.headless,
+                    tipo_autenticacao=empresa_req.tipo_autenticacao or "certificado"
                 )
                 
                 # Obtém status inicial

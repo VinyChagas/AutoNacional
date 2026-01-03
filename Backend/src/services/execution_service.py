@@ -135,7 +135,8 @@ class ExecutionService:
         data_inicio: str,
         data_fim: str,
         tipo: str = "ambas",
-        headless: bool = None
+        headless: bool = None,
+        tipo_autenticacao: str = "certificado"
     ) -> str:
         """
         Adiciona uma execução à fila assíncrona.
@@ -147,6 +148,7 @@ class ExecutionService:
             data_fim: Data fim no formato DD/MM/YYYY (ex: "31/12/2025")
             tipo: Tipo de notas ("emitidas", "recebidas" ou "ambas")
             headless: Se True, executa navegador em modo headless. Se None, usa config padrão.
+            tipo_autenticacao: Tipo de autenticação ("certificado" ou "credenciais")
             
         Returns:
             ID da execução (mesmo que empresa_id para rastreamento)
@@ -193,7 +195,8 @@ class ExecutionService:
                     periodo_inicio=data_inicio,
                     periodo_fim=data_fim,
                     tipo=tipo,
-                    headless=headless
+                    headless=headless,
+                    tipo_autenticacao=tipo_autenticacao
                 )
                 
                 # Cria registro no banco de dados para persistir o estado
@@ -468,16 +471,22 @@ class ExecutionService:
             
             self._adicionar_log(execucao, f"Etapa 1: Autenticação para CNPJ {cnpj_str}")
             
-            # Importa funções do playwright async
+            # Importa funções do playwright async baseado no tipo de autenticação
+            tipo_auth = execucao.tipo_autenticacao or "certificado"
+            
             try:
-                from playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
-                self._adicionar_log(execucao, "Funções do Playwright Async importadas")
+                if tipo_auth == "credenciais":
+                    from playwright_nfse_credenciais import abrir_dashboard_nfse_com_credenciais as abrir_dashboard_nfse, NFSeAutenticacaoError
+                    self._adicionar_log(execucao, "Funções do Playwright Async (credenciais) importadas")
+                else:
+                    from playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
+                    self._adicionar_log(execucao, "Funções do Playwright Async (certificado) importadas")
             except Exception as e:
                 error_msg = f"Erro ao importar Playwright: {str(e)}"
                 self._adicionar_log(execucao, f"❌ {error_msg}")
                 raise ImportError(error_msg)
             
-            self._adicionar_log(execucao, "Chamando abrir_dashboard_nfse (async)...")
+            self._adicionar_log(execucao, f"Chamando autenticação via {tipo_auth} (async)...")
             
             # Obtém configurações do banco de dados
             configuracoes = await self._obter_configuracoes()
@@ -510,7 +519,7 @@ class ExecutionService:
             
             try:
                 # AGORA USA AWAIT - função é async
-                logger.info(f"[{execucao.empresa_id}] Chamando abrir_dashboard_nfse com CNPJ: {cnpj_str}")
+                logger.info(f"[{execucao.empresa_id}] Chamando autenticação via {tipo_auth} com CNPJ: {cnpj_str}")
                 logger.info(f"[{execucao.empresa_id}] Parâmetros: headless={headless}, timeout={timeout_ms}, viewport={viewport_config}")
                 
                 resultado_auth = await abrir_dashboard_nfse(
@@ -519,8 +528,8 @@ class ExecutionService:
                     timeout=timeout_ms,
                     viewport=viewport_config
                 )
-                logger.info(f"[{execucao.empresa_id}] abrir_dashboard_nfse retornou: sucesso={resultado_auth.get('sucesso')}")
-                self._adicionar_log(execucao, "abrir_dashboard_nfse concluído")
+                logger.info(f"[{execucao.empresa_id}] Autenticação via {tipo_auth} retornou: sucesso={resultado_auth.get('sucesso')}")
+                self._adicionar_log(execucao, f"Autenticação via {tipo_auth} concluída")
             except Exception as e:
                 import traceback
                 error_type = type(e).__name__

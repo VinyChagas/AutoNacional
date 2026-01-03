@@ -176,14 +176,23 @@
         <div class="grid grid-cols-6 gap-3">
           @for (execucao of emFoco; track execucao.id) {
             <div
-              class="px-3 py-2 rounded-lg border text-center text-sm font-semibold"
+              class="px-3 py-2 rounded-lg border text-center text-sm font-semibold relative"
               [ngClass]="{
                 'border-[#7EBFB3]/50 bg-[#A9D9D4]/20': execucao.status === 'fila',
                 'border-[#8BCB70]/50 bg-[#8BCB70]/20': execucao.status === 'executando'
               }"
-              [title]="execucao.nomeEmpresa || formatarCNPJ(execucao.cnpj)"
+              [title]="(execucao.nomeEmpresa || formatarCNPJ(execucao.cnpj)) + (execucao.tipoAutenticacao ? ' - ' + (execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais') : '')"
             >
               {{ formatarCNPJ(execucao.cnpj) }}
+              @if (execucao.tipoAutenticacao) {
+                <span class="absolute top-1 right-1 w-2 h-2 rounded-full"
+                  [ngClass]="{
+                    'bg-blue-500': execucao.tipoAutenticacao === 'certificado',
+                    'bg-green-500': execucao.tipoAutenticacao === 'credenciais'
+                  }"
+                  [title]="execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais'">
+                </span>
+              }
             </div>
           }
         </div>
@@ -206,7 +215,18 @@
           <div class="space-y-2 max-h-[600px] overflow-y-auto">
             @for (execucao of colunaFila; track execucao.id) {
               <div class="p-3 rounded-lg border border-[#7EBFB3]/30 bg-[#A9D9D4]/10">
-                <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                <div class="flex items-center justify-between">
+                  <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                  @if (execucao.tipoAutenticacao) {
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                      [ngClass]="{
+                        'bg-blue-100 text-blue-800': execucao.tipoAutenticacao === 'certificado',
+                        'bg-green-100 text-green-800': execucao.tipoAutenticacao === 'credenciais'
+                      }">
+                      {{ execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais' }}
+                    </span>
+                  }
+                </div>
                 @if (execucao.nomeEmpresa) {
                   <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
                 }
@@ -226,7 +246,18 @@
           <div class="space-y-2 max-h-[600px] overflow-y-auto">
             @for (execucao of colunaExecutando; track execucao.id) {
               <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/20">
-                <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                <div class="flex items-center justify-between">
+                  <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                  @if (execucao.tipoAutenticacao) {
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                      [ngClass]="{
+                        'bg-blue-100 text-blue-800': execucao.tipoAutenticacao === 'certificado',
+                        'bg-green-100 text-green-800': execucao.tipoAutenticacao === 'credenciais'
+                      }">
+                      {{ execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais' }}
+                    </span>
+                  }
+                </div>
                 @if (execucao.nomeEmpresa) {
                   <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
                 }
@@ -253,7 +284,18 @@
           <div class="space-y-2 max-h-[600px] overflow-y-auto">
             @for (execucao of colunaFinalizado; track execucao.id) {
               <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/10">
-                <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                <div class="flex items-center justify-between">
+                  <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
+                  @if (execucao.tipoAutenticacao) {
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                      [ngClass]="{
+                        'bg-blue-100 text-blue-800': execucao.tipoAutenticacao === 'certificado',
+                        'bg-green-100 text-green-800': execucao.tipoAutenticacao === 'credenciais'
+                      }">
+                      {{ execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais' }}
+                    </span>
+                  }
+                </div>
                 @if (execucao.nomeEmpresa) {
                   <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
                 }

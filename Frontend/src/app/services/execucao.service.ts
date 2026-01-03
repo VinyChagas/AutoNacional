@@ -27,6 +27,7 @@ export interface ExecucaoEmpresa {
   dataFim?: Date;
   erro?: string;
   mostrarLogs?: boolean; // Propriedade para controlar exibição de logs
+  tipoAutenticacao?: 'certificado' | 'credenciais'; // Tipo de autenticação usado
 }
 
 // Mantém compatibilidade com código antigo
@@ -81,6 +82,7 @@ export interface MultiplasExecucoesRequest {
   empresas: Array<{
     empresa_id: string;
     cnpj: string;
+    tipo_autenticacao?: string; // "certificado" ou "credenciais"
   }>;
   dataInicio: string;
   dataFim: string;
