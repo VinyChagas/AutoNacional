@@ -12,6 +12,7 @@ from ..db.crud_empresas import (
     obter_empresa_por_id,
     obter_empresa_por_cnpj,
     listar_empresas,
+    listar_empresas_por_contabilidade,
     atualizar_empresa,
     deletar_empresa,
     verificar_cnpj_tem_certificado,
@@ -379,6 +380,41 @@ def listar_empresas_com_contabilidades_orfaos_endpoint(
         return resultado['empresas_orfaos']
     except Exception as e:
         logger.error(f"Erro ao listar empresas com contabilidades órfãs: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao listar empresas: {str(e)}"
+        )
+
+
+@router.get(
+    "/contabilidade/{contabilidade_id}",
+    response_model=List[EmpresaResponse],
+    summary="Listar empresas por contabilidade"
+)
+def listar_empresas_por_contabilidade_endpoint(
+    contabilidade_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Lista empresas vinculadas a uma contabilidade específica.
+    
+    Args:
+        contabilidade_id: ID da contabilidade
+        skip: Número de registros para pular (paginação)
+        limit: Número máximo de registros para retornar
+        db: Sessão do banco de dados
+        
+    Returns:
+        Lista de empresas vinculadas à contabilidade
+    """
+    try:
+        empresas_orm = listar_empresas_por_contabilidade(db, contabilidade_id, skip=skip, limit=limit)
+        empresas = [EmpresaResponse.from_orm_with_id_string(e) for e in empresas_orm]
+        return empresas
+    except Exception as e:
+        logger.error(f"Erro ao listar empresas por contabilidade: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao listar empresas: {str(e)}"

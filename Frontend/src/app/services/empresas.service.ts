@@ -18,6 +18,12 @@ export class EmpresasService {
     );
   }
 
+  listarPorContabilidade(contabilidadeId: number): Observable<Empresa[]> {
+    return this.http.get<Empresa[]>(`${this.baseUrl}/empresas/contabilidade/${contabilidadeId}`).pipe(
+      catchError(this.handleError)
+    );
+  }
+
   obterPorId(id: string): Observable<Empresa> {
     return this.http.get<Empresa>(`${this.baseUrl}/empresas/${id}`).pipe(
       catchError(this.handleError)

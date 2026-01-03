@@ -331,9 +331,9 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <p class="mt-4 text-[#1E2615]">Carregando certificados...</p>
+              <p class="mt-4 text-[#1E2615]">Carregando empresas validadas...</p>
             </div>
-          } @else if (certificadosDisponiveis.length === 0) {
+          } @else if (empresasUnificadas.length === 0) {
             <div class="text-center py-8">
               <svg class="w-16 h-16 mx-auto text-[#1E2615]/40 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -369,9 +369,9 @@
               </div>
 
               <!-- Informação de resultados filtrados -->
-              @if (buscaEmpresa && buscaEmpresa.trim() !== '' && certificadosFiltrados.length !== certificadosDisponiveis.length) {
+              @if (buscaEmpresa && buscaEmpresa.trim() !== '' && empresasUnificadasFiltradas.length !== empresasUnificadas.length) {
                 <div class="text-sm text-[#1E2615]/70 px-2">
-                  Mostrando {{ certificadosFiltrados.length }} de {{ certificadosDisponiveis.length }} empresas
+                  Mostrando {{ empresasUnificadasFiltradas.length }} de {{ empresasUnificadas.length }} empresas
                 </div>
               }
 
@@ -385,40 +385,52 @@
                   class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
                 />
                 <label for="selecionarTodos" class="text-sm font-semibold text-[#0C0D0A] cursor-pointer">
-                  Selecionar todos os filtrados ({{ certificadosSelecionados.size }} de {{ certificadosDisponiveis.length }} selecionados no total)
+                  Selecionar todos os filtrados ({{ empresasSelecionadas.size }} de {{ empresasUnificadas.length }} selecionados no total)
                 </label>
               </div>
 
-              <!-- Lista de Certificados -->
+              <!-- Lista de Empresas Unificadas -->
               <div class="max-h-[400px] overflow-y-auto space-y-2">
-                @if (certificadosFiltrados.length === 0) {
+                @if (empresasUnificadasFiltradas.length === 0) {
                   <div class="text-center py-8 text-[#1E2615]/60">
                     <p>Nenhuma empresa encontrada com o termo "{{ buscaEmpresa }}"</p>
                   </div>
                 } @else {
-                  @for (certificado of certificadosFiltrados; track certificado.id) {
+                  @for (empresa of empresasUnificadasFiltradas; track empresa.id) {
                   <div class="flex items-center gap-3 p-3 rounded-lg border border-[#7EBFB3]/30 bg-white/50 hover:bg-[#A9D9D4]/20 transition-colors">
                     <input
                       type="checkbox"
-                      [id]="'cert-' + certificado.id"
-                      [checked]="estaSelecionado(certificado.id)"
-                      (change)="toggleSelecionarCertificado(certificado.id)"
+                      [id]="'emp-' + empresa.id"
+                      [checked]="estaSelecionado(empresa.id)"
+                      (change)="toggleSelecionarEmpresa(empresa.id)"
                       class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
                     />
                     <div class="flex-1 grid grid-cols-3 gap-4 text-sm">
                       <div>
                         <span class="font-semibold text-[#0C0D0A]">CNPJ:</span>
-                        <span class="ml-2 text-[#1E2615]">{{ formatarCNPJ(certificado.cnpj) }}</span>
+                        <span class="ml-2 text-[#1E2615]">{{ formatarCNPJ(empresa.cnpj) }}</span>
                       </div>
                       <div>
                         <span class="font-semibold text-[#0C0D0A]">Empresa:</span>
-                        <span class="ml-2 text-[#1E2615]">{{ certificado.empresa }}</span>
+                        <span class="ml-2 text-[#1E2615]">{{ empresa.nomeEmpresa }}</span>
                       </div>
                       <div>
-                        <span class="font-semibold text-[#0C0D0A]">Validade:</span>
+                        <span class="font-semibold text-[#0C0D0A]">Tipo:</span>
                         <span class="ml-2 text-[#1E2615]">
-                          {{ formatarDataVencimento(certificado.data_vencimento) }}
-                          ({{ calcularDiasAteVencimento(certificado.data_vencimento) }} dias)
+                          @if (empresa.tipo === 'certificado') {
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
+                              Certificado
+                            </span>
+                            @if (empresa.dataVencimento) {
+                              <span class="ml-2 text-xs text-[#1E2615]">
+                                ({{ formatarDataVencimento(empresa.dataVencimento) }} - {{ calcularDiasAteVencimento(empresa.dataVencimento) }} dias)
+                              </span>
+                            }
+                          } @else {
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
+                              Credenciais
+                            </span>
+                          }
                         </span>
                       </div>
                     </div>
@@ -438,13 +450,13 @@
               </button>
               <button
                 (click)="confirmarSelecaoCertificados()"
-                [disabled]="certificadosSelecionados.size === 0"
+                [disabled]="empresasSelecionadas.size === 0"
                 class="btn-futuristic px-6 py-3 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
               >
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                 </svg>
-                Carregar para execução ({{ certificadosSelecionados.size }})
+                Carregar para execução ({{ empresasSelecionadas.size }})
               </button>
             </div>
           }

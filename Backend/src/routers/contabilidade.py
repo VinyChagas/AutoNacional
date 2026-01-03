@@ -55,6 +55,76 @@ def _get_certificados_count(contabilidade_id: int) -> int:
     finally:
         db.close()
 
+
+def _get_empresas_count_for_ids(contabilidade_ids: List[int]) -> Dict[int, int]:
+    """
+    Conta quantas empresas existem vinculadas a cada contabilidade.
+
+    Usa a tabela SQLAlchemy `empresas` (models.Empresa), que é onde as
+    empresas são persistidas quando cadastradas na tela de credenciais.
+    """
+    if not contabilidade_ids:
+        return {}
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(models.Empresa.contabilidade_id, func.count(models.Empresa.id))
+            .filter(models.Empresa.contabilidade_id.in_(contabilidade_ids))
+            .group_by(models.Empresa.contabilidade_id)
+            .all()
+        )
+        return {cont_id: int(qtd or 0) for cont_id, qtd in rows if cont_id is not None}
+    finally:
+        db.close()
+
+
+def _get_empresas_count(contabilidade_id: int) -> int:
+    """Conta empresas para uma única contabilidade."""
+    if not contabilidade_id:
+        return 0
+
+    db = SessionLocal()
+    try:
+        qtd = (
+            db.query(func.count(models.Empresa.id))
+            .filter(models.Empresa.contabilidade_id == contabilidade_id)
+            .scalar()
+        )
+        return int(qtd or 0)
+    finally:
+        db.close()
+
+
+def _get_total_empresas_vinculadas(contabilidade_id: int) -> int:
+    """
+    Retorna o total de empresas vinculadas a uma contabilidade.
+    Soma certificados + empresas cadastradas na tela de credenciais.
+    """
+    certificados_count = _get_certificados_count(contabilidade_id)
+    empresas_count = _get_empresas_count(contabilidade_id)
+    return certificados_count + empresas_count
+
+
+def _get_total_empresas_vinculadas_for_ids(contabilidade_ids: List[int]) -> Dict[int, int]:
+    """
+    Retorna o total de empresas vinculadas para cada contabilidade.
+    Soma certificados + empresas cadastradas na tela de credenciais.
+    """
+    certificados_counts = _get_certificados_count_for_ids(contabilidade_ids)
+    empresas_counts = _get_empresas_count_for_ids(contabilidade_ids)
+    
+    # Combina os dois dicionários somando os valores
+    total_counts: Dict[int, int] = {}
+    all_ids = set(certificados_counts.keys()) | set(empresas_counts.keys())
+    
+    for cont_id in all_ids:
+        cert_count = certificados_counts.get(cont_id, 0)
+        emp_count = empresas_counts.get(cont_id, 0)
+        total_counts[cont_id] = cert_count + emp_count
+    
+    return total_counts
+
 def _row_to_dict(row, cursor):
     """Converte uma row para dict, compatível com SQLite e PostgreSQL."""
     if isinstance(row, dict):
@@ -110,7 +180,7 @@ def criar_contabilidade(body: ContabilidadeCreate):
             raise HTTPException(status_code=500, detail="Erro ao buscar contabilidade recém-criada")
         
         row_dict = _row_to_dict(row, cursor)
-        row_dict["certificados_vinculados"] = _get_certificados_count(contabilidade_id)
+        row_dict["certificados_vinculados"] = _get_total_empresas_vinculadas(contabilidade_id)
         return ContabilidadeResponse(**row_dict)
     except Exception as e:
         import logging
@@ -144,13 +214,13 @@ def listar_contabilidades(skip: int = Query(0, ge=0), limit: int = Query(100, le
                 contabilidade_ids.append(cont_id)
             contabilidades_dicts.append(row_dict)
 
-        # Busca contagem de certificados no banco de certificados (certificados.db)
-        certificados_por_contabilidade = _get_certificados_count_for_ids(contabilidade_ids)
+        # Busca contagem total (certificados + empresas) no banco de certificados (certificados.db)
+        total_por_contabilidade = _get_total_empresas_vinculadas_for_ids(contabilidade_ids)
 
         contabilidades = []
         for row_dict in contabilidades_dicts:
             cont_id = row_dict.get("id")
-            row_dict["certificados_vinculados"] = certificados_por_contabilidade.get(cont_id, 0)
+            row_dict["certificados_vinculados"] = total_por_contabilidade.get(cont_id, 0)
             contabilidades.append(ContabilidadeResponse(**row_dict))
         
         return ContabilidadeListResponse(
@@ -182,7 +252,7 @@ def get_contabilidade(contabilidade_id: int = Path(..., ge=1)):
             raise HTTPException(status_code=404, detail="Contabilidade não encontrada")
         
         row_dict = _row_to_dict(row, cursor)
-        row_dict["certificados_vinculados"] = _get_certificados_count(contabilidade_id)
+        row_dict["certificados_vinculados"] = _get_total_empresas_vinculadas(contabilidade_id)
         return ContabilidadeResponse(**row_dict)
     except HTTPException:
         raise
@@ -225,7 +295,7 @@ def atualizar_contabilidade(contabilidade_id: int, body: ContabilidadeUpdate):
         if not row:
             raise HTTPException(status_code=404, detail="Contabilidade não encontrada após atualização")
         row_dict = _row_to_dict(row, cursor)
-        row_dict["certificados_vinculados"] = _get_certificados_count(contabilidade_id)
+        row_dict["certificados_vinculados"] = _get_total_empresas_vinculadas(contabilidade_id)
         return ContabilidadeResponse(**row_dict)
     except HTTPException:
         raise
@@ -247,7 +317,7 @@ def excluir_contabilidade(contabilidade_id: int):
             raise HTTPException(status_code=404, detail="Contabilidade não encontrada")
         
         # Busca apenas para log/consistência – atualmente não bloqueia a exclusão
-        certificados_vinculados = _get_certificados_count(contabilidade_id)
+        certificados_vinculados = _get_total_empresas_vinculadas(contabilidade_id)
         
         # Regra: exclusão da contabilidade não apaga certificados na base de certificados,
         # apenas os deixa "órfãos" em relação à contabilidade. Caso queira, podemos

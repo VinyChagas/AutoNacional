@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { CertificadoService, Certificado, CertificadoResponse } from '../../services/certificado.service';
 import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest } from '../../services/execucao.service';
 import { ContabilidadeService } from '../../services/contabilidade.service';
+import { EmpresasService } from '../../services/empresas.service';
+import { Empresa } from '../../models/empresas.model';
 import { Contabilidade } from '../../models/contabilidade.model';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 
@@ -24,10 +26,19 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   contabilidadeSelecionada: number | null = null;
   carregandoContabilidades = false;
   
-  // Modal de seleção de certificados
+  // Modal de seleção de certificados e empresas
   modalSelecaoAberto = false;
   certificadosDisponiveis: CertificadoResponse[] = [];
-  certificadosSelecionados: Set<number> = new Set();
+  empresasDisponiveis: Empresa[] = [];
+  // Interface unificada para exibição no modal
+  empresasUnificadas: Array<{
+    id: string | number;
+    cnpj: string;
+    nomeEmpresa: string;
+    tipo: 'certificado' | 'empresa';
+    dataVencimento?: string;
+  }> = [];
+  empresasSelecionadas: Set<string | number> = new Set();
   todosSelecionados = false;
   carregandoCertificadosDisponiveis = false;
   buscaEmpresa: string = ''; // Campo de busca por nome da empresa
@@ -74,6 +85,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     private certificadoService: CertificadoService,
     private execucaoService: ExecucaoService,
     private contabilidadeService: ContabilidadeService,
+    private empresasService: EmpresasService,
     private cdr: ChangeDetectorRef
   ) {}
 
@@ -208,33 +220,58 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.carregandoCertificadosDisponiveis = true;
     this.modalSelecaoAberto = true;
     // Não limpa seleções ao abrir o modal - mantém seleções anteriores se houver
-    // this.certificadosSelecionados.clear();
+    // this.empresasSelecionadas.clear();
     this.buscaEmpresa = ''; // Limpa apenas a busca
 
     try {
-      const response = await firstValueFrom(
-        this.certificadoService.listarCertificadosPorContabilidade(this.contabilidadeSelecionada!)
-      );
+      // Busca certificados e empresas em paralelo
+      const [certificadosResponse, empresas] = await Promise.all([
+        firstValueFrom(
+          this.certificadoService.listarCertificadosPorContabilidade(this.contabilidadeSelecionada!)
+        ),
+        firstValueFrom(
+          this.empresasService.listarPorContabilidade(this.contabilidadeSelecionada!)
+        )
+      ]);
       
       // Filtra apenas certificados validados (não vencidos)
       const hoje = new Date();
       hoje.setHours(0, 0, 0, 0);
       
-      this.certificadosDisponiveis = response.certificados.filter(cert => {
+      this.certificadosDisponiveis = certificadosResponse.certificados.filter(cert => {
         if (!cert.data_vencimento) return false;
         const dataVencimento = new Date(cert.data_vencimento);
         dataVencimento.setHours(0, 0, 0, 0);
         return dataVencimento >= hoje;
       });
       
-      // Inicializa lista filtrada com todos os certificados
+      this.empresasDisponiveis = empresas;
+      
+      // Combina certificados e empresas em uma lista unificada
+      this.empresasUnificadas = [
+        ...this.certificadosDisponiveis.map(cert => ({
+          id: `cert-${cert.id}`,
+          cnpj: cert.cnpj,
+          nomeEmpresa: cert.empresa,
+          tipo: 'certificado' as const,
+          dataVencimento: cert.data_vencimento
+        })),
+        ...this.empresasDisponiveis.map(emp => ({
+          id: `emp-${emp.id}`,
+          cnpj: emp.cnpj,
+          nomeEmpresa: emp.razao_social,
+          tipo: 'empresa' as const
+        }))
+      ];
+      
+      // Inicializa lista filtrada com todas as empresas unificadas
       this.filtrarCertificados();
       
       // Atualiza estado de "todos selecionados" após carregar
       this.atualizarEstadoTodosSelecionados();
     } catch (error: any) {
-      console.error('Erro ao carregar certificados:', error);
-      alert('Erro ao carregar certificados validados. Verifique se o backend está rodando.');
+      console.error('Erro ao carregar empresas validadas:', error);
+      alert('Erro ao carregar empresas validadas. Verifique se o backend está rodando.');
       this.modalSelecaoAberto = false;
     } finally {
       this.carregandoCertificadosDisponiveis = false;
@@ -250,13 +287,19 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.atualizarEstadoTodosSelecionados();
   }
 
-  // Lista filtrada de certificados (atualizada em tempo real)
-  certificadosFiltrados: CertificadoResponse[] = [];
+  // Lista filtrada de empresas unificadas (atualizada em tempo real)
+  empresasUnificadasFiltradas: Array<{
+    id: string | number;
+    cnpj: string;
+    nomeEmpresa: string;
+    tipo: 'certificado' | 'empresa';
+    dataVencimento?: string;
+  }> = [];
 
-  // Método para filtrar certificados
+  // Método para filtrar empresas unificadas
   filtrarCertificados() {
     if (!this.buscaEmpresa || this.buscaEmpresa.trim() === '') {
-      this.certificadosFiltrados = [...this.certificadosDisponiveis];
+      this.empresasUnificadasFiltradas = [...this.empresasUnificadas];
       this.cdr.markForCheck();
       return;
     }
@@ -264,9 +307,9 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     const termoBusca = this.buscaEmpresa.toLowerCase().trim();
     const termoBuscaLimpo = termoBusca.replace(/[^\d]/g, '');
     
-    this.certificadosFiltrados = this.certificadosDisponiveis.filter(cert => {
-      const nomeEmpresa = (cert.empresa || '').toLowerCase();
-      const cnpjLimpo = (cert.cnpj || '').replace(/[^\d]/g, '');
+    this.empresasUnificadasFiltradas = this.empresasUnificadas.filter(emp => {
+      const nomeEmpresa = (emp.nomeEmpresa || '').toLowerCase();
+      const cnpjLimpo = (emp.cnpj || '').replace(/[^\d]/g, '');
       
       // Busca no nome da empresa
       if (nomeEmpresa.includes(termoBusca)) {
@@ -285,68 +328,67 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   atualizarEstadoTodosSelecionados() {
-    if (this.certificadosFiltrados.length === 0) {
+    if (this.empresasUnificadasFiltradas.length === 0) {
       this.todosSelecionados = false;
       return;
     }
-    // Verifica se todos os certificados FILTRADOS estão selecionados
-    this.todosSelecionados = this.certificadosFiltrados.every(cert => 
-      this.certificadosSelecionados.has(cert.id)
+    // Verifica se todas as empresas FILTRADAS estão selecionadas
+    this.todosSelecionados = this.empresasUnificadasFiltradas.every(emp => 
+      this.empresasSelecionadas.has(emp.id)
     );
   }
 
   toggleSelecionarTodos() {
     if (this.todosSelecionados) {
-      // Desmarca apenas os certificados filtrados
-      this.certificadosFiltrados.forEach(cert => {
-        this.certificadosSelecionados.delete(cert.id);
+      // Desmarca apenas as empresas filtradas
+      this.empresasUnificadasFiltradas.forEach(emp => {
+        this.empresasSelecionadas.delete(emp.id);
       });
     } else {
-      // Marca apenas os certificados filtrados
-      this.certificadosFiltrados.forEach(cert => {
-        this.certificadosSelecionados.add(cert.id);
+      // Marca apenas as empresas filtradas
+      this.empresasUnificadasFiltradas.forEach(emp => {
+        this.empresasSelecionadas.add(emp.id);
       });
     }
     this.atualizarEstadoTodosSelecionados();
   }
 
-  toggleSelecionarCertificado(certificadoId: number) {
-    if (this.certificadosSelecionados.has(certificadoId)) {
-      this.certificadosSelecionados.delete(certificadoId);
+  toggleSelecionarEmpresa(empresaId: string | number) {
+    if (this.empresasSelecionadas.has(empresaId)) {
+      this.empresasSelecionadas.delete(empresaId);
     } else {
-      this.certificadosSelecionados.add(certificadoId);
+      this.empresasSelecionadas.add(empresaId);
     }
     // Atualiza estado de "todos selecionados" baseado nos filtrados
     this.atualizarEstadoTodosSelecionados();
   }
 
-
-  estaSelecionado(certificadoId: number): boolean {
-    return this.certificadosSelecionados.has(certificadoId);
+  estaSelecionado(empresaId: string | number): boolean {
+    return this.empresasSelecionadas.has(empresaId);
   }
 
   async confirmarSelecaoCertificados() {
-    if (this.certificadosSelecionados.size === 0) {
-      alert('Por favor, selecione pelo menos um certificado.');
+    if (this.empresasSelecionadas.size === 0) {
+      alert('Por favor, selecione pelo menos uma empresa.');
       return;
     }
 
     // Fecha o modal
     this.modalSelecaoAberto = false;
 
-    // Converte certificados selecionados para o formato esperado
-    const certificadosSelecionados = this.certificadosDisponiveis.filter(cert =>
-      this.certificadosSelecionados.has(cert.id)
+    // Converte empresas selecionadas para o formato esperado
+    const empresasSelecionadas = this.empresasUnificadas.filter(emp =>
+      this.empresasSelecionadas.has(emp.id)
     );
 
     // Cria execuções pendentes (sem iniciar ainda)
-    this.execucoes = certificadosSelecionados.map(cert => {
-      const cnpjLimpo = cert.cnpj.replace(/[^\d]/g, '');
+    this.execucoes = empresasSelecionadas.map(emp => {
+      const cnpjLimpo = emp.cnpj.replace(/[^\d]/g, '');
       return {
-        id: `pendente-${cert.id}-${cnpjLimpo}`,
+        id: `pendente-${emp.id}-${cnpjLimpo}`,
         empresa_id: cnpjLimpo, // Usa CNPJ como ID temporário
         cnpj: cnpjLimpo,
-        nomeEmpresa: cert.empresa,
+        nomeEmpresa: emp.nomeEmpresa,
         status: 'fila' as StatusExecucao,
         progresso: 0,
         logs: [],
@@ -357,7 +399,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     });
 
     // Limpa seleções
-    this.certificadosSelecionados.clear();
+    this.empresasSelecionadas.clear();
     this.todosSelecionados = false;
   }
 
