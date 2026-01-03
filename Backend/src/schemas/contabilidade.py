@@ -30,7 +30,7 @@ class ContabilidadeResponse(ContabilidadeBase):
     certificados_vinculados: Optional[int] = 0
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ContabilidadeListResponse(BaseModel):
     contabilidades: list[ContabilidadeResponse]

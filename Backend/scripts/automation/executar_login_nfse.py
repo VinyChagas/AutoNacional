@@ -8,6 +8,7 @@ via linha de comando usando Playwright com certificado A1.
 
 import sys
 import os
+import asyncio
 
 # Adiciona src ao path
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +24,7 @@ load_dotenv()
 
 from playwright_nfse import abrir_dashboard_nfse, NFSeAutenticacaoError
 
-def main():
+async def main():
     """Função principal que executa o login."""
     # Pega CNPJ dos argumentos
     cnpj = None
@@ -58,7 +59,7 @@ def main():
     print()
     
     try:
-        resultado = abrir_dashboard_nfse(
+        resultado = await abrir_dashboard_nfse(
             cnpj=cnpj_limpo,
             headless=headless,
             timeout=30000
@@ -117,5 +118,5 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
 
