@@ -36,8 +36,17 @@ export class CredenciaisService {
     );
   }
 
-  validarCredenciais(empresaId: string, cnpj: string): Observable<any> {
-    return this.http.post<any>(`${this.baseUrl}/credenciais/empresa/${empresaId}/validar`, { cnpj }).pipe(
+  validarCredenciais(empresaId: string, cnpj: string, headless: boolean = false): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/credenciais/empresa/${empresaId}/validar?headless=${headless}&cnpj=${cnpj}`, {}).pipe(
+      catchError(this.handleError)
+    );
+  }
+
+  validarCredenciaisLote(empresaIds: string[], headless: boolean = false): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/credenciais/validar-lote`, {
+      empresa_ids: empresaIds,
+      headless: headless
+    }).pipe(
       catchError(this.handleError)
     );
   }
@@ -45,6 +54,23 @@ export class CredenciaisService {
   obterSenha(credencialId: number, senhaAdmin: string): Observable<{ senha: string }> {
     return this.http.post<{ senha: string }>(`${this.baseUrl}/credenciais/${credencialId}/obter-senha`, { 
       senha_admin: senhaAdmin 
+    }).pipe(
+      catchError(this.handleError)
+    );
+  }
+
+  validarPlanilha(arquivo: File): Observable<any> {
+    const formData = new FormData();
+    formData.append('arquivo', arquivo);
+    return this.http.post<any>(`${this.baseUrl}/credenciais/importar-planilha/validar`, formData).pipe(
+      catchError(this.handleError)
+    );
+  }
+
+  importarPlanilha(linhasValidas: any[], contabilidadeId?: number | null): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/credenciais/importar-planilha`, {
+      linhas_validas: linhasValidas,
+      contabilidade_id: contabilidadeId || null
     }).pipe(
       catchError(this.handleError)
     );

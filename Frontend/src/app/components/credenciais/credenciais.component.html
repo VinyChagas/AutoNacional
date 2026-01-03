@@ -53,14 +53,25 @@
 
     <!-- Botões de Ação e Exportação -->
     <div class="mb-6 flex justify-between items-center flex-wrap gap-4">
-      <div class="flex gap-3">
+      <div class="flex gap-3 items-center flex-wrap">
+        <!-- Checkbox Headless -->
+        <label class="flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#8BCB70] bg-[#8BCB70]/10 text-[#0C0D0A] font-semibold text-sm cursor-pointer hover:bg-[#8BCB70]/20 transition-all">
+          <input 
+            type="checkbox" 
+            [(ngModel)]="headlessMode"
+            [disabled]="validandoTodas"
+            class="w-4 h-4 text-[#8BCB70] border-gray-300 rounded focus:ring-[#8BCB70] focus:ring-2"
+          >
+          <span>Modo Headless</span>
+        </label>
+        
         <button
           (click)="validarTodasCredenciais()"
           [disabled]="validandoTodas || empresasFiltradas.length === 0"
           class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] font-semibold text-sm hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
           @if (validandoTodas) {
-            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+            <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -72,6 +83,19 @@
             Validar todas Credenciais
           }
         </button>
+        
+        <!-- Botão Exportar Falhas (só aparece quando há falhas) -->
+        @if (temFalhasParaExportar()) {
+          <button
+            (click)="exportarExcelFalhas()"
+            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-red-600 bg-red-600/20 text-red-700 font-semibold text-sm hover:bg-red-600/30 transition-all"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            Exportar Falhas (Excel)
+          </button>
+        }
       </div>
       
       <div class="flex gap-3">
@@ -127,18 +151,69 @@
 
     <!-- Lista de Empresas -->
     <div class="glass-strong rounded-2xl overflow-hidden border mb-6">
-      <div class="p-4 bg-[#A9D9D4]/20 border-b flex justify-between items-center">
-        <h3 class="text-xl font-bold text-[#0C0D0A]">Empresas Cadastradas</h3>
-        <button
-          (click)="abrirModalCredenciais()"
-          [disabled]="!contabilidadeSelecionadaId"
-          class="px-6 py-3 rounded-xl border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] font-semibold hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-          </svg>
-          Cadastrar uma nova credencial
-        </button>
+      <div class="p-4 bg-[#A9D9D4]/20 border-b">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="text-xl font-bold text-[#0C0D0A]">Empresas Cadastradas</h3>
+          <div class="flex gap-3">
+            <button
+              (click)="abrirModalImportacao()"
+              class="px-6 py-3 rounded-xl border-2 border-[#7EBFB3] bg-[#7EBFB3]/20 text-[#0C0D0A] font-semibold hover:bg-[#7EBFB3]/30 transition-all flex items-center gap-2"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+              </svg>
+              Importar Planilha
+            </button>
+            <button
+              (click)="abrirModalCredenciais()"
+              [disabled]="!contabilidadeSelecionadaId"
+              class="px-6 py-3 rounded-xl border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] font-semibold hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+              </svg>
+              Cadastrar uma nova credencial
+            </button>
+          </div>
+        </div>
+        
+        <!-- Seleção múltipla e botão excluir -->
+        @if (empresasFiltradas.length > 0) {
+          <div class="flex items-center justify-between pt-3 border-t border-[#7EBFB3]/30">
+            <div class="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="selecionarTodas"
+                [checked]="todasSelecionadas()"
+                (change)="toggleSelecionarTodas()"
+                class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
+              />
+              <label for="selecionarTodas" class="text-sm font-semibold text-[#0C0D0A] cursor-pointer">
+                Selecionar todas ({{ empresasSelecionadas.size }} selecionada(s))
+              </label>
+            </div>
+            @if (empresasSelecionadas.size > 0) {
+              <button
+                (click)="excluirEmpresasSelecionadas()"
+                [disabled]="excluindoEmpresas"
+                class="px-4 py-2 rounded-lg border-2 border-red-600 bg-red-600/20 text-red-700 font-semibold hover:bg-red-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                @if (excluindoEmpresas) {
+                  <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Excluindo...
+                } @else {
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                  </svg>
+                  Excluir Selecionadas ({{ empresasSelecionadas.size }})
+                }
+              </button>
+            }
+          </div>
+        }
       </div>
 
       @if (carregandoEmpresas && empresasFiltradas.length === 0) {
@@ -159,6 +234,14 @@
           <table class="min-w-full divide-y divide-[#7EBFB3]/20">
             <thead class="bg-[#A9D9D4]/20">
               <tr>
+                <th class="px-6 py-4 text-center text-xs font-bold uppercase tracking-wider text-[#0C0D0A] w-12">
+                  <input
+                    type="checkbox"
+                    [checked]="todasSelecionadas()"
+                    (change)="toggleSelecionarTodas()"
+                    class="w-4 h-4 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
+                  />
+                </th>
                 <th 
                   class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
                   [ngClass]="{
@@ -191,39 +274,7 @@
                     }">{{ getSortIcon('razao_social') }}</span>
                   </div>
                 </th>
-                <th 
-                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                  [ngClass]="{
-                    'text-[#8BCB70]': isColumnSorted('usuario'),
-                    'text-[#0C0D0A]': !isColumnSorted('usuario')
-                  }"
-                  (click)="toggleSort('usuario')"
-                >
-                  <div class="flex items-center gap-2">
-                    <span>Usuário</span>
-                    <span class="text-[10px]" [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('usuario'),
-                      'text-[#1E2615]/40': !isColumnSorted('usuario')
-                    }">{{ getSortIcon('usuario') }}</span>
-                  </div>
-                </th>
                 <th class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider text-[#0C0D0A]">Senha</th>
-                <th 
-                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                  [ngClass]="{
-                    'text-[#8BCB70]': isColumnSorted('tipo'),
-                    'text-[#0C0D0A]': !isColumnSorted('tipo')
-                  }"
-                  (click)="toggleSort('tipo')"
-                >
-                  <div class="flex items-center gap-2">
-                    <span>Tipo</span>
-                    <span class="text-[10px]" [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('tipo'),
-                      'text-[#1E2615]/40': !isColumnSorted('tipo')
-                    }">{{ getSortIcon('tipo') }}</span>
-                  </div>
-                </th>
                 <th 
                   class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
                   [ngClass]="{
@@ -240,16 +291,25 @@
                     }">{{ getSortIcon('regime') }}</span>
                   </div>
                 </th>
+                <th class="px-6 py-4 text-center text-xs font-bold uppercase tracking-wider text-[#0C0D0A]">Status</th>
                 <th class="px-6 py-4 text-center text-xs font-bold uppercase tracking-wider text-[#0C0D0A]">Ações</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-[#7EBFB3]/10">
               @for (empresa of empresasFiltradas; track empresa.id) {
                 @for (credencial of empresa.credenciais; track credencial.id) {
-                  <tr class="hover:bg-[#A9D9D4]/10 transition-colors">
+                  <tr class="hover:bg-[#A9D9D4]/10 transition-colors" [ngClass]="{'bg-[#8BCB70]/10': estaSelecionada(empresa.id)}">
+                    <td class="px-6 py-4 whitespace-nowrap text-center">
+                      <input
+                        type="checkbox"
+                        [id]="'empresa-' + empresa.id"
+                        [checked]="estaSelecionada(empresa.id)"
+                        (change)="toggleSelecionarEmpresa(empresa.id)"
+                        class="w-4 h-4 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
+                      />
+                    </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-[#0C0D0A]">{{ formatarCPFouCNPJ(empresa.cnpj, credencial.tipo_login) }}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ empresa.razao_social }}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ credencial.usuario }}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">
                       <div class="flex items-center gap-2">
                         <span [class.font-mono]="isSenhaVisivel(credencial.id)">
@@ -279,19 +339,39 @@
                         </button>
                       </div>
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ credencial.tipo }}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ empresa.regime || '-' }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                      @if (obterStatusValidacao(empresa)) {
+                        <div class="flex items-center justify-center gap-1" [ngClass]="obterCorStatus(obterStatusValidacao(empresa))">
+                          <span class="text-lg">{{ obterIconeStatus(obterStatusValidacao(empresa)) }}</span>
+                          @if (obterStatusValidacao(empresa) === 'validando') {
+                            <span class="text-xs animate-pulse">Validando...</span>
+                          } @else if (obterStatusValidacao(empresa) === 'erro' && empresa.mensagemValidacao) {
+                            <span class="text-xs" [title]="empresa.mensagemValidacao">Erro</span>
+                          }
+                        </div>
+                      }
+                    </td>
                     <td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
                       <div class="flex items-center justify-center gap-2">
                         <button
-                          (click)="abrirModalValidacao(empresa)"
-                          class="text-[#7EBFB3] hover:text-[#8BCB70] transition-colors font-semibold flex items-center gap-1"
+                          (click)="validarCredenciaisIndividual(empresa)"
+                          [disabled]="validandoCredenciais || empresa.statusValidacao === 'validando'"
+                          class="text-[#7EBFB3] hover:text-[#8BCB70] transition-colors font-semibold flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Validar credenciais"
                         >
-                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                          </svg>
-                          Validar
+                          @if (empresa.statusValidacao === 'validando') {
+                            <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Validando...
+                          } @else {
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Validar
+                          }
                         </button>
                         <button
                           (click)="abrirModalEdicao(empresa, credencial)"
@@ -669,14 +749,15 @@
   </div>
 }
 
-<!-- Modal Validação de Credenciais -->
-@if (modalValidacaoAberto) {
-  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalValidacao()">
-    <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
+
+<!-- Modal Importação de Planilha -->
+@if (modalImportacaoAberto) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalImportacao()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-4xl w-full p-8 border max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
       <div class="flex items-center justify-between mb-6">
-        <h3 class="text-2xl font-bold text-white">Validar Credenciais</h3>
+        <h3 class="text-2xl font-bold text-white">Importar Planilha</h3>
         <button
-          (click)="fecharModalValidacao()"
+          (click)="fecharModalImportacao()"
           class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
         >
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -685,56 +766,219 @@
         </button>
       </div>
 
-      <div class="mb-6">
-        <p class="text-sm text-white/90 mb-4">
-          Esta validação irá testar as credenciais através de uma automação no portal NFSe Nacional.
-        </p>
-
-        @if (mensagemValidacao) {
-          <div class="p-4 rounded-xl border mb-4" [ngClass]="getValidacaoClasses()">
-            <div class="flex items-center gap-2">
-              @if (validacaoSucesso === true) {
-                <svg class="w-6 h-6 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-              } @else {
-                <svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-              }
-              <span class="text-sm font-semibold">{{ mensagemValidacao }}</span>
-            </div>
+      <!-- Mensagens de feedback -->
+      @if (mensagemSucesso) {
+        <div class="mb-4 p-4 bg-[#8BCB70]/20 border border-[#8BCB70]/50 text-white rounded-xl">
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span class="font-semibold">{{ mensagemSucesso }}</span>
           </div>
-        }
+        </div>
+      }
 
-        <div class="flex gap-4 pt-4">
-          <button
-            type="button"
-            (click)="fecharModalValidacao()"
-            class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 transition-all font-semibold"
-            [disabled]="validandoCredenciais"
+      @if (mensagemErro) {
+        <div class="mb-4 p-4 bg-red-400/30 border border-red-400/50 text-white rounded-xl">
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+            <span>{{ mensagemErro }}</span>
+          </div>
+        </div>
+      }
+
+      <!-- Seleção de Arquivo -->
+      <div class="mb-6">
+        <label class="block text-sm font-semibold text-white mb-2">
+          Selecione a planilha Excel (.xlsx ou .xls)
+        </label>
+        <div class="flex gap-4 items-center">
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            (change)="onArquivoSelecionado($event)"
+            class="hidden"
+            id="arquivo-planilha"
+          />
+          <label
+            for="arquivo-planilha"
+            class="px-6 py-3 rounded-xl border-2 border-white/30 bg-white/10 text-white font-semibold hover:bg-white/20 transition-all cursor-pointer flex items-center gap-2"
           >
-            Fechar
-          </button>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+            </svg>
+            Escolher Arquivo
+          </label>
+          @if (arquivoSelecionado) {
+            <span class="text-white/90">{{ arquivoSelecionado.name }}</span>
+          }
+        </div>
+        <p class="text-xs text-white/70 mt-2">
+          Formato esperado: Colunas A=E (Razão Social, Tipo de Login, CNPJ ou CPF, Senha, Regime Tributário). 
+          As duas primeiras linhas serão ignoradas (cabeçalhos).
+        </p>
+      </div>
+
+      <!-- Botão Validar -->
+      @if (arquivoSelecionado && !validacaoPlanilha) {
+        <div class="mb-6">
           <button
-            type="button"
-            (click)="validarCredenciais()"
-            [disabled]="validandoCredenciais"
-            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+            (click)="validarPlanilha()"
+            [disabled]="validandoPlanilha"
+            class="w-full px-6 py-3 rounded-xl border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-white font-semibold hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            @if (validandoCredenciais) {
-              <span class="flex items-center justify-center">
-                <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Validando...
-              </span>
+            @if (validandoPlanilha) {
+              <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Validando...
             } @else {
-              Iniciar Validação
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              Validar Planilha
             }
           </button>
         </div>
+      }
+
+      <!-- Resultados da Validação -->
+      @if (validacaoPlanilha) {
+        <div class="mb-6">
+          <div class="p-4 rounded-xl border border-white/20 bg-white/5 mb-4">
+            <div class="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p class="text-white/70 text-sm">Total de Linhas</p>
+                <p class="text-white text-2xl font-bold">{{ validacaoPlanilha.total_linhas }}</p>
+              </div>
+              <div>
+                <p class="text-[#8BCB70] text-sm">Linhas Válidas</p>
+                <p class="text-[#8BCB70] text-2xl font-bold">{{ validacaoPlanilha.linhas_validas }}</p>
+              </div>
+              <div>
+                <p class="text-red-400 text-sm">Linhas com Erro</p>
+                <p class="text-red-400 text-2xl font-bold">{{ validacaoPlanilha.linhas_com_erro }}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Linhas com Erro -->
+          @if (obterLinhasComErro().length > 0) {
+            <div class="mb-4">
+              <h4 class="text-lg font-bold text-white mb-3">Linhas com Erros:</h4>
+              <div class="max-h-64 overflow-y-auto space-y-2">
+                @for (linha of obterLinhasComErro(); track linha.linha_numero) {
+                  <div class="p-3 rounded-lg border border-red-400/50 bg-red-400/10">
+                    <div class="flex items-start justify-between mb-2">
+                      <span class="text-white font-semibold">Linha {{ linha.linha_numero }}</span>
+                      <span class="text-red-400 text-sm">{{ linha.razao_social || 'Sem razão social' }}</span>
+                    </div>
+                    <ul class="list-disc list-inside text-red-300 text-sm space-y-1">
+                      @for (erro of linha.erros; track erro) {
+                        <li>{{ erro }}</li>
+                      }
+                    </ul>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Linhas Válidas -->
+          @if (obterLinhasValidas().length > 0) {
+            <div class="mb-4">
+              <h4 class="text-lg font-bold text-white mb-3">Linhas Válidas ({{ obterLinhasValidas().length }}):</h4>
+              <div class="max-h-64 overflow-y-auto space-y-2">
+                @for (linha of obterLinhasValidas(); track linha.linha_numero) {
+                  <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/10">
+                    <div class="flex items-center justify-between">
+                      <span class="text-white font-semibold">Linha {{ linha.linha_numero }}</span>
+                      <span class="text-[#8BCB70] text-sm">{{ linha.razao_social }}</span>
+                    </div>
+                    <div class="text-white/70 text-xs mt-1">
+                      {{ linha.tipo_login?.toUpperCase() }}: {{ linha.cnpj_ou_cpf }} | Regime: {{ linha.regime_tributario }}
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Seleção de Contabilidade e Botão Importar -->
+          @if (validacaoPlanilha.linhas_validas > 0) {
+            <div class="mt-6 space-y-4">
+              <!-- Seleção de Contabilidade -->
+              <div>
+                <label class="block text-sm font-semibold text-white mb-2">
+                  Contabilidade <span class="text-red-400">*</span>
+                </label>
+                @if (carregandoContabilidades) {
+                  <div class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl text-white/70 bg-white/10">
+                    Carregando contabilidades...
+                  </div>
+                } @else {
+                  <select
+                    [(ngModel)]="contabilidadeSelecionadaImportacao"
+                    class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10"
+                    [ngClass]="{
+                      'border-[#7EBFB3]/50 focus:ring-[#8BCB70]': contabilidadeSelecionadaImportacao,
+                      'border-red-400 focus:ring-red-400 bg-red-400/20': !contabilidadeSelecionadaImportacao
+                    }"
+                    [disabled]="importandoPlanilha"
+                  >
+                    <option [ngValue]="null" class="text-[#0C0D0A]">Selecione uma contabilidade</option>
+                    @for (contabilidade of contabilidades; track contabilidade.id) {
+                      <option [ngValue]="contabilidade.id" class="text-[#0C0D0A]">
+                        {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
+                      </option>
+                    }
+                  </select>
+                  @if (contabilidades.length === 0 && !carregandoContabilidades) {
+                    <p class="text-white/80 text-sm mt-2">Nenhuma contabilidade cadastrada. <a routerLink="/contabilidades" class="text-[#8BCB70] underline">Cadastre uma contabilidade</a> primeiro.</p>
+                  }
+                }
+              </div>
+
+              <!-- Botão Importar -->
+              <button
+                (click)="importarPlanilha()"
+                [disabled]="importandoPlanilha || !contabilidadeSelecionadaImportacao"
+                class="w-full px-6 py-3 rounded-xl border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-white font-semibold hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                @if (importandoPlanilha) {
+                  <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Importando...
+                } @else {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                  </svg>
+                  Importar {{ validacaoPlanilha.linhas_validas }} Empresa(s) Válida(s)
+                }
+              </button>
+              @if (!contabilidadeSelecionadaImportacao) {
+                <p class="text-xs text-yellow-400 text-center">
+                  ⚠️ Selecione uma contabilidade para continuar com a importação.
+                </p>
+              }
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Botão Fechar -->
+      <div class="flex justify-end mt-6">
+        <button
+          (click)="fecharModalImportacao()"
+          class="px-6 py-3 rounded-xl border border-white/30 bg-white/10 text-white hover:bg-white/20 transition-all font-semibold"
+        >
+          Fechar
+        </button>
       </div>
     </div>
   </div>

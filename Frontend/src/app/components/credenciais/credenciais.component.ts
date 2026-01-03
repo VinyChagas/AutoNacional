@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, AfterViewChecked } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
@@ -17,6 +17,8 @@ import * as XLSX from 'xlsx';
 interface EmpresaComCredenciais extends Empresa {
   credenciais?: CredencialResponse[];
   senhaVisivel?: { [key: number]: boolean }; // Controla visibilidade de senhas por credencial_id
+  statusValidacao?: 'pendente' | 'validando' | 'sucesso' | 'erro'; // Status da validação
+  mensagemValidacao?: string | null; // Mensagem de erro ou sucesso da validação
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -30,7 +32,7 @@ type SearchColumn = 'cnpj' | 'razao_social' | 'usuario' | 'tipo' | 'regime';
   templateUrl: './credenciais.component.html',
   styleUrls: ['./credenciais.component.scss']
 })
-export class CredenciaisComponent implements OnInit {
+export class CredenciaisComponent implements OnInit, AfterViewChecked {
   credenciaisForm: FormGroup;
   edicaoForm: FormGroup;
   contabilidadeForm: FormGroup;
@@ -67,12 +69,19 @@ export class CredenciaisComponent implements OnInit {
   validandoTodas = false;
   excluindoCredencial = false;
   excluindoEmpresa = false;
+  excluindoEmpresas = false;
   carregandoSenha = false;
+  
+  // Seleção múltipla de empresas
+  empresasSelecionadas: Set<string> = new Set();
+  headlessMode = false; // Modo headless para validação
+  resultadosValidacao: any[] = []; // Armazena resultados da validação em lote
   
   modalCredenciaisAberto = false;
   modalValidacaoAberto = false;
   modalEdicaoAberto = false;
   modalSenhaAdminAberto = false;
+  modalImportacaoAberto = false;
   
   credencialEditando: CredencialResponse | null = null;
   empresaEditando: EmpresaComCredenciais | null = null;
@@ -84,6 +93,13 @@ export class CredenciaisComponent implements OnInit {
   mensagemErro: string | null = null;
   mensagemValidacao: string | null = null;
   validacaoSucesso: boolean | null = null;
+  
+  // Estados para importação de planilha
+  arquivoSelecionado: File | null = null;
+  validacaoPlanilha: any = null;
+  importandoPlanilha = false;
+  validandoPlanilha = false;
+  contabilidadeSelecionadaImportacao: number | null = null;
   
   // Estados para seleção de cards
   tipoLoginSelecionado: 'cpf' | 'cnpj' = 'cnpj';
@@ -121,6 +137,18 @@ export class CredenciaisComponent implements OnInit {
 
   carregarEmpresas(): void {
     this.carregandoEmpresas = true;
+    
+    // Preserva status de validação antes de recarregar
+    const statusPreservados = new Map<string, { status?: 'pendente' | 'validando' | 'sucesso' | 'erro', mensagem?: string | null }>();
+    this.empresas.forEach(empresa => {
+      if (empresa.statusValidacao) {
+        statusPreservados.set(empresa.id, {
+          status: empresa.statusValidacao,
+          mensagem: empresa.mensagemValidacao
+        });
+      }
+    });
+    
     this.empresasService.listar().subscribe({
       next: async (empresas) => {
         this.empresas = []; // Limpa empresas existentes
@@ -136,11 +164,16 @@ export class CredenciaisComponent implements OnInit {
                 tipo_login: this.obterTipoLoginDeTipo(credencial.tipo)
               }));
               
+              // Restaura status preservado se existir
+              const statusPreservado = statusPreservados.get(empresa.id);
+              
               // Só adiciona empresas que têm credenciais
               this.empresas.push({
                 ...empresa,
                 credenciais: credenciaisComTipoLogin,
-                senhaVisivel: {}
+                senhaVisivel: {},
+                statusValidacao: statusPreservado?.status,
+                mensagemValidacao: statusPreservado?.mensagem
               });
             }
           } catch (error) {
@@ -578,50 +611,135 @@ export class CredenciaisComponent implements OnInit {
     });
   }
 
-  abrirModalValidacao(empresa?: EmpresaComCredenciais): void {
-    if (empresa) {
-      this.empresaEditando = empresa;
+  toggleSelecionarEmpresa(empresaId: string): void {
+    if (this.empresasSelecionadas.has(empresaId)) {
+      this.empresasSelecionadas.delete(empresaId);
+    } else {
+      this.empresasSelecionadas.add(empresaId);
     }
-    this.modalValidacaoAberto = true;
-    this.mensagemValidacao = null;
-    this.validacaoSucesso = null;
   }
 
-  fecharModalValidacao(): void {
-    this.modalValidacaoAberto = false;
-    this.empresaEditando = null;
-    this.mensagemValidacao = null;
-    this.validacaoSucesso = null;
+  estaSelecionada(empresaId: string): boolean {
+    return this.empresasSelecionadas.has(empresaId);
   }
 
-  validarCredenciais(): void {
-    if (!this.empresaEditando) {
-      this.mensagemValidacao = 'Empresa não selecionada';
-      this.validacaoSucesso = false;
+  toggleSelecionarTodas(): void {
+    if (this.todasSelecionadas()) {
+      // Desmarca todas
+      this.empresasSelecionadas.clear();
+    } else {
+      // Marca todas
+      this.empresasFiltradas.forEach(empresa => {
+        this.empresasSelecionadas.add(empresa.id);
+      });
+    }
+  }
+
+  todasSelecionadas(): boolean {
+    if (this.empresasFiltradas.length === 0) return false;
+    return this.empresasFiltradas.every(empresa => this.empresasSelecionadas.has(empresa.id));
+  }
+
+  algumasSelecionadas(): boolean {
+    return this.empresasSelecionadas.size > 0 && !this.todasSelecionadas();
+  }
+
+  excluirEmpresasSelecionadas(): void {
+    const quantidade = this.empresasSelecionadas.size;
+    if (quantidade === 0) {
+      alert('Nenhuma empresa selecionada para excluir.');
       return;
     }
 
-    this.validandoCredenciais = true;
-    this.mensagemValidacao = null;
-    this.validacaoSucesso = null;
+    if (!confirm(`Tem certeza que deseja excluir ${quantidade} empresa(s)? Esta ação não pode ser desfeita.`)) {
+      return;
+    }
 
-    this.credenciaisService.validarCredenciais(this.empresaEditando.id, this.empresaEditando.cnpj).subscribe({
+    this.excluindoEmpresas = true;
+    this.mensagemErro = null;
+    this.mensagemSucesso = null;
+
+    const empresasParaExcluir = Array.from(this.empresasSelecionadas);
+    let sucessoCount = 0;
+    let falhasCount = 0;
+    let processadas = 0;
+
+    // Exclui uma por uma para ter controle individual
+    empresasParaExcluir.forEach((empresaId, index) => {
+      this.empresasService.excluir(empresaId).subscribe({
+        next: () => {
+          sucessoCount++;
+          processadas++;
+          this.empresasSelecionadas.delete(empresaId);
+          
+          if (processadas === empresasParaExcluir.length) {
+            this.excluindoEmpresas = false;
+            if (sucessoCount > 0) {
+              this.mensagemSucesso = `${sucessoCount} empresa(s) excluída(s) com sucesso!`;
+              if (falhasCount > 0) {
+                this.mensagemSucesso += ` ${falhasCount} falha(s).`;
+              }
+              // Limpa seleção após exclusão bem-sucedida
+              this.empresasSelecionadas.clear();
+            }
+            this.carregarEmpresas();
+            setTimeout(() => this.mensagemSucesso = null, 5000);
+          }
+        },
+        error: (error) => {
+          falhasCount++;
+          processadas++;
+          
+          if (processadas === empresasParaExcluir.length) {
+            this.excluindoEmpresas = false;
+            if (sucessoCount > 0) {
+              this.mensagemSucesso = `${sucessoCount} empresa(s) excluída(s) com sucesso!`;
+              this.mensagemErro = `${falhasCount} empresa(s) falharam ao excluir.`;
+            } else {
+              this.mensagemErro = 'Erro ao excluir empresas: ' + (error.error?.detail || error.message || 'Erro desconhecido');
+            }
+            this.carregarEmpresas();
+            setTimeout(() => {
+              this.mensagemSucesso = null;
+              this.mensagemErro = null;
+            }, 5000);
+          }
+        }
+      });
+    });
+  }
+
+  validarCredenciaisIndividual(empresa: EmpresaComCredenciais): void {
+    if (!empresa || !empresa.cnpj) {
+      alert('Empresa não possui CNPJ cadastrado.');
+      return;
+    }
+
+    // Atualiza status para validando
+    empresa.statusValidacao = 'validando';
+    empresa.mensagemValidacao = '';
+    this.aplicarFiltrosEOrdenacao();
+
+    this.credenciaisService.validarCredenciais(empresa.id, empresa.cnpj, this.headlessMode).subscribe({
       next: (resultado) => {
-        this.validacaoSucesso = true;
-        this.mensagemValidacao = 'Credenciais validadas com sucesso!';
-        this.carregarEmpresas();
+        // Atualiza status na empresa
+        empresa.statusValidacao = resultado.success ? 'sucesso' : 'erro';
+        empresa.mensagemValidacao = resultado.message || '';
+        this.aplicarFiltrosEOrdenacao();
+        
+        // Não recarrega empresas para manter o status visível
+        // O status já foi atualizado no banco pelo backend
       },
       error: (error) => {
-        this.validacaoSucesso = false;
-        this.mensagemValidacao = error.error?.detail || error.message || 'Erro ao validar credenciais. Verifique usuário e senha.';
-      },
-      complete: () => {
-        this.validandoCredenciais = false;
+        // Atualiza status para erro
+        empresa.statusValidacao = 'erro';
+        empresa.mensagemValidacao = error.error?.detail || error.message || 'Erro ao validar credenciais. Verifique usuário e senha.';
+        this.aplicarFiltrosEOrdenacao();
       }
     });
   }
 
-  validarTodasCredenciais(): void {
+  async validarTodasCredenciais(): Promise<void> {
     const empresasComCredenciais = this.empresasFiltradas.filter(e => 
       e.credenciais && e.credenciais.length > 0
     );
@@ -636,41 +754,72 @@ export class CredenciaisComponent implements OnInit {
     }
 
     this.validandoTodas = true;
-    const empresaIds = empresasComCredenciais.map(e => e.id);
-
-    // Valida uma por uma (não em paralelo para não sobrecarregar)
-    let validadas = 0;
-    let falhas = 0;
-
-    const validarProxima = (index: number) => {
-      if (index >= empresaIds.length) {
+    this.resultadosValidacao = [];
+    
+    // Marca todas como "validando"
+    empresasComCredenciais.forEach(empresa => {
+      if (empresa.cnpj) {
+        empresa.statusValidacao = 'validando';
+        empresa.mensagemValidacao = '';
+      }
+    });
+    this.aplicarFiltrosEOrdenacao();
+    
+    try {
+      // Prepara lista de IDs de empresas para validação em lote
+      const empresaIds = empresasComCredenciais
+        .filter(e => e.cnpj) // Filtra apenas empresas com CNPJ
+        .map(e => e.id);
+      
+      if (empresaIds.length === 0) {
+        alert('Nenhuma empresa com CNPJ válido encontrada para validar.');
         this.validandoTodas = false;
-        alert(`Validação concluída: ${validadas} sucesso(s), ${falhas} falha(s).`);
-        this.carregarEmpresas();
         return;
       }
-
-      const empresaId = empresaIds[index];
-      const empresa = empresasComCredenciais.find(e => e.id === empresaId);
-
-      if (empresa && empresa.cnpj) {
-        this.credenciaisService.validarCredenciais(empresaId, empresa.cnpj).subscribe({
-          next: () => {
-            validadas++;
-            validarProxima(index + 1);
-          },
-          error: () => {
-            falhas++;
-            validarProxima(index + 1);
-          }
-        });
-      } else {
-        falhas++;
-        validarProxima(index + 1);
-      }
-    };
-
-    validarProxima(0);
+      
+      // Chama endpoint de validação em lote (que respeita limite de navegadores simultâneos)
+      const resultado = await firstValueFrom(
+        this.credenciaisService.validarCredenciaisLote(empresaIds, this.headlessMode)
+      );
+      
+      // Cria mapa de empresa_id para resultado
+      const resultadoMap = new Map<string, any>();
+      resultado.resultados?.forEach((r: any) => {
+        resultadoMap.set(r.empresa_id, r);
+      });
+      
+      // Atualiza status de cada empresa com base nos resultados
+      empresasComCredenciais.forEach(empresa => {
+        const resultadoEmpresa = resultadoMap.get(empresa.id);
+        if (resultadoEmpresa) {
+          empresa.statusValidacao = resultadoEmpresa.sucesso ? 'sucesso' : 'erro';
+          empresa.mensagemValidacao = resultadoEmpresa.mensagem || resultadoEmpresa.erro || '';
+        } else if (!empresa.cnpj) {
+          empresa.statusValidacao = 'erro';
+          empresa.mensagemValidacao = 'CNPJ não cadastrado';
+        }
+      });
+      
+      this.resultadosValidacao = resultado.resultados || [];
+      this.aplicarFiltrosEOrdenacao();
+      
+      // Mostra resumo
+      alert(`Validação concluída: ${resultado.sucesso || 0} sucesso(s), ${resultado.falhas || 0} falha(s).`);
+      
+    } catch (error: any) {
+      console.error('Erro ao validar credenciais em lote:', error);
+      
+      // Marca todas como erro em caso de falha geral
+      empresasComCredenciais.forEach(empresa => {
+        empresa.statusValidacao = 'erro';
+        empresa.mensagemValidacao = error.error?.detail || error.message || 'Erro ao validar credenciais';
+      });
+      this.aplicarFiltrosEOrdenacao();
+      
+      alert(`Erro ao validar credenciais: ${error.error?.detail || error.message || 'Erro desconhecido'}`);
+    } finally {
+      this.validandoTodas = false;
+    }
   }
 
   abrirModalSenhaAdmin(): void {
@@ -866,6 +1015,96 @@ export class CredenciaisComponent implements OnInit {
     XLSX.writeFile(wb, nomeArquivo);
   }
 
+  exportarExcelFalhas(): void {
+    // Filtra apenas empresas com status de erro
+    const empresasComErro = this.empresasFiltradas.filter(e => 
+      e.statusValidacao === 'erro' || 
+      (this.resultadosValidacao.some((r: any) => r.empresa_id === e.id && !r.sucesso))
+    );
+
+    if (empresasComErro.length === 0) {
+      alert('Nenhuma credencial com falha encontrada para exportar.');
+      return;
+    }
+
+    // Busca senhas descriptografadas para as empresas com erro
+    const dadosPlanilha = empresasComErro.map(empresa => {
+      const credencial = empresa.credenciais?.[0];
+      const resultado = this.resultadosValidacao.find((r: any) => r.empresa_id === empresa.id);
+      const tipoDocumento = credencial?.tipo_login === 'cpf' ? 'CPF' : 'CNPJ';
+      
+      return {
+        [tipoDocumento]: this.formatarCPFouCNPJ(empresa.cnpj, credencial?.tipo_login),
+        'Razão Social': empresa.razao_social || '-',
+        'Usuário': credencial?.usuario || '-',
+        'Senha': this.senhasObtidas.get(credencial?.id || 0) || '*****',
+        'Tipo': credencial?.tipo || '-',
+        'Regime': empresa.regime || '-',
+        'Erro': resultado?.erro || resultado?.mensagem || empresa.mensagemValidacao || 'Erro desconhecido'
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(dadosPlanilha);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Credenciais com Falha');
+
+    const colWidths = [
+      { wch: 18 }, // CNPJ/CPF
+      { wch: 40 }, // Razão Social
+      { wch: 18 }, // Usuário
+      { wch: 20 }, // Senha
+      { wch: 15 }, // Tipo
+      { wch: 20 }, // Regime
+      { wch: 50 }  // Erro
+    ];
+    ws['!cols'] = colWidths;
+
+    const dataFormatada = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const nomeArquivo = `credenciais_falhas_${dataFormatada}.xlsx`;
+    XLSX.writeFile(wb, nomeArquivo);
+  }
+
+  obterStatusValidacao(empresa: EmpresaComCredenciais): 'pendente' | 'validando' | 'sucesso' | 'erro' | null {
+    return empresa.statusValidacao || null;
+  }
+
+  obterIconeStatus(status: 'pendente' | 'validando' | 'sucesso' | 'erro' | null): string {
+    switch (status) {
+      case 'pendente':
+        return '⏳';
+      case 'validando':
+        return '🔄';
+      case 'sucesso':
+        return '✅';
+      case 'erro':
+        return '❌';
+      default:
+        return '';
+    }
+  }
+
+  obterCorStatus(status: 'pendente' | 'validando' | 'sucesso' | 'erro' | null): string {
+    switch (status) {
+      case 'pendente':
+        return 'text-gray-600';
+      case 'validando':
+        return 'text-blue-600';
+      case 'sucesso':
+        return 'text-green-600';
+      case 'erro':
+        return 'text-red-600';
+      default:
+        return 'text-gray-400';
+    }
+  }
+
+  temFalhasParaExportar(): boolean {
+    return this.empresasFiltradas.some(e => 
+      e.statusValidacao === 'erro' || 
+      (this.resultadosValidacao.some((r: any) => r.empresa_id === e.id && !r.sucesso))
+    );
+  }
+
   getFilteredData(): EmpresaComCredenciais[] {
     return [...this.empresasFiltradas];
   }
@@ -944,6 +1183,147 @@ export class CredenciaisComponent implements OnInit {
       if (control?.invalid) {
         control.markAsTouched();
       }
+    });
+  }
+
+  abrirModalImportacao(): void {
+    this.modalImportacaoAberto = true;
+    this.arquivoSelecionado = null;
+    this.validacaoPlanilha = null;
+    this.mensagemErro = null;
+    this.mensagemSucesso = null;
+    // Pré-seleciona a contabilidade global se houver, caso contrário null
+    this.contabilidadeSelecionadaImportacao = this.contabilidadeSelecionadaId;
+    
+    // Garante que as contabilidades estão carregadas
+    if (this.contabilidades.length === 0) {
+      this.carregarContabilidades();
+    }
+  }
+
+  fecharModalImportacao(): void {
+    this.modalImportacaoAberto = false;
+    this.arquivoSelecionado = null;
+    this.validacaoPlanilha = null;
+    this.mensagemErro = null;
+    this.mensagemSucesso = null;
+    this.contabilidadeSelecionadaImportacao = null;
+  }
+
+  onArquivoSelecionado(event: any): void {
+    const arquivo = event.target.files[0];
+    if (arquivo) {
+      // Valida extensão
+      const extensao = arquivo.name.split('.').pop()?.toLowerCase();
+      if (extensao !== 'xlsx' && extensao !== 'xls') {
+        this.mensagemErro = 'Por favor, selecione um arquivo Excel (.xlsx ou .xls)';
+        return;
+      }
+      this.arquivoSelecionado = arquivo;
+      this.validacaoPlanilha = null;
+      this.mensagemErro = null;
+    }
+  }
+
+  validarPlanilha(): void {
+    if (!this.arquivoSelecionado) {
+      this.mensagemErro = 'Por favor, selecione um arquivo primeiro';
+      return;
+    }
+
+    this.validandoPlanilha = true;
+    this.mensagemErro = null;
+    this.mensagemSucesso = null;
+
+    this.credenciaisService.validarPlanilha(this.arquivoSelecionado).subscribe({
+      next: (resultado) => {
+        this.validacaoPlanilha = resultado;
+        this.validandoPlanilha = false;
+        
+        if (resultado.linhas_com_erro === 0) {
+          this.mensagemSucesso = `Planilha válida! ${resultado.linhas_validas} linha(s) pronta(s) para importar.`;
+        } else {
+          this.mensagemErro = `Encontrados erros em ${resultado.linhas_com_erro} linha(s). Revise os erros abaixo.`;
+        }
+      },
+      error: (error) => {
+        this.mensagemErro = error.error?.detail || error.message || 'Erro ao validar planilha';
+        this.validandoPlanilha = false;
+      }
+    });
+  }
+
+  importarPlanilha(): void {
+    if (!this.validacaoPlanilha || this.validacaoPlanilha.linhas_validas === 0) {
+      this.mensagemErro = 'Não há linhas válidas para importar';
+      return;
+    }
+
+    // Filtra apenas linhas válidas
+    const linhasValidas = this.validacaoPlanilha.linhas.filter((linha: any) => linha.valida);
+
+    if (linhasValidas.length === 0) {
+      this.mensagemErro = 'Não há linhas válidas para importar';
+      return;
+    }
+
+    // Valida se há contabilidade selecionada
+    if (!this.contabilidadeSelecionadaImportacao) {
+      this.mensagemErro = 'Por favor, selecione uma contabilidade para vincular as empresas';
+      return;
+    }
+
+    this.importandoPlanilha = true;
+    this.mensagemErro = null;
+    this.mensagemSucesso = null;
+
+    // Usa contabilidade selecionada no modal de importação
+    const contabilidadeId = this.contabilidadeSelecionadaImportacao;
+
+    this.credenciaisService.importarPlanilha(linhasValidas, contabilidadeId).subscribe({
+      next: (resultado) => {
+        this.importandoPlanilha = false;
+        
+        if (resultado.sucesso > 0) {
+          this.mensagemSucesso = `Importação concluída! ${resultado.sucesso} empresa(s) importada(s) com sucesso.`;
+          if (resultado.falhas > 0) {
+            this.mensagemSucesso += ` ${resultado.falhas} falha(s).`;
+          }
+          
+          // Atualiza lista de empresas
+          this.carregarEmpresas();
+          
+          // Fecha modal após 2 segundos
+          setTimeout(() => {
+            this.fecharModalImportacao();
+            setTimeout(() => this.mensagemSucesso = null, 3000);
+          }, 2000);
+        } else {
+          this.mensagemErro = `Nenhuma empresa foi importada. ${resultado.falhas} falha(s).`;
+        }
+      },
+      error: (error) => {
+        this.mensagemErro = error.error?.detail || error.message || 'Erro ao importar planilha';
+        this.importandoPlanilha = false;
+      }
+    });
+  }
+
+  obterLinhasComErro(): any[] {
+    if (!this.validacaoPlanilha) return [];
+    return this.validacaoPlanilha.linhas.filter((linha: any) => !linha.valida);
+  }
+
+  obterLinhasValidas(): any[] {
+    if (!this.validacaoPlanilha) return [];
+    return this.validacaoPlanilha.linhas.filter((linha: any) => linha.valida);
+  }
+
+  ngAfterViewChecked(): void {
+    // Atualiza estado indeterminado dos checkboxes "selecionar todas"
+    const checkboxes = document.querySelectorAll('#selecionarTodas') as NodeListOf<HTMLInputElement>;
+    checkboxes.forEach(checkbox => {
+      checkbox.indeterminate = this.algumasSelecionadas();
     });
   }
 }

@@ -27,3 +27,6 @@ playwright>=1.46.0
 
 # Debug e Desenvolvimento
 debugpy>=1.8.0
+
+# Processamento de Planilhas
+openpyxl>=3.1.0
