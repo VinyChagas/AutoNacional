@@ -201,6 +201,8 @@ export class LayoutComponent {
           this.currentRoute = 'execucao';
         } else if (url.includes('/contabilidades')) {
           this.currentRoute = 'contabilidades';
+        } else if (url.includes('/credenciais')) {
+          this.currentRoute = 'credenciais';
         } else if (url.includes('/configuracoes')) {
           this.currentRoute = 'configuracoes';
         }

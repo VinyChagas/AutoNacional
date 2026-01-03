@@ -148,6 +148,42 @@
                 }">Contabilidades</span>
         </a>
 
+        <!-- Ícone Credenciais -->
+        <a 
+          routerLink="/credenciais" 
+          routerLinkActive="active"
+          class="nav-icon group relative flex flex-col items-center transition-all duration-300"
+        >
+          <div class="relative">
+            <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <div class="relative p-2 rounded-lg transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70]/30 scale-105': currentRoute === 'credenciais',
+                   'bg-transparent scale-100': currentRoute !== 'credenciais'
+                 }">
+              <svg class="w-5 h-5 transition-all duration-300"
+                   [ngClass]="{
+                     'text-[#8BCB70]': currentRoute === 'credenciais',
+                     'text-[#1E2615]/60 group-hover:text-[#8BCB70]': currentRoute !== 'credenciais'
+                   }"
+                   fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+              </svg>
+            </div>
+            <!-- Marcador ativo -->
+            <div class="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full transition-all duration-300"
+                 [ngClass]="{
+                   'bg-[#8BCB70] shadow-md shadow-[#8BCB70]/50 scale-125': currentRoute === 'credenciais',
+                   'bg-transparent': currentRoute !== 'credenciais'
+                 }"></div>
+          </div>
+          <span class="text-[10px] mt-1 font-medium transition-colors duration-300 leading-tight"
+                [ngClass]="{
+                  'text-[#8BCB70]': currentRoute === 'credenciais',
+                  'text-[#1E2615]/60 group-hover:text-[#1E2615]': currentRoute !== 'credenciais'
+                }">Credenciais</span>
+        </a>
+
         <!-- Ícone Configurações -->
         <a 
           routerLink="/configuracoes" 

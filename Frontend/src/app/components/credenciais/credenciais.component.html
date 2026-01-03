@@ -1,0 +1,790 @@
+<div class="w-full py-8">
+  <div class="container mx-auto px-4 max-w-7xl">
+    <!-- Header -->
+    <div class="mb-10">
+      <h2 class="text-4xl md:text-5xl font-bold mb-4 text-[#0C0D0A]">
+        Credenciais
+      </h2>
+      <p class="text-lg md:text-xl text-[#1E2615] font-light">Gerencie credenciais de acesso das empresas</p>
+      <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
+    </div>
+
+    <!-- Mensagens de feedback -->
+    @if (mensagemSucesso) {
+      <div class="mb-6 p-4 bg-[#8BCB70]/20 border border-[#8BCB70]/50 text-[#0C0D0A] rounded-xl">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <span class="font-semibold">{{ mensagemSucesso }}</span>
+        </div>
+      </div>
+    }
+
+    @if (mensagemErro) {
+      <div class="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-xl">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+          <span>{{ mensagemErro }}</span>
+        </div>
+      </div>
+    }
+
+    <!-- Seleção de Contabilidade -->
+    <div class="mb-6 glass-strong rounded-2xl p-4 border">
+      <div class="flex items-center gap-4 flex-wrap">
+        <label class="text-sm font-semibold text-[#0C0D0A] whitespace-nowrap">Contabilidade:</label>
+        <select
+          [ngModel]="contabilidadeSelecionadaId"
+          (ngModelChange)="onContabilidadeChange($event)"
+          class="px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 font-semibold min-w-[250px]"
+        >
+          <option [ngValue]="null">Todas as contabilidades</option>
+          @for (contabilidade of contabilidades; track contabilidade.id) {
+            <option [ngValue]="contabilidade.id">
+              {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
+            </option>
+          }
+        </select>
+      </div>
+    </div>
+
+    <!-- Botões de Ação e Exportação -->
+    <div class="mb-6 flex justify-between items-center flex-wrap gap-4">
+      <div class="flex gap-3">
+        <button
+          (click)="validarTodasCredenciais()"
+          [disabled]="validandoTodas || empresasFiltradas.length === 0"
+          class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] font-semibold text-sm hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          @if (validandoTodas) {
+            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Validando...
+          } @else {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Validar todas Credenciais
+          }
+        </button>
+      </div>
+      
+      <div class="flex gap-3">
+        <button
+          (click)="exportToPDF()"
+          class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#1E2615] bg-[#1E2615] text-white font-semibold text-sm hover:bg-[#0C0D0A] hover:border-[#0C0D0A] transition-all duration-200 shadow-sm hover:shadow-md"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+          </svg>
+          Exportar PDF
+        </button>
+        <button
+          (click)="exportToExcel()"
+          class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-[#7EBFB3] bg-[#7EBFB3] text-[#0C0D0A] font-semibold text-sm hover:bg-[#8BCB70] hover:border-[#8BCB70] transition-all duration-200 shadow-sm hover:shadow-md"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+          </svg>
+          Exportar Excel
+        </button>
+      </div>
+    </div>
+
+    <!-- Barra de Busca e Filtros -->
+    <div class="glass-strong rounded-2xl p-4 mb-6 border">
+      <div class="flex flex-wrap gap-4 items-center">
+        <!-- Dropdown de Coluna -->
+        <div class="flex items-center">
+          <select
+            [(ngModel)]="searchColumn"
+            (change)="onSearchColumnChange()"
+            class="px-3 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 font-semibold"
+          >
+            @for (col of searchColumns; track col.value) {
+              <option [value]="col.value">{{ col.label }}</option>
+            }
+          </select>
+        </div>
+
+        <!-- Campo de Busca -->
+        <div class="flex-1 min-w-[200px]">
+          <input
+            type="text"
+            [(ngModel)]="searchValue"
+            (input)="onSearchChange()"
+            placeholder="Digite para buscar..."
+            class="w-full px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 placeholder-[#1E2615]/50"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- Lista de Empresas -->
+    <div class="glass-strong rounded-2xl overflow-hidden border mb-6">
+      <div class="p-4 bg-[#A9D9D4]/20 border-b flex justify-between items-center">
+        <h3 class="text-xl font-bold text-[#0C0D0A]">Empresas Cadastradas</h3>
+        <button
+          (click)="abrirModalCredenciais()"
+          [disabled]="!contabilidadeSelecionadaId"
+          class="px-6 py-3 rounded-xl border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] font-semibold hover:bg-[#8BCB70]/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+          </svg>
+          Cadastrar uma nova credencial
+        </button>
+      </div>
+
+      @if (carregandoEmpresas && empresasFiltradas.length === 0) {
+        <div class="text-center py-12">
+          <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-[#8BCB70]"></div>
+          <p class="mt-4 text-[#1E2615]">Carregando empresas...</p>
+        </div>
+      } @else if (empresasFiltradas.length === 0) {
+        <div class="text-center py-12">
+          <svg class="w-16 h-16 text-[#8BCB70]/50 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+          </svg>
+          <p class="text-[#1E2615] text-lg mb-4">Nenhuma empresa cadastrada</p>
+          <p class="text-[#1E2615]/70 text-sm">Selecione uma contabilidade e clique em "Cadastrar uma nova credencial"</p>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-[#7EBFB3]/20">
+            <thead class="bg-[#A9D9D4]/20">
+              <tr>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('cnpj'),
+                    'text-[#0C0D0A]': !isColumnSorted('cnpj')
+                  }"
+                  (click)="toggleSort('cnpj')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>CNPJ</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('cnpj'),
+                      'text-[#1E2615]/40': !isColumnSorted('cnpj')
+                    }">{{ getSortIcon('cnpj') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('razao_social'),
+                    'text-[#0C0D0A]': !isColumnSorted('razao_social')
+                  }"
+                  (click)="toggleSort('razao_social')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Razão Social</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('razao_social'),
+                      'text-[#1E2615]/40': !isColumnSorted('razao_social')
+                    }">{{ getSortIcon('razao_social') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('usuario'),
+                    'text-[#0C0D0A]': !isColumnSorted('usuario')
+                  }"
+                  (click)="toggleSort('usuario')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Usuário</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('usuario'),
+                      'text-[#1E2615]/40': !isColumnSorted('usuario')
+                    }">{{ getSortIcon('usuario') }}</span>
+                  </div>
+                </th>
+                <th class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider text-[#0C0D0A]">Senha</th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('tipo'),
+                    'text-[#0C0D0A]': !isColumnSorted('tipo')
+                  }"
+                  (click)="toggleSort('tipo')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Tipo</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('tipo'),
+                      'text-[#1E2615]/40': !isColumnSorted('tipo')
+                    }">{{ getSortIcon('tipo') }}</span>
+                  </div>
+                </th>
+                <th 
+                  class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                  [ngClass]="{
+                    'text-[#8BCB70]': isColumnSorted('regime'),
+                    'text-[#0C0D0A]': !isColumnSorted('regime')
+                  }"
+                  (click)="toggleSort('regime')"
+                >
+                  <div class="flex items-center gap-2">
+                    <span>Regime</span>
+                    <span class="text-[10px]" [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('regime'),
+                      'text-[#1E2615]/40': !isColumnSorted('regime')
+                    }">{{ getSortIcon('regime') }}</span>
+                  </div>
+                </th>
+                <th class="px-6 py-4 text-center text-xs font-bold uppercase tracking-wider text-[#0C0D0A]">Ações</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#7EBFB3]/10">
+              @for (empresa of empresasFiltradas; track empresa.id) {
+                @for (credencial of empresa.credenciais; track credencial.id) {
+                  <tr class="hover:bg-[#A9D9D4]/10 transition-colors">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-[#0C0D0A]">{{ formatarCPFouCNPJ(empresa.cnpj, credencial.tipo_login) }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ empresa.razao_social }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ credencial.usuario }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">
+                      <div class="flex items-center gap-2">
+                        <span [class.font-mono]="isSenhaVisivel(credencial.id)">
+                          {{ obterSenhaExibicao(credencial.id) }}
+                        </span>
+                        <button
+                          (click)="toggleSenhaVisivel(credencial.id)"
+                          [disabled]="carregandoSenha && credencialIdPendente === credencial.id"
+                          class="text-[#7EBFB3] hover:text-[#8BCB70] transition-colors disabled:opacity-50"
+                          [title]="isSenhaVisivel(credencial.id) ? 'Ocultar senha' : 'Mostrar senha'"
+                        >
+                          @if (carregandoSenha && credencialIdPendente === credencial.id) {
+                            <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          } @else if (isSenhaVisivel(credencial.id)) {
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                            </svg>
+                          } @else {
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                            </svg>
+                          }
+                        </button>
+                      </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ credencial.tipo }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">{{ empresa.regime || '-' }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                      <div class="flex items-center justify-center gap-2">
+                        <button
+                          (click)="abrirModalValidacao(empresa)"
+                          class="text-[#7EBFB3] hover:text-[#8BCB70] transition-colors font-semibold flex items-center gap-1"
+                          title="Validar credenciais"
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                          </svg>
+                          Validar
+                        </button>
+                        <button
+                          (click)="abrirModalEdicao(empresa, credencial)"
+                          class="text-blue-600 hover:text-blue-800 transition-colors"
+                          title="Editar credencial"
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                          </svg>
+                        </button>
+                        <button
+                          (click)="excluirCredencial(credencial.id)"
+                          [disabled]="excluindoCredencial"
+                          class="text-red-600 hover:text-red-800 transition-colors disabled:opacity-50"
+                          title="Excluir credencial"
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                }
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+<!-- Modal Cadastro de Credenciais -->
+@if (modalCredenciaisAberto) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalCredenciais()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-2xl w-full p-8 border" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-white">
+          @if (passoAtualModal === 1) {
+            Cadastrar Nova Credencial
+          } @else {
+            Vincular à Contabilidade
+          }
+        </h3>
+        <button
+          (click)="fecharModalCredenciais()"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Passo 1: Cadastro de Credenciais -->
+      @if (passoAtualModal === 1) {
+        <form [formGroup]="credenciaisForm" (ngSubmit)="salvarCredenciais()" class="space-y-6">
+        <!-- Nome da Empresa -->
+        <div>
+          <label class="block text-sm font-semibold text-white mb-2">
+            Nome da Empresa <span class="text-red-400">*</span>
+          </label>
+          <input
+            type="text"
+            formControlName="nome_empresa"
+            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
+            [class.border-red-400]="credenciaisForm.get('nome_empresa')?.invalid && credenciaisForm.get('nome_empresa')?.touched"
+            placeholder="Digite o nome da empresa"
+          />
+          @if (credenciaisForm.get('nome_empresa')?.invalid && credenciaisForm.get('nome_empresa')?.touched) {
+            <p class="text-red-400 text-sm mt-1">Campo obrigatório (mínimo 3 caracteres)</p>
+          }
+        </div>
+
+        <!-- Tipo de Login (CPF ou CNPJ) - Cards -->
+        <div>
+          <label class="block text-sm font-semibold text-white mb-3">
+            Tipo de Login <span class="text-red-400">*</span>
+          </label>
+          <div class="grid grid-cols-2 gap-4">
+            <button
+              type="button"
+              (click)="selecionarTipoLogin('cnpj')"
+              [ngClass]="getTipoLoginCardClasses('cnpj')"
+              class="px-6 py-4 rounded-xl border-2 transition-all text-left"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all"
+                     [ngClass]="getTipoLoginCircleClasses('cnpj')">
+                  @if (tipoLoginSelecionado === 'cnpj') {
+                    <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                  }
+                </div>
+                <span class="text-white font-semibold text-lg">CNPJ</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              (click)="selecionarTipoLogin('cpf')"
+              [ngClass]="getTipoLoginCardClasses('cpf')"
+              class="px-6 py-4 rounded-xl border-2 transition-all text-left"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all"
+                     [ngClass]="getTipoLoginCircleClasses('cpf')">
+                  @if (tipoLoginSelecionado === 'cpf') {
+                    <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                  }
+                </div>
+                <span class="text-white font-semibold text-lg">CPF</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Usuário (CPF ou CNPJ) -->
+        <div>
+          <label class="block text-sm font-semibold text-white mb-2">
+            {{ tipoLoginSelecionado === 'cnpj' ? 'CNPJ' : 'CPF' }} <span class="text-red-400">*</span>
+          </label>
+          <input
+            type="text"
+            formControlName="usuario"
+            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
+            [class.border-red-400]="credenciaisForm.get('usuario')?.invalid && credenciaisForm.get('usuario')?.touched"
+            [placeholder]="'Digite o ' + (tipoLoginSelecionado === 'cnpj' ? 'CNPJ' : 'CPF')"
+          />
+        </div>
+
+        <!-- Senha -->
+        <div>
+          <label class="block text-sm font-semibold text-white mb-2">
+            Senha <span class="text-red-400">*</span>
+          </label>
+          <input
+            type="password"
+            formControlName="senha"
+            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
+            [class.border-red-400]="credenciaisForm.get('senha')?.invalid && credenciaisForm.get('senha')?.touched"
+            placeholder="Digite a senha"
+          />
+        </div>
+
+        <!-- Regime Tributário - Cards -->
+        <div>
+          <label class="block text-sm font-semibold text-white mb-3">
+            Regime Tributário <span class="text-red-400">*</span>
+          </label>
+          <div class="grid grid-cols-2 gap-4">
+            @for (regime of getRegimes(); track regime) {
+              <button
+                type="button"
+                (click)="selecionarRegime(regime)"
+                [ngClass]="getRegimeCardClasses(regime)"
+                class="px-6 py-4 rounded-xl border-2 transition-all text-left"
+              >
+                <div class="flex items-center gap-3">
+                  <div class="w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all"
+                       [ngClass]="getRegimeCircleClasses(regime)">
+                    @if (regimeSelecionado === regime) {
+                      <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
+                      </svg>
+                    }
+                  </div>
+                  <span class="text-white font-semibold">{{ regime }}</span>
+                </div>
+              </button>
+            }
+          </div>
+        </div>
+
+        <!-- Botões -->
+        <div class="flex gap-4 pt-4">
+          <button
+            type="button"
+            (click)="fecharModalCredenciais()"
+            class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 transition-all font-semibold"
+            [disabled]="salvandoCredenciais"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            [disabled]="credenciaisForm.invalid || salvandoCredenciais"
+            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+          >
+            @if (salvandoCredenciais) {
+              <span class="flex items-center justify-center">
+                <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Salvando...
+              </span>
+            } @else {
+              Continuar
+            }
+          </button>
+        </div>
+      </form>
+      }
+
+      <!-- Passo 2: Seleção de Contabilidade -->
+      @if (passoAtualModal === 2 && dadosCadastro) {
+        <div class="mb-6">
+          <div class="p-4 rounded-xl border border-[#8BCB70]/50 bg-[#8BCB70]/10 mb-4">
+            <p class="text-sm text-white font-semibold mb-2">Informações da Empresa:</p>
+            <div class="space-y-1 text-sm text-white/90">
+              <p><strong>Empresa:</strong> {{ dadosCadastro.nome_empresa }}</p>
+              <p><strong>{{ dadosCadastro.tipo_login === 'cnpj' ? 'CNPJ' : 'CPF' }}:</strong> {{ formatarCPFouCNPJ(dadosCadastro.usuario || dadosCadastro.cnpj, dadosCadastro.tipo_login) }}</p>
+              <p><strong>Regime:</strong> {{ dadosCadastro.regime }}</p>
+              <p><strong>Usuário:</strong> {{ dadosCadastro.usuario }}</p>
+            </div>
+          </div>
+        </div>
+
+        <form [formGroup]="contabilidadeForm" (ngSubmit)="confirmarVinculacao()" class="space-y-5">
+          <div>
+            @if (contabilidadeSelecionadaId !== null) {
+              <!-- Contabilidade Global Selecionada: Mostra apenas informação -->
+              <label class="block text-sm font-semibold text-white mb-2">
+                Contabilidade
+              </label>
+              @if (carregandoContabilidades) {
+                <div class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl text-white/70 bg-white/10">
+                  Carregando contabilidades...
+                </div>
+              } @else {
+                @for (contabilidade of contabilidades; track contabilidade.id) {
+                  @if (contabilidade.id === contabilidadeSelecionadaId) {
+                    <div class="w-full px-4 py-3 glass border border-[#8BCB70]/50 rounded-xl text-white bg-[#8BCB70]/20">
+                      <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span class="font-semibold">{{ contabilidade.nome_contabilidade }}</span>
+                        <span class="text-white/70">({{ formatarCNPJ(contabilidade.cnpj) }})</span>
+                      </div>
+                      <p class="text-xs text-white/70 mt-1">Selecionada globalmente na tela principal</p>
+                    </div>
+                  }
+                }
+              }
+            } @else {
+              <!-- Sem Contabilidade Global: Permite seleção -->
+              <label for="contabilidade_id" class="block text-sm font-semibold text-white mb-2">
+                Contabilidade <span class="text-red-400">*</span>
+              </label>
+              @if (carregandoContabilidades) {
+                <div class="w-full px-4 py-3 glass border border-[#7EBFB3]/50 rounded-xl text-white/70 bg-white/10">
+                  Carregando contabilidades...
+                </div>
+              } @else {
+                <select
+                  id="contabilidade_id"
+                  formControlName="contabilidade_id"
+                  class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10"
+                  [ngClass]="{
+                    'border-[#7EBFB3]/50 focus:ring-[#8BCB70]': contabilidadeForm.get('contabilidade_id')?.valid || !contabilidadeForm.get('contabilidade_id')?.touched,
+                    'border-red-400 focus:ring-red-400 bg-red-400/20': contabilidadeForm.get('contabilidade_id')?.invalid && contabilidadeForm.get('contabilidade_id')?.touched
+                  }"
+                  [disabled]="salvandoCredenciais || contabilidades.length === 0"
+                >
+                  <option value="" disabled>Selecione uma contabilidade</option>
+                  @for (contabilidade of contabilidades; track contabilidade.id) {
+                    <option [value]="contabilidade.id" class="text-[#0C0D0A]">
+                      {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
+                    </option>
+                  }
+                </select>
+                @if (contabilidades.length === 0 && !carregandoContabilidades) {
+                  <p class="text-white/80 text-sm mt-2">Nenhuma contabilidade cadastrada. <a routerLink="/contabilidades" class="text-[#8BCB70] underline">Cadastre uma contabilidade</a> primeiro.</p>
+                }
+                @if (contabilidadeForm.get('contabilidade_id')?.invalid && contabilidadeForm.get('contabilidade_id')?.touched) {
+                  <p class="text-red-400 text-sm mt-2">Selecione uma contabilidade</p>
+                }
+              }
+            }
+          </div>
+
+          <!-- Mensagem de Erro/Sucesso -->
+          @if (mensagemErro) {
+            <div class="p-4 rounded-xl border bg-red-400/30 text-white border-red-400/50">
+              <span class="text-sm font-semibold">{{ mensagemErro }}</span>
+            </div>
+          }
+
+          <div class="flex gap-4 pt-4">
+            <button
+              type="button"
+              (click)="voltarParaPasso1()"
+              class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 hover:text-white transition-all font-semibold"
+              [disabled]="salvandoCredenciais"
+            >
+              Voltar
+            </button>
+            
+            <button
+              type="submit"
+              [disabled]="!contabilidadeForm.valid || salvandoCredenciais"
+              class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+            >
+              @if (salvandoCredenciais) {
+                <span class="flex items-center justify-center">
+                  <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Salvando...
+                </span>
+            } @else {
+              Continuar
+            }
+            </button>
+          </div>
+        </form>
+      }
+    </div>
+  </div>
+}
+
+<!-- Modal Edição de Credencial -->
+@if (modalEdicaoAberto && credencialEditando) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalEdicao()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-white">Editar Credencial</h3>
+        <button
+          (click)="fecharModalEdicao()"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <form [formGroup]="edicaoForm" (ngSubmit)="salvarEdicao()" class="space-y-6">
+        <div>
+          <label class="block text-sm font-semibold text-white mb-2">
+            Nova Senha <span class="text-red-400">*</span>
+          </label>
+          <input
+            type="password"
+            formControlName="senha"
+            class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
+            placeholder="Digite a nova senha"
+          />
+        </div>
+
+        <div class="flex gap-4 pt-4">
+          <button
+            type="button"
+            (click)="fecharModalEdicao()"
+            class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 transition-all font-semibold"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            [disabled]="edicaoForm.invalid"
+            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+          >
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+}
+
+<!-- Modal Validação de Credenciais -->
+@if (modalValidacaoAberto) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalValidacao()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-white">Validar Credenciais</h3>
+        <button
+          (click)="fecharModalValidacao()"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-6">
+        <p class="text-sm text-white/90 mb-4">
+          Esta validação irá testar as credenciais através de uma automação no portal NFSe Nacional.
+        </p>
+
+        @if (mensagemValidacao) {
+          <div class="p-4 rounded-xl border mb-4" [ngClass]="getValidacaoClasses()">
+            <div class="flex items-center gap-2">
+              @if (validacaoSucesso === true) {
+                <svg class="w-6 h-6 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+              } @else {
+                <svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+              }
+              <span class="text-sm font-semibold">{{ mensagemValidacao }}</span>
+            </div>
+          </div>
+        }
+
+        <div class="flex gap-4 pt-4">
+          <button
+            type="button"
+            (click)="fecharModalValidacao()"
+            class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 transition-all font-semibold"
+            [disabled]="validandoCredenciais"
+          >
+            Fechar
+          </button>
+          <button
+            type="button"
+            (click)="validarCredenciais()"
+            [disabled]="validandoCredenciais"
+            class="flex-1 px-6 py-3 btn-futuristic rounded-xl disabled:bg-white/20 disabled:cursor-not-allowed disabled:text-white/50 transition-all font-bold text-white"
+          >
+            @if (validandoCredenciais) {
+              <span class="flex items-center justify-center">
+                <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Validando...
+              </span>
+            } @else {
+              Iniciar Validação
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Modal Senha Admin -->
+@if (modalSenhaAdminAberto) {
+  <div class="fixed inset-0 bg-[#0C0D0A]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" (click)="fecharModalSenhaAdmin()">
+    <div class="glass-strong rounded-2xl shadow-2xl max-w-md w-full p-8 border" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-2xl font-bold text-white">Senha de Administrador</h3>
+        <button
+          (click)="fecharModalSenhaAdmin()"
+          class="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-6">
+        <p class="text-sm text-white/90 mb-4">
+          Digite a senha de administrador para visualizar as senhas:
+        </p>
+        <input
+          type="password"
+          [(ngModel)]="senhaAdmin"
+          (keyup.enter)="verificarSenhaAdmin()"
+          class="w-full px-4 py-3 glass border rounded-xl focus:outline-none focus:ring-2 transition-all text-white bg-white/10 placeholder-white/50"
+          placeholder="Digite a senha de administrador"
+        />
+      </div>
+
+      <div class="flex gap-4 pt-4">
+        <button
+          type="button"
+          (click)="fecharModalSenhaAdmin()"
+          class="flex-1 px-6 py-3 glass border border-white/30 rounded-xl text-white hover:bg-white/10 transition-all font-semibold"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          (click)="verificarSenhaAdmin()"
+          class="flex-1 px-6 py-3 btn-futuristic rounded-xl transition-all font-bold text-white"
+        >
+          Verificar
+        </button>
+      </div>
+    </div>
+  </div>
+}

@@ -5,6 +5,7 @@ import { CertificadoUploadComponent } from './components/certificado-upload/cert
 import { ExecucaoComponent } from './components/execucao/execucao.component';
 import { ConfiguracoesComponent } from './components/configuracoes/configuracoes.component';
 import { ContabilidadesComponent } from './components/contabilidades/contabilidades.component';
+import { CredenciaisComponent } from './components/credenciais/credenciais.component';
 
 export const routes: Routes = [
   {
@@ -40,6 +41,11 @@ export const routes: Routes = [
         path: 'contabilidades',
         component: ContabilidadesComponent,
         data: { animation: 'contabilidades' }
+      },
+      {
+        path: 'credenciais',
+        component: CredenciaisComponent,
+        data: { animation: 'credenciais' }
       }
     ]
   }
