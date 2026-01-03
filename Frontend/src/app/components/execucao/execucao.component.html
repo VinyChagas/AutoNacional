@@ -93,16 +93,32 @@
 
         <div class="flex items-center gap-4">
           <div class="flex items-center gap-2">
-            <label for="competencia" class="text-sm font-semibold text-[#1E2615]">
-              Competência:
+            <label for="dataInicio" class="text-sm font-semibold text-[#1E2615]">
+              Data Início:
             </label>
             <input
               type="text"
-              id="competencia"
-              [(ngModel)]="competencia"
-              placeholder="MMAAAA"
-              maxlength="6"
-              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] w-24"
+              id="dataInicio"
+              [(ngModel)]="dataInicio"
+              (input)="formatarData($event, 'inicio')"
+              placeholder="DD/MM/YYYY"
+              maxlength="10"
+              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] w-32"
+            />
+          </div>
+          
+          <div class="flex items-center gap-2">
+            <label for="dataFim" class="text-sm font-semibold text-[#1E2615]">
+              Data Fim:
+            </label>
+            <input
+              type="text"
+              id="dataFim"
+              [(ngModel)]="dataFim"
+              (input)="formatarData($event, 'fim')"
+              placeholder="DD/MM/YYYY"
+              maxlength="10"
+              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] w-32"
             />
           </div>
           

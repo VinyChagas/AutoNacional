@@ -1000,6 +1000,58 @@ async def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_emp
     }
 
 
+async def preencher_datas_e_filtrar(page: Page, data_inicio: str, data_fim: str) -> None:
+    """
+    Preenche os campos de data início e data fim e clica no botão filtrar.
+    
+    Args:
+        page: Página do Playwright
+        data_inicio: Data início no formato DD/MM/YYYY (ex: "01/12/2025")
+        data_fim: Data fim no formato DD/MM/YYYY (ex: "31/12/2025")
+    """
+    try:
+        logger.info(f"Preenchendo datas: início={data_inicio}, fim={data_fim}")
+        
+        # Aguarda os campos de data carregarem usando xpath
+        campo_data_inicio = page.locator('xpath=//*[@id="datainicio"]')
+        campo_data_fim = page.locator('xpath=//*[@id="datafim"]')
+        
+        await campo_data_inicio.wait_for(state='visible', timeout=10000)
+        await campo_data_fim.wait_for(state='visible', timeout=10000)
+        
+        # Preenche data início
+        await campo_data_inicio.fill('')
+        await campo_data_inicio.fill(data_inicio)
+        logger.info(f"✅ Data início preenchida: {data_inicio}")
+        
+        # Preenche data fim
+        await campo_data_fim.fill('')
+        await campo_data_fim.fill(data_fim)
+        logger.info(f"✅ Data fim preenchida: {data_fim}")
+        
+        # Aguarda um pouco para garantir que os campos foram preenchidos
+        delay_ms = get_min_action_delay_ms()
+        await page.wait_for_timeout(delay_ms)
+        
+        # Clica no botão filtrar usando xpath
+        botao_filtrar = page.locator('xpath=//*[@id="searchbar"]/form/div[2]/div[2]/div[2]/button')
+        await botao_filtrar.wait_for(state='visible', timeout=5000)
+        await botao_filtrar.click()
+        logger.info("✅ Botão filtrar clicado")
+        
+        # Aguarda a tabela recarregar após filtrar
+        await page.wait_for_load_state("networkidle", timeout=10000)
+        await page.wait_for_timeout(delay_ms * 2)
+        
+        logger.info("✅ Filtro aplicado com sucesso")
+        
+    except Exception as e:
+        logger.error(f"Erro ao preencher datas e filtrar: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
+
+
 async def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str) -> None:
     """
     Função principal que processa notas fiscais de uma competência específica.

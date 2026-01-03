@@ -34,8 +34,33 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   
   carregandoCertificados = false;
   headlessMode = false;
-  competencia: string = ''; // Formato MMAAAA (ex: 112025)
+  dataInicio: string = ''; // Formato DD/MM/YYYY (ex: 01/12/2025)
+  dataFim: string = ''; // Formato DD/MM/YYYY (ex: 31/12/2025)
   tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
+
+  // Formata data enquanto o usuário digita (DD/MM/YYYY)
+  formatarData(event: Event, tipo: 'inicio' | 'fim') {
+    const input = event.target as HTMLInputElement;
+    let value = input.value.replace(/\D/g, ''); // Remove tudo que não é dígito
+    
+    if (value.length > 0) {
+      if (value.length <= 2) {
+        value = value;
+      } else if (value.length <= 4) {
+        value = value.substring(0, 2) + '/' + value.substring(2, 4);
+      } else {
+        value = value.substring(0, 2) + '/' + value.substring(2, 4) + '/' + value.substring(4, 8);
+      }
+    }
+    
+    if (tipo === 'inicio') {
+      this.dataInicio = value;
+    } else {
+      this.dataFim = value;
+    }
+    
+    input.value = value;
+  }
   
   // Relatório
   resumo: ResumoExecucoesResponse | null = null;
@@ -340,10 +365,30 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     console.log('[Iniciar] Iniciando execução das empresas carregadas...');
     console.log('[Iniciar] Execuções carregadas:', this.execucoes.length);
 
-    // Valida competência antes de iniciar
-    if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
-      console.error('[Iniciar] Competência inválida:', this.competencia);
-      alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
+    // Valida datas antes de iniciar
+    if (!this.dataInicio || !this.dataFim) {
+      console.error('[Iniciar] Datas inválidas:', { dataInicio: this.dataInicio, dataFim: this.dataFim });
+      alert('Por favor, informe a data de início e data de fim.');
+      return;
+    }
+    
+    // Valida formato das datas (DD/MM/YYYY)
+    const dataInicioRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+    const dataFimRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+    
+    if (!dataInicioRegex.test(this.dataInicio) || !dataFimRegex.test(this.dataFim)) {
+      alert('Por favor, informe as datas no formato DD/MM/YYYY (ex: 01/12/2025).');
+      return;
+    }
+    
+    // Valida que data fim é maior ou igual a data início
+    const [diaInicio, mesInicio, anoInicio] = this.dataInicio.split('/').map(Number);
+    const [diaFim, mesFim, anoFim] = this.dataFim.split('/').map(Number);
+    const dataInicioObj = new Date(anoInicio, mesInicio - 1, diaInicio);
+    const dataFimObj = new Date(anoFim, mesFim - 1, diaFim);
+    
+    if (dataFimObj < dataInicioObj) {
+      alert('A data de fim deve ser maior ou igual à data de início.');
       return;
     }
 
@@ -382,7 +427,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     try {
       const request: MultiplasExecucoesRequest = {
         empresas: empresas,
-        competencia: this.competencia,
+        dataInicio: this.dataInicio,
+        dataFim: this.dataFim,
         tipo: this.tipoNotas,
         headless: this.headlessMode
       };
@@ -597,9 +643,18 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   async executarCertificado(certificado: Certificado) {
-    // Valida competência
-    if (!this.competencia || this.competencia.length !== 6 || !/^\d{6}$/.test(this.competencia)) {
-      alert('Por favor, informe uma competência válida no formato MMAAAA (ex: 112025 para nov/2025).');
+    // Valida datas
+    if (!this.dataInicio || !this.dataFim) {
+      alert('Por favor, informe a data de início e data de fim.');
+      return;
+    }
+    
+    // Valida formato das datas (DD/MM/YYYY)
+    const dataInicioRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+    const dataFimRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+    
+    if (!dataInicioRegex.test(this.dataInicio) || !dataFimRegex.test(this.dataFim)) {
+      alert('Por favor, informe as datas no formato DD/MM/YYYY (ex: 01/12/2025).');
       return;
     }
 
@@ -610,7 +665,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       const response = await firstValueFrom(
         this.execucaoService.executarEmpresa(
           empresaId,
-          this.competencia,
+          this.dataInicio,
+          this.dataFim,
           this.tipoNotas,
           this.headlessMode
         )
@@ -714,8 +770,9 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.mostrandoResumo = true;
     
     try {
+      // Usa dataInicio e dataFim para o resumo (se necessário)
       this.resumo = await firstValueFrom(
-        this.execucaoService.obterResumoExecucoes(this.competencia || undefined)
+        this.execucaoService.obterResumoExecucoes(undefined)
       );
     } catch (error) {
       console.error('Erro ao gerar resumo:', error);
@@ -728,13 +785,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   async baixarResumoCSV() {
     try {
       const blob = await firstValueFrom(
-        this.execucaoService.baixarResumoCSV(this.competencia || undefined)
+        this.execucaoService.baixarResumoCSV(undefined)
       );
       
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `resumo_execucoes_${this.competencia || 'todas'}_${new Date().getTime()}.csv`;
+      const nomeArquivo = this.dataInicio && this.dataFim 
+        ? `resumo_execucoes_${this.dataInicio.replace(/\//g, '-')}_${this.dataFim.replace(/\//g, '-')}_${new Date().getTime()}.csv`
+        : `resumo_execucoes_todas_${new Date().getTime()}.csv`;
+      link.download = nomeArquivo;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

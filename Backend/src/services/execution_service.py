@@ -132,7 +132,8 @@ class ExecutionService:
         self,
         empresa_id: str,
         cnpj: str,
-        competencia: str,
+        data_inicio: str,
+        data_fim: str,
         tipo: str = "ambas",
         headless: bool = None
     ) -> str:
@@ -142,7 +143,8 @@ class ExecutionService:
         Args:
             empresa_id: ID da empresa no banco de dados
             cnpj: CNPJ da empresa (14 dígitos)
-            competencia: Competência no formato MMAAAA (ex: "112025")
+            data_inicio: Data início no formato DD/MM/YYYY (ex: "01/12/2025")
+            data_fim: Data fim no formato DD/MM/YYYY (ex: "31/12/2025")
             tipo: Tipo de notas ("emitidas", "recebidas" ou "ambas")
             headless: Se True, executa navegador em modo headless. Se None, usa config padrão.
             
@@ -158,12 +160,15 @@ class ExecutionService:
                 raise ValueError("empresa_id não pode ser None ou vazio")
             if not cnpj:
                 raise ValueError("cnpj não pode ser None ou vazio")
-            if not competencia:
-                raise ValueError("competencia não pode ser None ou vazio")
+            if not data_inicio:
+                raise ValueError("data_inicio não pode ser None ou vazio")
+            if not data_fim:
+                raise ValueError("data_fim não pode ser None ou vazio")
             
             empresa_id = str(empresa_id)
             cnpj = str(cnpj).strip()
-            competencia = str(competencia).strip()
+            data_inicio = str(data_inicio).strip()
+            data_fim = str(data_fim).strip()
             
             # Usa headless da config se não fornecido
             if headless is None:
@@ -185,7 +190,8 @@ class ExecutionService:
                 execucao = ExecucaoInfo(
                     empresa_id=empresa_id,
                     cnpj=cnpj,
-                    competencia=competencia,
+                    periodo_inicio=data_inicio,
+                    periodo_fim=data_fim,
                     tipo=tipo,
                     headless=headless
                 )
@@ -196,7 +202,8 @@ class ExecutionService:
                     execucao_db_id = self._criar_execucao_db(
                         empresa_id=empresa_id,
                         cnpj=cnpj,
-                        competencia=competencia,
+                        data_inicio=data_inicio,
+                        data_fim=data_fim,
                         status=StatusExecucao.PENDENTE
                     )
                     execucao.execucao_db_id = execucao_db_id
@@ -557,24 +564,7 @@ class ExecutionService:
             execucao.progresso = 40
             execucao.mensagem = f"Processando notas ({execucao.tipo})..."
             self._adicionar_log(execucao, f"Etapa 2-3: Processando notas ({execucao.tipo})")
-            
-            # Converte competência de MMAAAA para MM/AAAA
-            competencia_formatada = None
-            try:
-                if len(execucao.competencia) == 6 and execucao.competencia.isdigit():
-                    # Formato MMAAAA -> MM/AAAA
-                    mes = execucao.competencia[:2]
-                    ano = execucao.competencia[2:]
-                    competencia_formatada = f"{mes}/{ano}"
-                    self._adicionar_log(execucao, f"Competência convertida: {execucao.competencia} -> {competencia_formatada}")
-                else:
-                    # Se já estiver no formato MM/AAAA, usa diretamente
-                    competencia_formatada = execucao.competencia
-                    self._adicionar_log(execucao, f"Competência já no formato correto: {competencia_formatada}")
-            except Exception as e:
-                error_msg = f"Erro ao converter competência: {str(e)}"
-                self._adicionar_log(execucao, f"❌ {error_msg}")
-                raise ValueError(error_msg)
+            self._adicionar_log(execucao, f"Período: {execucao.periodo_inicio} até {execucao.periodo_fim}")
             
             # Configura caminho base de downloads antes de processar notas
             try:
@@ -681,6 +671,15 @@ class ExecutionService:
                     # Aguarda um pouco para garantir que a página carregou completamente
                     await execucao.page.wait_for_timeout(1000)
                     
+                    # Preenche datas e filtra antes de processar
+                    from processar_notas_competencia import preencher_datas_e_filtrar
+                    await preencher_datas_e_filtrar(execucao.page, execucao.periodo_inicio, execucao.periodo_fim)
+                    
+                    # Extrai competência das datas para usar na filtragem da tabela (formato MM/AAAA)
+                    # datetime já está importado no topo do arquivo
+                    data_inicio_obj = datetime.strptime(execucao.periodo_inicio, "%d/%m/%Y")
+                    competencia_formatada = f"{data_inicio_obj.strftime('%m')}/{data_inicio_obj.strftime('%Y')}"
+                    
                     # Verifica se há mensagem "Nenhum registro encontrado" antes de aguardar tabela
                     from processar_notas_competencia import verificar_sem_registros
                     sem_registros_antes = await verificar_sem_registros(execucao.page)
@@ -717,6 +716,9 @@ class ExecutionService:
                     
                     # Aguarda um pouco para garantir que a página carregou completamente
                     await execucao.page.wait_for_timeout(1000)
+                    
+                    # Preenche datas e filtra antes de processar
+                    await preencher_datas_e_filtrar(execucao.page, execucao.periodo_inicio, execucao.periodo_fim)
                     
                     # Verifica se há mensagem "Nenhum registro encontrado" antes de aguardar tabela
                     sem_registros_antes_recebidas = await verificar_sem_registros(execucao.page)
@@ -762,13 +764,22 @@ class ExecutionService:
                     self._adicionar_log(execucao, "✅ Notas emitidas e recebidas processadas")
                 elif execucao.tipo == "emitidas":
                     # Processa apenas emitidas
-                    from processar_notas_competencia import processar_tabela_emitidas
+                    from processar_notas_competencia import processar_tabela_emitidas, preencher_datas_e_filtrar
                     # Acessa menu de emitidas
                     menu_emitidas = execucao.page.locator("li:nth-of-type(3) img").first
                     await menu_emitidas.wait_for(state="visible", timeout=10000)
                     await menu_emitidas.click()
                     await execucao.page.wait_for_url("**/Notas/Emitidas", timeout=15000)
                     await execucao.page.wait_for_load_state("networkidle", timeout=15000)
+                    
+                    # Preenche datas e filtra antes de processar
+                    await preencher_datas_e_filtrar(execucao.page, execucao.periodo_inicio, execucao.periodo_fim)
+                    
+                    # Extrai competência das datas para usar na filtragem da tabela (formato MM/AAAA)
+                    # datetime já está importado no topo do arquivo
+                    data_inicio_obj = datetime.strptime(execucao.periodo_inicio, "%d/%m/%Y")
+                    competencia_formatada = f"{data_inicio_obj.strftime('%m')}/{data_inicio_obj.strftime('%Y')}"
+                    
                     await execucao.page.wait_for_selector("table tbody tr", timeout=10000)
                     # Processa tabela (async)
                     resultado_emitidas = await processar_tabela_emitidas(execucao.page, competencia_formatada, nome_empresa)
@@ -789,13 +800,22 @@ class ExecutionService:
                     self._adicionar_log(execucao, "✅ Notas emitidas processadas")
                 elif execucao.tipo == "recebidas":
                     # Processa apenas recebidas
-                    from processar_notas_competencia import processar_tabela_recebidas
+                    from processar_notas_competencia import processar_tabela_recebidas, preencher_datas_e_filtrar
                     # Acessa menu de recebidas
                     menu_recebidas = execucao.page.locator("li:nth-of-type(4) img").first
                     await menu_recebidas.wait_for(state="visible", timeout=10000)
                     await menu_recebidas.click()
                     await execucao.page.wait_for_url("**/Notas/Recebidas", timeout=15000)
                     await execucao.page.wait_for_load_state("networkidle", timeout=15000)
+                    
+                    # Preenche datas e filtra antes de processar
+                    await preencher_datas_e_filtrar(execucao.page, execucao.periodo_inicio, execucao.periodo_fim)
+                    
+                    # Extrai competência das datas para usar na filtragem da tabela (formato MM/AAAA)
+                    # datetime já está importado no topo do arquivo
+                    data_inicio_obj = datetime.strptime(execucao.periodo_inicio, "%d/%m/%Y")
+                    competencia_formatada = f"{data_inicio_obj.strftime('%m')}/{data_inicio_obj.strftime('%Y')}"
+                    
                     await execucao.page.wait_for_selector("table tbody tr", timeout=10000)
                     # Processa tabela (async)
                     resultado_recebidas = await processar_tabela_recebidas(execucao.page, competencia_formatada, nome_empresa)
@@ -1009,7 +1029,8 @@ class ExecutionService:
         empresa_id: str,
         status: StatusExecucao,
         cnpj: Optional[str] = None,
-        competencia: Optional[str] = None
+        data_inicio: Optional[str] = None,
+        data_fim: Optional[str] = None
     ) -> int:
         """
         Cria um novo registro de execução no banco de dados.
@@ -1021,7 +1042,7 @@ class ExecutionService:
             execucao_db = Execucao(
                 empresa_id=empresa_id,
                 cnpj=cnpj,
-                competencia=competencia,
+                competencia=None,  # Mantido para compatibilidade, mas não será mais usado
                 status=status.value,
                 qtd_notas_emitidas=0,
                 qtd_notas_recebidas=0,
@@ -1072,11 +1093,9 @@ class ExecutionService:
             execucao_db.status = status.value
             execucao_db.atualizado_em = datetime.utcnow()
             
-            # Atualiza CNPJ e competência se disponíveis
+            # Atualiza CNPJ se disponível
             if execucao.cnpj and not execucao_db.cnpj:
                 execucao_db.cnpj = execucao.cnpj
-            if execucao.competencia and not execucao_db.competencia:
-                execucao_db.competencia = execucao.competencia
             
             # Atualiza quantidades de notas e resultado final
             if hasattr(execucao, 'qtd_notas_emitidas'):
@@ -1170,7 +1189,8 @@ class ExecutionService:
             async with sem:
                 empresa_id = exec_info.get("empresa_id")
                 cnpj = exec_info.get("cnpj")
-                competencia = exec_info.get("competencia")
+                data_inicio = exec_info.get("data_inicio")
+                data_fim = exec_info.get("data_fim")
                 tipo = exec_info.get("tipo", "ambas")
                 headless = exec_info.get("headless", None)
                 
@@ -1180,7 +1200,8 @@ class ExecutionService:
                 await self.adicionar_execucao(
                     empresa_id=empresa_id,
                     cnpj=cnpj,
-                    competencia=competencia,
+                    data_inicio=data_inicio,
+                    data_fim=data_fim,
                     tipo=tipo,
                     headless=headless
                 )

@@ -44,15 +44,16 @@ class ExecucaoInfo(BaseModel):
     """
     empresa_id: str
     cnpj: str
-    competencia: str
+    periodo_inicio: str  # Formato DD/MM/YYYY (ex: 01/12/2025) - data início do filtro
+    periodo_fim: str  # Formato DD/MM/YYYY (ex: 31/12/2025) - data fim do filtro
     tipo: str = "ambas"  # "emitidas", "recebidas" ou "ambas"
     status: StatusExecucao = StatusExecucao.PENDENTE
     etapa_atual: EtapaExecucao = EtapaExecucao.INICIO
     progresso: int = 0
     logs: List[str] = []
     mensagem: str = "Aguardando execução..."
-    data_inicio: Optional[datetime] = None
-    data_fim: Optional[datetime] = None
+    data_inicio: Optional[datetime] = None  # Data/hora de início da execução
+    data_fim: Optional[datetime] = None  # Data/hora de fim da execução
     erro: Optional[str] = None
     url_atual: Optional[str] = None
     titulo: Optional[str] = None

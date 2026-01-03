@@ -39,7 +39,8 @@ class EmpresaExecucaoRequest(BaseModel):
 class MultiplasExecucoesRequest(BaseModel):
     """Modelo para requisição de múltiplas execuções."""
     empresas: List[EmpresaExecucaoRequest]
-    competencia: str
+    dataInicio: str  # Formato DD/MM/YYYY (ex: 01/12/2025)
+    dataFim: str  # Formato DD/MM/YYYY (ex: 31/12/2025)
     tipo: str = "ambas"
     headless: bool = False
 
@@ -104,7 +105,7 @@ async def adicionar_multiplas_execucoes(
         execution_service = _get_execution_service()
         
         logger.info(f"Recebida requisição para adicionar {len(request.empresas)} empresas à fila")
-        logger.debug(f"Competência: {request.competencia}, Tipo: {request.tipo}, Headless: {request.headless}")
+        logger.debug(f"Data Início: {request.dataInicio}, Data Fim: {request.dataFim}, Tipo: {request.tipo}, Headless: {request.headless}")
         logger.debug(f"Primeira empresa exemplo: empresa_id={request.empresas[0].empresa_id if request.empresas else 'N/A'}, cnpj={request.empresas[0].cnpj if request.empresas else 'N/A'}")
         
         # Valida se há empresas na lista
@@ -115,12 +116,37 @@ async def adicionar_multiplas_execucoes(
                 detail="Lista de empresas não pode estar vazia"
             )
         
-        # Valida competência
-        if len(request.competencia) != 6 or not request.competencia.isdigit():
-            logger.error(f"Competência inválida recebida: {request.competencia}")
+        # Valida datas
+        import re
+        data_regex = re.compile(r'^\d{2}/\d{2}/\d{4}$')
+        if not data_regex.match(request.dataInicio):
+            logger.error(f"Data início inválida recebida: {request.dataInicio}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Competência inválida. Use o formato MMAAAA (ex: 112025 para nov/2025)"
+                detail="Data início inválida. Use o formato DD/MM/YYYY (ex: 01/12/2025)"
+            )
+        if not data_regex.match(request.dataFim):
+            logger.error(f"Data fim inválida recebida: {request.dataFim}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Data fim inválida. Use o formato DD/MM/YYYY (ex: 31/12/2025)"
+            )
+        
+        # Valida que data fim é maior ou igual a data início
+        try:
+            from datetime import datetime
+            data_inicio_obj = datetime.strptime(request.dataInicio, "%d/%m/%Y")
+            data_fim_obj = datetime.strptime(request.dataFim, "%d/%m/%Y")
+            if data_fim_obj < data_inicio_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Data fim deve ser maior ou igual à data início"
+                )
+        except ValueError as e:
+            logger.error(f"Erro ao validar datas: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Formato de data inválido. Use DD/MM/YYYY"
             )
         
         # Valida tipo
@@ -171,7 +197,8 @@ async def adicionar_multiplas_execucoes(
                 execucao_id = await execution_service.adicionar_execucao(
                     empresa_id=empresa_id_real,
                     cnpj=cnpj_limpo,
-                    competencia=request.competencia,
+                    data_inicio=request.dataInicio,
+                    data_fim=request.dataFim,
                     tipo=request.tipo,
                     headless=request.headless
                 )
@@ -293,7 +320,8 @@ def obter_status_execucao(empresa_id: str) -> ExecucaoStatusResponse:
 @router.post("/{empresa_id}", summary="Iniciar execução para uma empresa")
 async def iniciar_execucao(
     empresa_id: str,
-    competencia: str = Query(..., description="Competência no formato MMAAAA (ex: 112025)"),
+    dataInicio: str = Query(..., description="Data início no formato DD/MM/YYYY (ex: 01/12/2025)"),
+    dataFim: str = Query(..., description="Data fim no formato DD/MM/YYYY (ex: 31/12/2025)"),
     tipo: str = Query("ambas", description="Tipo de notas: 'emitidas', 'recebidas' ou 'ambas'"),
     headless: bool = Query(False, description="Executar navegador em modo headless")
 ):
@@ -320,7 +348,8 @@ async def iniciar_execucao(
     
     Args:
         empresa_id: ID da empresa no banco de dados ou CNPJ (14 dígitos)
-        competencia: Competência no formato MMAAAA (ex: "112025" para nov/2025)
+        dataInicio: Data início no formato DD/MM/YYYY (ex: "01/12/2025")
+        dataFim: Data fim no formato DD/MM/YYYY (ex: "31/12/2025")
         tipo: Tipo de notas a processar ("emitidas", "recebidas" ou "ambas")
         headless: Se True, executa navegador em modo headless
         
@@ -358,11 +387,34 @@ async def iniciar_execucao(
                 detail=f"Empresa com ID/CNPJ {empresa_id} não encontrada"
             )
         
-        # Valida competência (formato MMAAAA)
-        if len(competencia) != 6 or not competencia.isdigit():
+        # Valida datas
+        import re
+        data_regex = re.compile(r'^\d{2}/\d{2}/\d{4}$')
+        if not data_regex.match(dataInicio):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Competência inválida. Use o formato MMAAAA (ex: 112025 para nov/2025)"
+                detail="Data início inválida. Use o formato DD/MM/YYYY (ex: 01/12/2025)"
+            )
+        if not data_regex.match(dataFim):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Data fim inválida. Use o formato DD/MM/YYYY (ex: 31/12/2025)"
+            )
+        
+        # Valida que data fim é maior ou igual a data início
+        try:
+            from datetime import datetime
+            data_inicio_obj = datetime.strptime(dataInicio, "%d/%m/%Y")
+            data_fim_obj = datetime.strptime(dataFim, "%d/%m/%Y")
+            if data_fim_obj < data_inicio_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Data fim deve ser maior ou igual à data início"
+                )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Formato de data inválido. Use DD/MM/YYYY"
             )
         
         # Valida tipo
@@ -405,7 +457,8 @@ async def iniciar_execucao(
             execucao_id = await execution_service.adicionar_execucao(
                 empresa_id=str(empresa_id_real),
                 cnpj=cnpj_limpo,
-                competencia=competencia,
+                data_inicio=dataInicio,
+                data_fim=dataFim,
                 tipo=tipo,
                 headless=headless
             )

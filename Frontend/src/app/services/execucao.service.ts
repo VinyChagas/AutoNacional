@@ -82,7 +82,8 @@ export interface MultiplasExecucoesRequest {
     empresa_id: string;
     cnpj: string;
   }>;
-  competencia: string;
+  dataInicio: string;
+  dataFim: string;
   tipo: string;
   headless: boolean;
 }
@@ -120,12 +121,13 @@ export class ExecucaoService {
 
   executarEmpresa(
     empresaId: string,
-    competencia: string,
+    dataInicio: string,
+    dataFim: string,
     tipo: string = 'ambas',
     headless: boolean = false
   ): Observable<ExecucaoStatusResponse> {
     return this.http.post<ExecucaoStatusResponse>(
-      `${this.baseUrl}/execucao/${empresaId}?competencia=${competencia}&tipo=${tipo}&headless=${headless}`,
+      `${this.baseUrl}/execucao/${empresaId}?dataInicio=${encodeURIComponent(dataInicio)}&dataFim=${encodeURIComponent(dataFim)}&tipo=${tipo}&headless=${headless}`,
       {}
     ).pipe(
       catchError((error) => {
