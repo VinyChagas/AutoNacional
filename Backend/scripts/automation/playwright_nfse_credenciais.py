@@ -13,8 +13,8 @@ Características:
 
 import os
 import sys
-import platform
 import asyncio
+import platform
 import logging
 from typing import Tuple, Optional
 

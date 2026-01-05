@@ -1,7 +1,7 @@
 {
   "id": 1,
   "headless": false,
-  "company_timeout_seconds": 300,
+  "company_timeout_seconds": 3600,
   "max_retries_per_step": 3,
   "min_action_delay_ms": 500,
   "max_concurrent_browsers": 3,

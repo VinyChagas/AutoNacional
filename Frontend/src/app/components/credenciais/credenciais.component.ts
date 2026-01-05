@@ -596,17 +596,34 @@ export class CredenciaisComponent implements OnInit, AfterViewChecked {
       return;
     }
 
+    console.log(`🔴 Iniciando exclusão da empresa ID: ${empresaId}`);
     this.excluindoEmpresa = true;
+    this.mensagemErro = null;
+    this.mensagemSucesso = null;
+    
     this.empresasService.excluir(empresaId).subscribe({
       next: () => {
+        console.log(`✅ Empresa ID ${empresaId} excluída com sucesso no backend`);
         this.mensagemSucesso = 'Empresa excluída com sucesso!';
-        this.carregarEmpresas();
+        // Aguarda um pouco antes de recarregar para garantir que o backend processou
+        setTimeout(() => {
+          this.carregarEmpresas();
+          this.excluindoEmpresa = false;
+        }, 500);
         setTimeout(() => this.mensagemSucesso = null, 3000);
-        this.excluindoEmpresa = false;
       },
       error: (error) => {
-        this.mensagemErro = error.error?.detail || error.message || 'Erro ao excluir empresa';
+        console.error(`❌ Erro ao excluir empresa ID ${empresaId}:`, error);
+        console.error('Detalhes do erro:', {
+          status: error.status,
+          statusText: error.statusText,
+          error: error.error,
+          message: error.message
+        });
+        this.mensagemErro = error.error?.detail || error.error?.message || error.message || 'Erro ao excluir empresa';
         this.excluindoEmpresa = false;
+        // Ainda recarrega para mostrar o estado atual
+        this.carregarEmpresas();
       }
     });
   }
@@ -664,16 +681,22 @@ export class CredenciaisComponent implements OnInit, AfterViewChecked {
     let falhasCount = 0;
     let processadas = 0;
 
+    console.log(`🔴 Iniciando exclusão de ${empresasParaExcluir.length} empresa(s):`, empresasParaExcluir);
+    
     // Exclui uma por uma para ter controle individual
     empresasParaExcluir.forEach((empresaId, index) => {
+      console.log(`🔴 Excluindo empresa ${index + 1}/${empresasParaExcluir.length}: ID ${empresaId}`);
+      
       this.empresasService.excluir(empresaId).subscribe({
         next: () => {
+          console.log(`✅ Empresa ID ${empresaId} excluída com sucesso`);
           sucessoCount++;
           processadas++;
           this.empresasSelecionadas.delete(empresaId);
           
           if (processadas === empresasParaExcluir.length) {
             this.excluindoEmpresas = false;
+            console.log(`📊 Resultado final: ${sucessoCount} sucesso(s), ${falhasCount} falha(s)`);
             if (sucessoCount > 0) {
               this.mensagemSucesso = `${sucessoCount} empresa(s) excluída(s) com sucesso!`;
               if (falhasCount > 0) {
@@ -682,23 +705,37 @@ export class CredenciaisComponent implements OnInit, AfterViewChecked {
               // Limpa seleção após exclusão bem-sucedida
               this.empresasSelecionadas.clear();
             }
-            this.carregarEmpresas();
+            // Aguarda um pouco antes de recarregar para garantir que o backend processou
+            setTimeout(() => {
+              this.carregarEmpresas();
+            }, 500);
             setTimeout(() => this.mensagemSucesso = null, 5000);
           }
         },
         error: (error) => {
+          console.error(`❌ Erro ao excluir empresa ID ${empresaId}:`, error);
+          console.error('Detalhes:', {
+            status: error.status,
+            statusText: error.statusText,
+            error: error.error,
+            message: error.message
+          });
           falhasCount++;
           processadas++;
           
           if (processadas === empresasParaExcluir.length) {
             this.excluindoEmpresas = false;
+            console.log(`📊 Resultado final: ${sucessoCount} sucesso(s), ${falhasCount} falha(s)`);
             if (sucessoCount > 0) {
               this.mensagemSucesso = `${sucessoCount} empresa(s) excluída(s) com sucesso!`;
               this.mensagemErro = `${falhasCount} empresa(s) falharam ao excluir.`;
             } else {
-              this.mensagemErro = 'Erro ao excluir empresas: ' + (error.error?.detail || error.message || 'Erro desconhecido');
+              this.mensagemErro = 'Erro ao excluir empresas: ' + (error.error?.detail || error.error?.message || error.message || 'Erro desconhecido');
             }
-            this.carregarEmpresas();
+            // Aguarda um pouco antes de recarregar
+            setTimeout(() => {
+              this.carregarEmpresas();
+            }, 500);
             setTimeout(() => {
               this.mensagemSucesso = null;
               this.mensagemErro = null;

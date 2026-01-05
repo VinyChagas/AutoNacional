@@ -1046,7 +1046,22 @@ async def importar_planilha(
                     falhas_count += 1
                     continue
                 
-                # Cria empresa
+                # Verifica se empresa já existe e tem credenciais - se sim, deleta as credenciais antigas
+                from ..db.crud_empresas import obter_empresa_por_cnpj
+                from ..db.crud_credenciais import deletar_credenciais_por_empresa
+                empresa_existente = obter_empresa_por_cnpj(db, cnpj_para_empresa)
+                
+                if empresa_existente:
+                    # Verifica se tem credenciais e deleta se necessário
+                    credenciais_existentes = obter_credenciais_por_empresa(db, empresa_existente.id)
+                    if credenciais_existentes:
+                        logger.info(f"Empresa CNPJ {cnpj_para_empresa} já existe com {len(credenciais_existentes)} credencial(is). Deletando credenciais antigas para permitir nova importação.")
+                        deletar_credenciais_por_empresa(db, empresa_existente.id)
+                        # Commit para garantir que a exclusão seja persistida antes de criar nova credencial
+                        db.commit()
+                        logger.info(f"Credenciais antigas deletadas e commitadas para empresa CNPJ {cnpj_para_empresa}")
+                
+                # Cria ou atualiza empresa
                 empresa_data = EmpresaCreate(
                     cnpj=cnpj_para_empresa,
                     razao_social=razao_social,
@@ -1060,7 +1075,8 @@ async def importar_planilha(
                     razao_social=empresa_data.razao_social,
                     contabilidade_id=empresa_data.contabilidade_id,
                     regime=empresa_data.regime,
-                    verificar_certificado=False  # Já verificamos acima
+                    verificar_certificado=False,  # Já verificamos acima
+                    permitir_atualizar_com_credenciais=True  # Permite atualizar mesmo se ainda houver credenciais (já deletamos acima)
                 )
                 
                 # Cria credencial

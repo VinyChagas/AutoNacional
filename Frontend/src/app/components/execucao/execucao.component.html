@@ -204,15 +204,15 @@
       </div>
     }
 
-    <!-- Três Colunas: Fila / Executando / Finalizado -->
+    <!-- Duas Colunas: Fila / Executando -->
     @if (execucoes.length > 0) {
-      <div class="grid grid-cols-3 gap-6">
+      <div class="grid grid-cols-2 gap-6 mb-8">
         <!-- Coluna 1: Fila -->
         <div class="glass-strong rounded-xl p-6 border">
           <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
             Fila ({{ colunaFila.length }})
           </h3>
-          <div class="space-y-2 max-h-[600px] overflow-y-auto">
+          <div class="space-y-2 max-h-[400px] overflow-y-auto">
             @for (execucao of colunaFila; track execucao.id) {
               <div class="p-3 rounded-lg border border-[#7EBFB3]/30 bg-[#A9D9D4]/10">
                 <div class="flex items-center justify-between">
@@ -243,7 +243,7 @@
           <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
             Executando ({{ colunaExecutando.length }})
           </h3>
-          <div class="space-y-2 max-h-[600px] overflow-y-auto">
+          <div class="space-y-2 max-h-[400px] overflow-y-auto">
             @for (execucao of colunaExecutando; track execucao.id) {
               <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/20">
                 <div class="flex items-center justify-between">
@@ -275,69 +275,178 @@
             }
           </div>
         </div>
+      </div>
 
-        <!-- Coluna 3: Finalizado -->
-        <div class="glass-strong rounded-xl p-6 border">
-          <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
-            Finalizado ({{ colunaFinalizado.length }})
-          </h3>
-          <div class="space-y-2 max-h-[600px] overflow-y-auto">
-            @for (execucao of colunaFinalizado; track execucao.id) {
-              <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/10">
-                <div class="flex items-center justify-between">
-                  <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
-                  @if (execucao.tipoAutenticacao) {
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
-                      [ngClass]="{
-                        'bg-blue-100 text-blue-800': execucao.tipoAutenticacao === 'certificado',
-                        'bg-green-100 text-green-800': execucao.tipoAutenticacao === 'credenciais'
-                      }">
-                      {{ execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais' }}
-                    </span>
+      <!-- Tabela de Finalizados com Filtros -->
+      @if (colunaFinalizado.length > 0) {
+        <div class="glass-strong rounded-2xl overflow-hidden border mb-6">
+          <!-- Barra de Busca e Filtros -->
+          <div class="glass-strong rounded-2xl p-4 mb-0 border-b">
+            <div class="flex flex-wrap gap-4 items-center">
+              <!-- Dropdown de Coluna -->
+              <div class="flex items-center">
+                <select
+                  [(ngModel)]="searchColumn"
+                  (change)="onSearchColumnChange()"
+                  class="px-3 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 font-semibold"
+                >
+                  @for (col of searchColumns; track col.value) {
+                    <option [value]="col.value">{{ col.label }}</option>
                   }
-                </div>
-                @if (execucao.nomeEmpresa) {
-                  <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
-                }
-                @if (execucao.resultadoFinal) {
-                  <div class="mt-2">
-                    @if (execucao.resultadoFinal === 'NFS_ENCONTRADAS') {
-                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-[#8BCB70]/30 text-[#0C0D0A] font-semibold border border-[#8BCB70]/50">
-                        Com notas (ambas)
-                      </span>
-                    } @else if (execucao.resultadoFinal === 'NOTAS_EMITIDAS') {
-                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-blue-200 text-blue-800 font-semibold border border-blue-300">
-                        Notas Emitidas
-                      </span>
-                    } @else if (execucao.resultadoFinal === 'NOTAS_RECEBIDAS') {
-                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-purple-200 text-purple-800 font-semibold border border-purple-300">
-                        Notas Recebidas
-                      </span>
-                    } @else {
-                      <span class="inline-block px-2 py-1 text-xs rounded-full bg-gray-200 text-gray-700 font-semibold border border-gray-300">
-                        Sem movimento
-                      </span>
-                    }
-                  </div>
-                }
-                @if (execucao.qtdNotasEmitidas !== undefined || execucao.qtdNotasRecebidas !== undefined) {
-                  <div class="text-xs text-[#1E2615] mt-2">
-                    @if (execucao.qtdNotasEmitidas !== undefined && execucao.qtdNotasEmitidas > 0) {
-                      <span>Emitidas: {{ execucao.qtdNotasEmitidas }}</span>
-                    }
-                    @if (execucao.qtdNotasRecebidas !== undefined && execucao.qtdNotasRecebidas > 0) {
-                      <span class="ml-2">Recebidas: {{ execucao.qtdNotasRecebidas }}</span>
-                    }
-                  </div>
-                }
+                </select>
               </div>
-            }
-            @if (colunaFinalizado.length === 0) {
-              <p class="text-sm text-[#1E2615]/60 text-center py-4">Nenhuma empresa finalizada</p>
+
+              <!-- Campo de Busca -->
+              <div class="flex-1 min-w-[200px]">
+                <input
+                  type="text"
+                  [(ngModel)]="searchValue"
+                  (input)="onSearchChange()"
+                  placeholder="Digite para buscar..."
+                  class="w-full px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 placeholder-[#1E2615]/50"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Cabeçalho da Tabela -->
+          <div class="p-4 bg-[#A9D9D4]/20 border-b">
+            <h3 class="text-xl font-bold text-[#0C0D0A]">Finalizado ({{ colunaFinalizado.length }})</h3>
+            @if (execucoesFinalizadasFiltradas.length !== colunaFinalizado.length) {
+              <p class="text-sm text-[#1E2615]/70 mt-1">Mostrando {{ execucoesFinalizadasFiltradas.length }} de {{ colunaFinalizado.length }} empresas</p>
             }
           </div>
+
+          <!-- Tabela -->
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-[#7EBFB3]/20">
+              <thead class="bg-[#A9D9D4]/20">
+                <tr>
+                  <th 
+                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                    [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('cnpj'),
+                      'text-[#0C0D0A]': !isColumnSorted('cnpj')
+                    }"
+                    (click)="toggleSort('cnpj')"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span>CNPJ</span>
+                      <span class="text-[10px]" [ngClass]="{
+                        'text-[#8BCB70]': isColumnSorted('cnpj'),
+                        'text-[#1E2615]/40': !isColumnSorted('cnpj')
+                      }">{{ getSortIcon('cnpj') }}</span>
+                    </div>
+                  </th>
+                  <th 
+                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                    [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('nomeEmpresa'),
+                      'text-[#0C0D0A]': !isColumnSorted('nomeEmpresa')
+                    }"
+                    (click)="toggleSort('nomeEmpresa')"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span>Nome da Empresa</span>
+                      <span class="text-[10px]" [ngClass]="{
+                        'text-[#8BCB70]': isColumnSorted('nomeEmpresa'),
+                        'text-[#1E2615]/40': !isColumnSorted('nomeEmpresa')
+                      }">{{ getSortIcon('nomeEmpresa') }}</span>
+                    </div>
+                  </th>
+                  <th 
+                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                    [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('resultadoFinal'),
+                      'text-[#0C0D0A]': !isColumnSorted('resultadoFinal')
+                    }"
+                    (click)="toggleSort('resultadoFinal')"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span>Status</span>
+                      <span class="text-[10px]" [ngClass]="{
+                        'text-[#8BCB70]': isColumnSorted('resultadoFinal'),
+                        'text-[#1E2615]/40': !isColumnSorted('resultadoFinal')
+                      }">{{ getSortIcon('resultadoFinal') }}</span>
+                    </div>
+                  </th>
+                  <th 
+                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                    [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('qtdNotasEmitidas'),
+                      'text-[#0C0D0A]': !isColumnSorted('qtdNotasEmitidas')
+                    }"
+                    (click)="toggleSort('qtdNotasEmitidas')"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span>Emitidas</span>
+                      <span class="text-[10px]" [ngClass]="{
+                        'text-[#8BCB70]': isColumnSorted('qtdNotasEmitidas'),
+                        'text-[#1E2615]/40': !isColumnSorted('qtdNotasEmitidas')
+                      }">{{ getSortIcon('qtdNotasEmitidas') }}</span>
+                    </div>
+                  </th>
+                  <th 
+                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
+                    [ngClass]="{
+                      'text-[#8BCB70]': isColumnSorted('qtdNotasRecebidas'),
+                      'text-[#0C0D0A]': !isColumnSorted('qtdNotasRecebidas')
+                    }"
+                    (click)="toggleSort('qtdNotasRecebidas')"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span>Recebidas</span>
+                      <span class="text-[10px]" [ngClass]="{
+                        'text-[#8BCB70]': isColumnSorted('qtdNotasRecebidas'),
+                        'text-[#1E2615]/40': !isColumnSorted('qtdNotasRecebidas')
+                      }">{{ getSortIcon('qtdNotasRecebidas') }}</span>
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-[#7EBFB3]/20">
+                @for (execucao of execucoesFinalizadasFiltradas; track execucao.id) {
+                  <tr class="hover:bg-[#A9D9D4]/10 transition-colors">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#0C0D0A]">
+                      {{ formatarCNPJ(execucao.cnpj) }}
+                    </td>
+                    <td class="px-6 py-4 text-sm text-[#1E2615]">
+                      {{ execucao.nomeEmpresa || '-' }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      @if (execucao.resultadoFinal) {
+                        @if (execucao.resultadoFinal === 'NFS_ENCONTRADAS') {
+                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-[#8BCB70]/30 text-[#0C0D0A] font-semibold border border-[#8BCB70]/50">
+                            Com notas (ambas)
+                          </span>
+                        } @else if (execucao.resultadoFinal === 'NOTAS_EMITIDAS') {
+                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-blue-200 text-blue-800 font-semibold border border-blue-300">
+                            Notas Emitidas
+                          </span>
+                        } @else if (execucao.resultadoFinal === 'NOTAS_RECEBIDAS') {
+                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-purple-200 text-purple-800 font-semibold border border-purple-300">
+                            Notas Recebidas
+                          </span>
+                        } @else {
+                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-gray-200 text-gray-700 font-semibold border border-gray-300">
+                            Sem movimento
+                          </span>
+                        }
+                      }
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">
+                      {{ execucao.qtdNotasEmitidas !== undefined && execucao.qtdNotasEmitidas > 0 ? execucao.qtdNotasEmitidas : '-' }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">
+                      {{ execucao.qtdNotasRecebidas !== undefined && execucao.qtdNotasRecebidas > 0 ? execucao.qtdNotasRecebidas : '-' }}
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      }
     } @else {
       <div class="glass-strong rounded-2xl p-16 text-center border">
         <div class="relative inline-block mb-6">

@@ -1409,14 +1409,18 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
     """
     Processa a tabela de notas emitidas, varrendo todas as páginas.
     
+    IMPORTANTE: Esta função agora IGNORA o filtro de competência e baixa todas as notas
+    válidas que aparecem após o filtro de data ser aplicado. A competência é usada apenas
+    para organizar os arquivos nas pastas, mas não para filtrar quais notas baixar.
+    
     Args:
         page: Página do Playwright
         competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
+                         Usada apenas para organização de pastas, não para filtrar notas
         nome_empresa: Nome da empresa (opcional, para estrutura de pastas)
     """
-    # Normaliza a competência UMA VEZ no início para garantir comparação correta
-    competencia_alvo_normalizada = normalizar_competencia(competencia_alvo)
-    logger.info(f"Iniciando processamento de Notas Emitidas para competência {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
+    logger.info(f"Iniciando processamento de Notas Emitidas (ignorando filtro de competência)")
+    logger.info(f"   Todas as notas válidas após o filtro de data serão baixadas")
     
     while True:
         try:
@@ -1433,8 +1437,7 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
             
             logger.info(f"Processando {total_linhas} linhas na página atual (Emitidas)")
             
-            # Processa cada linha
-            encontrou_competencia = False
+            # Processa cada linha - IGNORA filtro de competência, baixa todas as válidas
             notas_processadas = 0
             notas_baixadas = 0
             
@@ -1447,50 +1450,55 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
                 linha = linhas.nth(i)
                 celulas = linha.locator("td")
                 
-                # Lê a competência da 3ª coluna (índice 2)
                 try:
-                    competencia_texto = celulas.nth(2).inner_text()
-                    competencia_texto = competencia_texto.strip()
+                    # Extrai a competência da linha apenas para organização de pastas
+                    competencia_texto = None
+                    competencia_texto_normalizada = None
+                    try:
+                        competencia_texto = celulas.nth(2).inner_text()
+                        competencia_texto = competencia_texto.strip()
+                        competencia_texto_normalizada = normalizar_competencia(competencia_texto)
+                    except Exception as e:
+                        logger.debug(f"Não foi possível extrair competência da linha {i+1}: {e}")
+                        # Se não conseguir extrair, usa a competência alvo como fallback
+                        competencia_texto_normalizada = normalizar_competencia(competencia_alvo) if competencia_alvo else None
                     
-                    # Normaliza a competência da linha antes de comparar
-                    competencia_texto_normalizada = normalizar_competencia(competencia_texto)
+                    logger.info(f"📋 Processando nota na linha {i+1}/{total_linhas} (competência: {competencia_texto_normalizada or 'N/A'})")
                     
-                    if competencia_texto_normalizada == competencia_alvo_normalizada:
-                        encontrou_competencia = True
-                        logger.info(f"📋 Nota encontrada na linha {i+1}/{total_linhas} com competência {competencia_alvo_normalizada}")
-                        
-                        # Verifica se a nota é válida
-                        nota_valida = verificar_nota_valida(linha)
-                        
-                        if nota_valida:
-                            notas_processadas += 1
-                            logger.info(f"✅ Nota válida confirmada na linha {i+1}. Iniciando download...")
-                            logger.info(f"📊 Estatísticas: {notas_processadas} nota(s) processada(s), {notas_baixadas} baixada(s)")
+                    # Verifica se a nota é válida (não cancelada)
+                    nota_valida = verificar_nota_valida(linha)
+                    
+                    if nota_valida:
+                        notas_processadas += 1
+                        logger.info(f"✅ Nota válida confirmada na linha {i+1}. Iniciando download...")
+                        logger.info(f"📊 Estatísticas: {notas_processadas} nota(s) processada(s), {notas_baixadas} baixada(s)")
+                        try:
+                            # Usa a competência extraída da linha, ou fallback para competencia_alvo
+                            competencia_para_pasta = competencia_texto_normalizada if competencia_texto_normalizada else normalizar_competencia(competencia_alvo)
+                            baixar_arquivos_da_linha(page, linha, "emitida", competencia_para_pasta, nome_empresa)
+                            notas_baixadas += 1
+                            logger.info(f"✅ Download da linha {i+1} concluído com sucesso")
+                            logger.info(f"📊 Estatísticas atualizadas: {notas_processadas} processada(s), {notas_baixadas} baixada(s)")
+                        except Exception as e_download:
+                            logger.error(f"❌ Erro ao baixar arquivos da linha {i+1}: {e_download}")
+                            import traceback
+                            logger.debug(traceback.format_exc())
+                            # IMPORTANTE: Continua para próxima linha mesmo se houver erro
+                            # Fecha qualquer menu que possa estar aberto
                             try:
-                                baixar_arquivos_da_linha(page, linha, "emitida", competencia_alvo_normalizada, nome_empresa)
-                                notas_baixadas += 1
-                                logger.info(f"✅ Download da linha {i+1} concluído com sucesso")
-                                logger.info(f"📊 Estatísticas atualizadas: {notas_processadas} processada(s), {notas_baixadas} baixada(s)")
-                            except Exception as e_download:
-                                logger.error(f"❌ Erro ao baixar arquivos da linha {i+1}: {e_download}")
-                                import traceback
-                                logger.debug(traceback.format_exc())
-                                # IMPORTANTE: Continua para próxima linha mesmo se houver erro
-                                # Fecha qualquer menu que possa estar aberto
-                                try:
-                                    # Tenta fechar menu se estiver aberto
-                                    menu_aberto = page.locator('.menu-suspenso-tabela:visible').first
-                                    if menu_aberto.count() > 0:
-                                        # Clica fora para fechar
-                                        page.keyboard.press("Escape")
-                                        page.wait_for_timeout(200)
-                                        logger.debug("Menu fechado após erro")
-                                except:
-                                    pass
-                                logger.info(f"⏭️ Continuando para próxima linha após erro...")
-                                continue
-                        else:
-                            logger.info(f"⚠️ Nota inválida/cancelada na linha {i+1}. Pulando download.")
+                                # Tenta fechar menu se estiver aberto
+                                menu_aberto = page.locator('.menu-suspenso-tabela:visible').first
+                                if menu_aberto.count() > 0:
+                                    # Clica fora para fechar
+                                    page.keyboard.press("Escape")
+                                    page.wait_for_timeout(200)
+                                    logger.debug("Menu fechado após erro")
+                            except:
+                                pass
+                            logger.info(f"⏭️ Continuando para próxima linha após erro...")
+                            continue
+                    else:
+                        logger.info(f"⚠️ Nota inválida/cancelada na linha {i+1}. Pulando download.")
                     
                     logger.info(f"✅ Linha {i+1} processada. Avançando para próxima...")
                     
@@ -1508,48 +1516,31 @@ def processar_tabela_emitidas(page: Page, competencia_alvo: str, nome_empresa: s
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             # Verifica se precisa continuar na próxima página
-            # REGRA: Se a última linha ainda tem a competência alvo → IR PARA A PRÓXIMA PÁGINA
-            # REGRA: Se a última linha NÃO tem a competência alvo → ENCERRAR EMITIDAS
+            # REGRA MODIFICADA: Continua navegando enquanto houver páginas disponíveis,
+            # sem verificar competência (já que o filtro de data já foi aplicado)
             if total_linhas > 0:
-                ultima_linha = linhas.nth(total_linhas - 1)
-                celulas_ultima = ultima_linha.locator("td")
-                
                 try:
-                    competencia_ultima_texto = celulas_ultima.nth(2).inner_text()
-                    competencia_ultima_texto = competencia_ultima_texto.strip()
+                    # Tenta navegar para próxima página
+                    logger.info("Tentando navegar para próxima página...")
                     
-                    # Normaliza a competência da última linha antes de comparar
-                    competencia_ultima_normalizada = normalizar_competencia(competencia_ultima_texto)
+                    # Usa a função robusta para encontrar e clicar no botão
+                    # Esta função verifica se o botão existe, está habilitado E se a página realmente mudou
+                    mudou_pagina = clicar_botao_proxima_pagina(page)
                     
-                    logger.debug(f"Última linha - competência: '{competencia_ultima_texto}' (normalizada: '{competencia_ultima_normalizada}')")
-                    logger.debug(f"Competência alvo normalizada: '{competencia_alvo_normalizada}'")
-                    
-                    if competencia_ultima_normalizada == competencia_alvo_normalizada:
-                        # Ainda há notas da competência, tenta ir para próxima página
-                        logger.info("✅ Última linha ainda tem competência alvo. Tentando navegar para próxima página...")
-                        
-                        # Usa a função robusta para encontrar e clicar no botão
-                        # Esta função verifica se o botão existe, está habilitado E se a página realmente mudou
-                        mudou_pagina = clicar_botao_proxima_pagina(page)
-                        
-                        if mudou_pagina:
-                            # Página mudou com sucesso, continua o loop
-                            logger.info("✅ Navegação bem-sucedida. Continuando processamento...")
-                            # Aguarda um pouco para garantir que a tabela está estável
-                            page.wait_for_timeout(500)
-                            continue
-                        else:
-                            # Não foi possível avançar de página (última página ou botão desabilitado)
-                            logger.info("⚠️ Não foi possível avançar de página. Evitando loop infinito.")
-                            logger.info("Encerrando processamento de Emitidas.")
-                            break
+                    if mudou_pagina:
+                        # Página mudou com sucesso, continua o loop
+                        logger.info("✅ Navegação bem-sucedida. Continuando processamento...")
+                        # Aguarda um pouco para garantir que a tabela está estável
+                        page.wait_for_timeout(500)
+                        continue
                     else:
-                        # Passou da competência desejada
-                        logger.info(f"❌ Última linha tem competência '{competencia_ultima_normalizada}' diferente da alvo '{competencia_alvo_normalizada}'. Encerrando busca em Emitidas.")
+                        # Não foi possível avançar de página (última página ou botão desabilitado)
+                        logger.info("⚠️ Não foi possível avançar de página. Última página alcançada.")
+                        logger.info("Encerrando processamento de Emitidas.")
                         break
                         
                 except Exception as e:
-                    logger.warning(f"Erro ao verificar última linha: {e}")
+                    logger.warning(f"Erro ao verificar navegação: {e}")
                     break
             else:
                 # Não há linhas na tabela
@@ -1570,14 +1561,18 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
     """
     Processa a tabela de notas recebidas, varrendo todas as páginas.
     
+    IMPORTANTE: Esta função agora IGNORA o filtro de competência e baixa todas as notas
+    válidas que aparecem após o filtro de data ser aplicado. A competência é usada apenas
+    para organizar os arquivos nas pastas, mas não para filtrar quais notas baixar.
+    
     Args:
         page: Página do Playwright
         competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
+                         Usada apenas para organização de pastas, não para filtrar notas
         nome_empresa: Nome da empresa (opcional, para estrutura de pastas)
     """
-    # Normaliza a competência UMA VEZ no início para garantir comparação correta
-    competencia_alvo_normalizada = normalizar_competencia(competencia_alvo)
-    logger.info(f"Iniciando processamento de Notas Recebidas para competência {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
+    logger.info(f"Iniciando processamento de Notas Recebidas (ignorando filtro de competência)")
+    logger.info(f"   Todas as notas válidas após o filtro de data serão baixadas")
     
     while True:
         try:
@@ -1594,8 +1589,7 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
             
             logger.info(f"Processando {total_linhas} linhas na página atual (Recebidas)")
             
-            # Processa cada linha
-            encontrou_competencia = False
+            # Processa cada linha - IGNORA filtro de competência, baixa todas as válidas
             notas_processadas = 0
             notas_baixadas = 0
             
@@ -1608,50 +1602,55 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
                 linha = linhas.nth(i)
                 celulas = linha.locator("td")
                 
-                # Lê a competência da 3ª coluna (índice 2)
                 try:
-                    competencia_texto = celulas.nth(2).inner_text()
-                    competencia_texto = competencia_texto.strip()
+                    # Extrai a competência da linha apenas para organização de pastas
+                    competencia_texto = None
+                    competencia_texto_normalizada = None
+                    try:
+                        competencia_texto = celulas.nth(2).inner_text()
+                        competencia_texto = competencia_texto.strip()
+                        competencia_texto_normalizada = normalizar_competencia(competencia_texto)
+                    except Exception as e:
+                        logger.debug(f"Não foi possível extrair competência da linha {i+1}: {e}")
+                        # Se não conseguir extrair, usa a competência alvo como fallback
+                        competencia_texto_normalizada = normalizar_competencia(competencia_alvo) if competencia_alvo else None
                     
-                    # Normaliza a competência da linha antes de comparar
-                    competencia_texto_normalizada = normalizar_competencia(competencia_texto)
+                    logger.info(f"📋 Processando nota na linha {i+1}/{total_linhas} (competência: {competencia_texto_normalizada or 'N/A'})")
                     
-                    if competencia_texto_normalizada == competencia_alvo_normalizada:
-                        encontrou_competencia = True
-                        logger.info(f"📋 Nota encontrada na linha {i+1}/{total_linhas} com competência {competencia_alvo_normalizada}")
-                        
-                        # Verifica se a nota é válida
-                        nota_valida = verificar_nota_valida(linha)
-                        
-                        if nota_valida:
-                            notas_processadas += 1
-                            logger.info(f"✅ Nota válida confirmada na linha {i+1}. Iniciando download...")
-                            logger.info(f"📊 Estatísticas: {notas_processadas} nota(s) processada(s), {notas_baixadas} baixada(s)")
+                    # Verifica se a nota é válida (não cancelada)
+                    nota_valida = verificar_nota_valida(linha)
+                    
+                    if nota_valida:
+                        notas_processadas += 1
+                        logger.info(f"✅ Nota válida confirmada na linha {i+1}. Iniciando download...")
+                        logger.info(f"📊 Estatísticas: {notas_processadas} nota(s) processada(s), {notas_baixadas} baixada(s)")
+                        try:
+                            # Usa a competência extraída da linha, ou fallback para competencia_alvo
+                            competencia_para_pasta = competencia_texto_normalizada if competencia_texto_normalizada else normalizar_competencia(competencia_alvo)
+                            baixar_arquivos_da_linha(page, linha, "recebida", competencia_para_pasta, nome_empresa)
+                            notas_baixadas += 1
+                            logger.info(f"✅ Download da linha {i+1} concluído com sucesso")
+                            logger.info(f"📊 Estatísticas atualizadas: {notas_processadas} processada(s), {notas_baixadas} baixada(s)")
+                        except Exception as e_download:
+                            logger.error(f"❌ Erro ao baixar arquivos da linha {i+1}: {e_download}")
+                            import traceback
+                            logger.debug(traceback.format_exc())
+                            # IMPORTANTE: Continua para próxima linha mesmo se houver erro
+                            # Fecha qualquer menu que possa estar aberto
                             try:
-                                baixar_arquivos_da_linha(page, linha, "recebida", competencia_alvo_normalizada, nome_empresa)
-                                notas_baixadas += 1
-                                logger.info(f"✅ Download da linha {i+1} concluído com sucesso")
-                                logger.info(f"📊 Estatísticas atualizadas: {notas_processadas} processada(s), {notas_baixadas} baixada(s)")
-                            except Exception as e_download:
-                                logger.error(f"❌ Erro ao baixar arquivos da linha {i+1}: {e_download}")
-                                import traceback
-                                logger.debug(traceback.format_exc())
-                                # IMPORTANTE: Continua para próxima linha mesmo se houver erro
-                                # Fecha qualquer menu que possa estar aberto
-                                try:
-                                    # Tenta fechar menu se estiver aberto
-                                    menu_aberto = page.locator('.menu-suspenso-tabela:visible').first
-                                    if menu_aberto.count() > 0:
-                                        # Clica fora para fechar
-                                        page.keyboard.press("Escape")
-                                        page.wait_for_timeout(200)
-                                        logger.debug("Menu fechado após erro")
-                                except:
-                                    pass
-                                logger.info(f"⏭️ Continuando para próxima linha após erro...")
-                                continue
-                        else:
-                            logger.info(f"⚠️ Nota inválida/cancelada na linha {i+1}. Pulando download.")
+                                # Tenta fechar menu se estiver aberto
+                                menu_aberto = page.locator('.menu-suspenso-tabela:visible').first
+                                if menu_aberto.count() > 0:
+                                    # Clica fora para fechar
+                                    page.keyboard.press("Escape")
+                                    page.wait_for_timeout(200)
+                                    logger.debug("Menu fechado após erro")
+                            except:
+                                pass
+                            logger.info(f"⏭️ Continuando para próxima linha após erro...")
+                            continue
+                    else:
+                        logger.info(f"⚠️ Nota inválida/cancelada na linha {i+1}. Pulando download.")
                     
                     logger.info(f"✅ Linha {i+1} processada. Avançando para próxima...")
                     
@@ -1669,48 +1668,31 @@ def processar_tabela_recebidas(page: Page, competencia_alvo: str, nome_empresa: 
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             # Verifica se precisa continuar na próxima página
-            # REGRA: Se a última linha ainda tem a competência alvo → IR PARA A PRÓXIMA PÁGINA
-            # REGRA: Se a última linha NÃO tem a competência alvo → ENCERRAR RECEBIDAS
+            # REGRA MODIFICADA: Continua navegando enquanto houver páginas disponíveis,
+            # sem verificar competência (já que o filtro de data já foi aplicado)
             if total_linhas > 0:
-                ultima_linha = linhas.nth(total_linhas - 1)
-                celulas_ultima = ultima_linha.locator("td")
-                
                 try:
-                    competencia_ultima_texto = celulas_ultima.nth(2).inner_text()
-                    competencia_ultima_texto = competencia_ultima_texto.strip()
+                    # Tenta navegar para próxima página
+                    logger.info("Tentando navegar para próxima página...")
                     
-                    # Normaliza a competência da última linha antes de comparar
-                    competencia_ultima_normalizada = normalizar_competencia(competencia_ultima_texto)
+                    # Usa a função robusta para encontrar e clicar no botão
+                    # Esta função verifica se o botão existe, está habilitado E se a página realmente mudou
+                    mudou_pagina = clicar_botao_proxima_pagina(page)
                     
-                    logger.debug(f"Última linha - competência: '{competencia_ultima_texto}' (normalizada: '{competencia_ultima_normalizada}')")
-                    logger.debug(f"Competência alvo normalizada: '{competencia_alvo_normalizada}'")
-                    
-                    if competencia_ultima_normalizada == competencia_alvo_normalizada:
-                        # Ainda há notas da competência, tenta ir para próxima página
-                        logger.info("✅ Última linha ainda tem competência alvo. Tentando navegar para próxima página...")
-                        
-                        # Usa a função robusta para encontrar e clicar no botão
-                        # Esta função verifica se o botão existe, está habilitado E se a página realmente mudou
-                        mudou_pagina = clicar_botao_proxima_pagina(page)
-                        
-                        if mudou_pagina:
-                            # Página mudou com sucesso, continua o loop
-                            logger.info("✅ Navegação bem-sucedida. Continuando processamento...")
-                            # Aguarda um pouco para garantir que a tabela está estável
-                            page.wait_for_timeout(500)
-                            continue
-                        else:
-                            # Não foi possível avançar de página (última página ou botão desabilitado)
-                            logger.info("⚠️ Não foi possível avançar de página. Evitando loop infinito.")
-                            logger.info("Encerrando processamento de Recebidas.")
-                            break
+                    if mudou_pagina:
+                        # Página mudou com sucesso, continua o loop
+                        logger.info("✅ Navegação bem-sucedida. Continuando processamento...")
+                        # Aguarda um pouco para garantir que a tabela está estável
+                        page.wait_for_timeout(500)
+                        continue
                     else:
-                        # Passou da competência desejada
-                        logger.info(f"❌ Última linha tem competência '{competencia_ultima_normalizada}' diferente da alvo '{competencia_alvo_normalizada}'. Encerrando busca em Recebidas.")
+                        # Não foi possível avançar de página (última página ou botão desabilitado)
+                        logger.info("⚠️ Não foi possível avançar de página. Última página alcançada.")
+                        logger.info("Encerrando processamento de Recebidas.")
                         break
                         
                 except Exception as e:
-                    logger.warning(f"Erro ao verificar última linha: {e}")
+                    logger.warning(f"Erro ao verificar navegação: {e}")
                     break
             else:
                 # Não há linhas na tabela
@@ -1792,23 +1774,31 @@ def gerar_relatorio_downloads(
 
 def processar_notas(page: Page, competencia_alvo: str, nome_empresa: str = None) -> None:
     """
-    Função principal que processa notas fiscais de uma competência específica.
+    Função principal que processa notas fiscais após aplicar filtro de data.
+    
+    IMPORTANTE: Esta função IGNORA o filtro de competência e baixa todas as notas válidas
+    que aparecem após o filtro de data ser aplicado. A competência é usada apenas para
+    organização de pastas, não para filtrar quais notas baixar.
     
     Fluxo:
     1. Acessa "Notas fiscais emitidas"
-    2. Varre todas as páginas procurando pela competência alvo
-    3. Baixa XML e DANFS-e para notas válidas encontradas
+    2. Varre todas as páginas baixando todas as notas válidas (após filtro de data)
+    3. Baixa XML e DANFS-e para todas as notas válidas encontradas
     4. Acessa "Notas fiscais recebidas"
     5. Repete o mesmo processo para recebidas
     
     Args:
         page: Página do Playwright (assume que já está logado no dashboard)
         competencia_alvo: Competência alvo no formato "MM/AAAA" (ex: "10/2025") ou "MMAAAA" (ex: "102025")
+                         Usada apenas para organização de pastas, não para filtrar notas
         nome_empresa: Nome da empresa (opcional, para estrutura de pastas)
     """
-    # Normaliza a competência recebida como parâmetro
+    # Normaliza a competência recebida como parâmetro (usada apenas para organização)
     competencia_alvo_normalizada = normalizar_competencia(competencia_alvo)
-    logger.info(f"🚀 Iniciando processamento de notas para competência: {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
+    logger.info(f"🚀 Iniciando processamento de notas (ignorando filtro de competência)")
+    logger.info(f"   Competência para organização: {competencia_alvo} (normalizada: {competencia_alvo_normalizada})")
+    logger.info(f"   Empresa: {nome_empresa}")
+    logger.info(f"   Todas as notas válidas após o filtro de data serão baixadas")
     
     try:
         # 1) Acessar "Notas fiscais emitidas"

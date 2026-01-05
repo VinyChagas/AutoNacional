@@ -17,7 +17,8 @@ from ..db.crud_empresas import (
     deletar_empresa,
     verificar_cnpj_tem_certificado,
     limpar_contabilidades_orfaos,
-    verificar_integridade_vinculos
+    verificar_integridade_vinculos,
+    limpar_todas_empresas_e_credenciais
 )
 from ..schemas.empresas import (
     EmpresaCreate,
@@ -25,7 +26,8 @@ from ..schemas.empresas import (
     EmpresaResponse,
     EmpresaListResponse,
     LimpezaContabilidadesOrfaosResponse,
-    VerificacaoIntegridadeResponse
+    VerificacaoIntegridadeResponse,
+    LimpezaCompletaResponse
 )
 from ..infrastructure.logger import get_logger
 
@@ -249,34 +251,67 @@ def deletar_empresa_endpoint(
     """
     Deleta uma empresa.
     
+    IMPORTANTE: Esta função garante que:
+    1. Todas as credenciais relacionadas sejam deletadas
+    2. Todos os certificados digitais relacionados sejam deletados
+    3. A empresa seja deletada do banco de dados
+    4. O commit seja realizado corretamente
+    
     Args:
         empresa_id: ID da empresa (string do frontend, convertido para int)
         db: Sessão do banco de dados
         
     Raises:
-        HTTPException: Se empresa não for encontrada
+        HTTPException: Se empresa não for encontrada ou erro ao deletar
     """
     try:
         try:
             empresa_id_int = int(empresa_id)
         except ValueError:
+            logger.error(f"ID de empresa inválido recebido: {empresa_id}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"ID de empresa inválido: {empresa_id}"
             )
-        sucesso = deletar_empresa(db, empresa_id_int)
-        if not sucesso:
+        
+        logger.info(f"🔴 Recebida solicitação de exclusão da empresa ID {empresa_id_int}")
+        
+        # Verifica se empresa existe antes de tentar deletar
+        empresa_antes = obter_empresa_por_id(db, empresa_id_int)
+        if not empresa_antes:
+            logger.warning(f"Empresa ID {empresa_id_int} não encontrada para exclusão")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Empresa com ID {empresa_id} não encontrada"
             )
         
-        logger.info(f"Empresa deletada com sucesso: ID {empresa_id}")
+        logger.info(f"Empresa encontrada: ID {empresa_id_int}, CNPJ {empresa_antes.cnpj}, Razão Social: {empresa_antes.razao_social}")
+        
+        # Executa a exclusão
+        sucesso = deletar_empresa(db, empresa_id_int)
+        
+        if not sucesso:
+            logger.error(f"Falha ao deletar empresa ID {empresa_id_int} - função retornou False")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Falha ao deletar empresa ID {empresa_id}. Verifique os logs para mais detalhes."
+            )
+        
+        # Verifica novamente se foi deletada (double-check)
+        empresa_depois = obter_empresa_por_id(db, empresa_id_int)
+        if empresa_depois:
+            logger.error(f"❌ ERRO CRÍTICO: Empresa ID {empresa_id_int} ainda existe após exclusão!")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Empresa não foi deletada corretamente. ID {empresa_id} ainda existe no banco."
+            )
+        
+        logger.info(f"✅ Empresa ID {empresa_id_int} deletada com sucesso e confirmada no banco")
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro ao deletar empresa: {e}")
+        logger.error(f"❌ Erro ao deletar empresa ID {empresa_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao deletar empresa: {str(e)}"
@@ -418,4 +453,43 @@ def listar_empresas_por_contabilidade_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao listar empresas: {str(e)}"
+        )
+
+
+@router.delete(
+    "/limpar-tudo",
+    response_model=LimpezaCompletaResponse,
+    summary="Limpar todas as empresas e credenciais (RESET COMPLETO)"
+)
+def limpar_todas_empresas_e_credenciais_endpoint(
+    db: Session = Depends(get_db)
+):
+    """
+    Deleta TODAS as empresas e credenciais do banco de dados.
+    
+    ⚠️ ATENÇÃO: Esta operação é IRREVERSÍVEL!
+    - Remove TODAS as empresas cadastradas
+    - Remove TODAS as credenciais cadastradas
+    - Use apenas quando necessário resetar completamente o banco antes de uma nova importação
+    
+    Esta função é útil quando você precisa limpar todos os dados para fazer uma nova importação
+    limpa da planilha.
+    
+    Returns:
+        Estatísticas da limpeza realizada
+    """
+    try:
+        logger.warning("⚠️ SOLICITAÇÃO DE LIMPEZA COMPLETA recebida")
+        resultado = limpar_todas_empresas_e_credenciais(db)
+        logger.info(
+            f"Limpeza completa concluída: "
+            f"{resultado['empresas_deletadas']} empresa(s) e "
+            f"{resultado['credenciais_deletadas']} credencial(is) deletadas"
+        )
+        return LimpezaCompletaResponse(**resultado)
+    except Exception as e:
+        logger.error(f"Erro ao limpar todas as empresas e credenciais: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao limpar empresas e credenciais: {str(e)}"
         )

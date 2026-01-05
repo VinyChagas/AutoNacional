@@ -607,44 +607,60 @@ class ExecutionService:
                 self._adicionar_log(execucao, f"❌ {error_msg}")
                 raise ImportError(error_msg)
             
-            # Obtém nome da empresa do certificado para usar na estrutura de pastas
+            # Obtém nome da empresa para usar na estrutura de pastas
+            # Se usar credenciais, busca da tabela empresas. Se usar certificado, busca do certificado.
             nome_empresa = None
             try:
                 from ..db.session import get_db
-                from ..db.crud_certificado import obter_certificado_por_cnpj
-                from ..services.certificate_service import get_certificate_service
+                from ..db.crud_empresas import obter_empresa_por_cnpj
                 
                 db = next(get_db())
-                certificado = obter_certificado_por_cnpj(db, cnpj_str)
                 
-                # Tenta obter nome da empresa do banco
-                if certificado and certificado.empresa and certificado.empresa.strip():
-                    nome_empresa = certificado.empresa.strip()
-                    self._adicionar_log(execucao, f"📋 Nome da empresa obtido do banco: {nome_empresa}")
-                else:
-                    # Se não tem no banco, tenta extrair diretamente do certificado
-                    logger.info(f"Nome da empresa não encontrado no banco. Tentando extrair do certificado...")
-                    try:
-                        cert_service = get_certificate_service()
-                        conteudo_pfx, senha = cert_service.carregar_certificado(cnpj_str)
-                        info_certificado = cert_service.validar_e_extrair_info(conteudo_pfx, senha)
-                        
-                        if info_certificado.empresa and info_certificado.empresa.strip():
-                            nome_empresa = info_certificado.empresa.strip()
-                            self._adicionar_log(execucao, f"📋 Nome da empresa extraído do certificado: {nome_empresa}")
-                            
-                            # Atualiza no banco para próxima vez
-                            if certificado:
-                                certificado.empresa = nome_empresa
-                                db.commit()
-                                logger.info(f"Nome da empresa atualizado no banco: {nome_empresa}")
-                        else:
-                            raise Exception("Nome da empresa não encontrado no certificado")
-                    except Exception as e2:
-                        logger.warning(f"Não foi possível extrair nome da empresa do certificado: {e2}")
-                        # Último recurso: usa CNPJ formatado
+                if tipo_auth == "credenciais":
+                    # Para credenciais, busca o nome da empresa diretamente da tabela empresas
+                    empresa = obter_empresa_por_cnpj(db, cnpj_str)
+                    if empresa and empresa.razao_social and empresa.razao_social.strip():
+                        nome_empresa = empresa.razao_social.strip()
+                        self._adicionar_log(execucao, f"📋 Nome da empresa obtido do banco (credenciais): {nome_empresa}")
+                    else:
+                        logger.warning(f"Empresa não encontrada ou sem razão social para CNPJ {cnpj_str}")
                         nome_empresa = cnpj_str
-                        self._adicionar_log(execucao, f"⚠️ Usando CNPJ como identificador (nome não encontrado): {cnpj_str}")
+                        self._adicionar_log(execucao, f"⚠️ Usando CNPJ como identificador (empresa não encontrada): {cnpj_str}")
+                else:
+                    # Para certificado digital, busca do certificado
+                    from ..db.crud_certificado import obter_certificado_por_cnpj
+                    from ..services.certificate_service import get_certificate_service
+                    
+                    certificado = obter_certificado_por_cnpj(db, cnpj_str)
+                    
+                    # Tenta obter nome da empresa do banco
+                    if certificado and certificado.empresa and certificado.empresa.strip():
+                        nome_empresa = certificado.empresa.strip()
+                        self._adicionar_log(execucao, f"📋 Nome da empresa obtido do banco: {nome_empresa}")
+                    else:
+                        # Se não tem no banco, tenta extrair diretamente do certificado
+                        logger.info(f"Nome da empresa não encontrado no banco. Tentando extrair do certificado...")
+                        try:
+                            cert_service = get_certificate_service()
+                            conteudo_pfx, senha = cert_service.carregar_certificado(cnpj_str)
+                            info_certificado = cert_service.validar_e_extrair_info(conteudo_pfx, senha)
+                            
+                            if info_certificado.empresa and info_certificado.empresa.strip():
+                                nome_empresa = info_certificado.empresa.strip()
+                                self._adicionar_log(execucao, f"📋 Nome da empresa extraído do certificado: {nome_empresa}")
+                                
+                                # Atualiza no banco para próxima vez
+                                if certificado:
+                                    certificado.empresa = nome_empresa
+                                    db.commit()
+                                    logger.info(f"Nome da empresa atualizado no banco: {nome_empresa}")
+                            else:
+                                raise Exception("Nome da empresa não encontrado no certificado")
+                        except Exception as e2:
+                            logger.warning(f"Não foi possível extrair nome da empresa do certificado: {e2}")
+                            # Último recurso: usa CNPJ formatado
+                            nome_empresa = cnpj_str
+                            self._adicionar_log(execucao, f"⚠️ Usando CNPJ como identificador (nome não encontrado): {cnpj_str}")
                 
                 db.close()
             except Exception as e:

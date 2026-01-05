@@ -89,3 +89,10 @@ class EmpresaListResponse(BaseModel):
     empresas: list[EmpresaResponse]
     total: int
 
+
+class LimpezaCompletaResponse(BaseModel):
+    """Schema de resposta para limpeza completa de empresas e credenciais."""
+    empresas_deletadas: int = Field(..., description="Número de empresas deletadas")
+    credenciais_deletadas: int = Field(..., description="Número de credenciais deletadas")
+    sucesso: bool = Field(..., description="Indica se a operação foi bem-sucedida")
+
