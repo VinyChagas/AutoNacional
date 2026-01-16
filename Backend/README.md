@@ -12,6 +12,9 @@ O Backend AutoNacional é uma API REST desenvolvida em Python com FastAPI para a
 - ✅ **Fila de Execução**: Sistema de fila para gerenciar múltiplas execuções simultâneas
 - ✅ **API REST**: Endpoints completos para integração com frontend
 - ✅ **Persistência de Dados**: Banco de dados SQLite para metadados e histórico de execuções
+- ✅ **Gerenciamento de Empresas**: CRUD completo de empresas e credenciais
+- ✅ **Contabilidades**: Gerenciamento de contabilidades e associação com certificados
+- ✅ **Relatórios**: Geração de relatórios e resumos de execuções
 
 ---
 
@@ -25,7 +28,7 @@ Backend/
 ├── run_server.py                     # Script para iniciar servidor (configura event loop no Windows)
 ├── asyncio_windows_fix.py           # Fix para asyncio no Windows
 ├── requirements.txt                 # Dependências Python
-├── settings.json                    # Configurações gerais
+├── settings.json                    # Configurações gerais do sistema
 ├── certificados_meta.json           # Metadados de certificados
 │
 ├── src/                             # Código fonte principal
@@ -47,6 +50,7 @@ Backend/
 │   │   ├── nfse.py                # Endpoints NFSe
 │   │   ├── empresas.py            # Endpoints de empresas
 │   │   ├── credenciais.py         # Endpoints de credenciais
+│   │   ├── contabilidade.py       # Endpoints de contabilidades
 │   │   ├── relatorios.py          # Endpoints de relatórios
 │   │   └── settings.py             # Endpoints de configurações
 │   │
@@ -60,12 +64,15 @@ Backend/
 │   ├── core/                       # Configurações core
 │   │   ├── db.py                   # Conexão com banco de dados
 │   │   ├── db_mock.py              # Banco mock SQLite (dados de teste)
-│   │   └── security.py             # Segurança e autenticação
+│   │   ├── security.py             # Segurança e autenticação
+│   │   └── schemas/                # Schemas Pydantic
 │   │
 │   └── db/                         # Camada de persistência SQLAlchemy
 │       ├── session.py              # Configuração do banco e sessões
 │       ├── models.py               # Modelos ORM
 │       ├── crud_certificado.py     # Funções CRUD para certificados
+│       ├── crud_credenciais.py     # Funções CRUD para credenciais
+│       ├── crud_empresas.py        # Funções CRUD para empresas
 │       └── crud_settings.py        # Funções CRUD para configurações
 │
 ├── scripts/                        # Scripts auxiliares
@@ -100,6 +107,9 @@ Backend/
 ├── certificados_armazenados/       # Certificados criptografados
 │   └── [arquivos .pfx.enc e .pwd.enc]
 │
+├── downloads/                      # Arquivos baixados pela automação
+│   └── [estrutura organizada por CNPJ/ano/mês]
+│
 └── db_mock.sqlite                  # Banco mock SQLite (dados de teste)
 ```
 
@@ -117,6 +127,8 @@ Centraliza todas as configurações da aplicação:
 - Configurações de segurança (Supabase)
 - Configurações CORS
 - Configurações de execução (timeouts, headless)
+
+**Nota:** A chave FERNET_KEY é gerada automaticamente na primeira execução se não existir no `.env`.
 
 #### `logger.py`
 Sistema de logging padronizado para toda a aplicação.
@@ -154,17 +166,24 @@ Service de orquestração de execuções:
 #### `certificado.py`
 Endpoints para gerenciamento de certificados:
 - `POST /api/certificados` - Upload de certificado
-- `POST /api/certificados/importar` - Importar certificado
+- `POST /api/certificados/extrair` - Extrair informações do certificado (sem salvar)
+- `POST /api/certificados/importar` - Importar certificado e extrair informações
 - `GET /api/certificados` - Listar certificados
 - `GET /api/certificados/{cnpj}` - Obter certificado específico
+- `GET /api/certificados/{cnpj}/validar` - Validar certificado
+- `PUT /api/certificados/{cnpj}` - Atualizar certificado
 - `DELETE /api/certificados/{cnpj}` - Remover certificado
+- `DELETE /api/certificados/{cnpj}/senha` - Remover senha do certificado
+- `POST /api/certificados/{cnpj}/testar` - Testar certificado
+- `POST /api/certificados/importar-lote` - Importar múltiplos certificados
+- `GET /api/certificados/contabilidades` - Listar contabilidades com contagem de certificados
 
 #### `execucao.py`
 Endpoints para execução de automações:
 - `POST /api/execucao/{empresa_id}` - Iniciar execução única
 - `POST /api/execucao/multiplas` - Iniciar múltiplas execuções
+- `POST /api/execucao/multiplas/debug` - Debug - Adicionar múltiplas empresas
 - `GET /api/execucao/{empresa_id}/status` - Obter status de execução
-- `GET /api/execucao/{empresa_id}/historico` - Obter histórico
 
 #### `nfse.py`
 Endpoints para automação NFSe:
@@ -173,19 +192,42 @@ Endpoints para automação NFSe:
 #### `empresas.py`
 Endpoints para gerenciamento de empresas:
 - `GET /api/empresas` - Listar empresas
+- `GET /api/empresas/{empresa_id}` - Obter empresa por ID
+- `GET /api/empresas/cnpj/{cnpj}` - Obter empresa por CNPJ
 - `POST /api/empresas` - Criar empresa
-- `PUT /api/empresas/{id}` - Atualizar empresa
-- `DELETE /api/empresas/{id}` - Remover empresa
+- `PUT /api/empresas/{empresa_id}` - Atualizar empresa
+- `DELETE /api/empresas/{empresa_id}` - Remover empresa
+- `POST /api/empresas/{empresa_id}/verificar` - Verificar empresa no portal NFSe
+- `GET /api/empresas/{empresa_id}/certificado` - Obter certificado da empresa
+- `GET /api/empresas/{empresa_id}/credenciais` - Obter credenciais da empresa
+- `GET /api/empresas/{empresa_id}/execucoes` - Obter histórico de execuções
+- `DELETE /api/empresas/{empresa_id}/certificado` - Remover certificado da empresa
 
 #### `credenciais.py`
 Endpoints para gerenciamento de credenciais:
-- `GET /api/credenciais/{empresa_id}` - Obter credenciais
-- `POST /api/credenciais` - Criar/atualizar credenciais
-- `DELETE /api/credenciais/{empresa_id}` - Remover credenciais
+- `GET /api/credenciais/empresa/{empresa_id}` - Obter credenciais por empresa
+- `POST /api/credenciais` - Criar/atualizar credencial
+- `PUT /api/credenciais/{credencial_id}` - Atualizar credencial
+- `PUT /api/credenciais/{credencial_id}/status` - Atualizar status da credencial
+- `DELETE /api/credenciais/{credencial_id}` - Remover credencial
+- `POST /api/credenciais/{credencial_id}/obter-senha` - Obter senha descriptografada (requer senha admin)
+- `POST /api/credenciais/empresa/{empresa_id}/validar` - Validar credenciais
+- `POST /api/credenciais/validar-lote` - Validar múltiplas credenciais em lote
+- `POST /api/credenciais/importar-planilha/validar` - Validar planilha de importação
+- `POST /api/credenciais/importar-planilha` - Importar planilha de empresas e credenciais
+
+#### `contabilidade.py`
+Endpoints para gerenciamento de contabilidades:
+- `POST /api/contabilidades` - Criar contabilidade
+- `GET /api/contabilidades` - Listar contabilidades
+- `GET /api/contabilidades/{contabilidade_id}` - Obter contabilidade por ID
+- `PUT /api/contabilidades/{contabilidade_id}` - Atualizar contabilidade
+- `DELETE /api/contabilidades/{contabilidade_id}` - Remover contabilidade
 
 #### `relatorios.py`
 Endpoints para geração de relatórios:
-- `POST /api/relatorios/gerar` - Gerar relatório PDF
+- `GET /api/relatorios/execucoes/resumo` - Obter resumo das execuções
+- `GET /api/relatorios/execucoes/resumo/csv` - Baixar resumo das execuções em CSV
 
 #### `settings.py`
 Endpoints para configurações:
@@ -242,9 +284,16 @@ Modelos ORM:
 - `CertificadoDigital` - Metadados de certificados
 - `Execucao` - Histórico de execuções
 - `Settings` - Configurações do sistema
+- `Empresa` - Dados das empresas
+- `Credencial` - Credenciais de acesso
+- `Contabilidade` - Contabilidades
 
-#### `crud_certificado.py` e `crud_settings.py`
-Funções CRUD para operações no banco de dados.
+#### CRUD Modules
+Funções CRUD para operações no banco de dados:
+- `crud_certificado.py` - Operações com certificados
+- `crud_credenciais.py` - Operações com credenciais
+- `crud_empresas.py` - Operações com empresas
+- `crud_settings.py` - Operações com configurações
 
 ---
 
@@ -343,7 +392,7 @@ playwright install chromium
 
 ### Configuração
 
-#### Variáveis de Ambiente
+#### Arquivo `.env`
 
 Crie um arquivo `.env` na pasta `Backend`:
 
@@ -364,9 +413,43 @@ CORS_ORIGINS=http://localhost:4200,http://127.0.0.1:4200
 SUPABASE_URL=https://seu-projeto.supabase.co
 SUPABASE_JWKS_URL=https://seu-projeto.supabase.co/.well-known/jwks.json
 INTERNAL_API_KEY=sua_api_key_aqui
+
+# Ambiente (development ou production)
+ENVIRONMENT=development
 ```
 
-**Nota:** Se você não criar o `.env`, o sistema gerará uma chave FERNET_KEY automaticamente na primeira execução.
+**Nota:** Se você não criar o `.env`, o sistema gerará uma chave FERNET_KEY automaticamente na primeira execução e salvará no arquivo `.env`.
+
+#### Arquivo `settings.json`
+
+O arquivo `settings.json` contém configurações gerais do sistema:
+
+```json
+{
+  "id": 1,
+  "headless": false,
+  "company_timeout_seconds": 3600,
+  "max_retries_per_step": 3,
+  "min_action_delay_ms": 500,
+  "max_concurrent_browsers": 3,
+  "default_concurrent_browsers": 3,
+  "browser_launch_delay_ms": 1000,
+  "viewport_preset": "FULLHD",
+  "viewport_width": null,
+  "viewport_height": null,
+  "downloads_base_path": "./downloads",
+  "downloads_pattern": "{cnpj}/{ano}/{mes}",
+  "logs_path": "./logs",
+  "temp_path": "./temp",
+  "log_level": "INFO",
+  "save_error_screenshots": true,
+  "generate_pdf_report": true,
+  "log_retention_days": 30,
+  "max_errors_in_panel": 100
+}
+```
+
+Essas configurações podem ser alteradas via API (`GET /api/settings` e `PUT /api/settings`).
 
 ### Iniciar o Servidor
 
@@ -395,8 +478,10 @@ O servidor estará disponível em `http://localhost:8000`
 ### Documentação da API
 
 Acesse a documentação interativa:
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
+- **Swagger UI**: `http://localhost:8000/docs` - Interface interativa para testar endpoints
+- **ReDoc**: `http://localhost:8000/redoc` - Documentação alternativa em formato ReDoc
+- **Health Check**: `http://localhost:8000/` - Verifica se a API está funcionando
+- **Debug Routes**: `http://localhost:8000/debug/routes` - Lista todas as rotas registradas (útil para debug)
 
 ---
 
@@ -423,6 +508,7 @@ Acesse a documentação interativa:
 - **python-dotenv**: Gerenciamento de variáveis de ambiente
 - **Pydantic**: Validação de dados
 - **httpx**: Cliente HTTP assíncrono
+- **openpyxl**: Processamento de planilhas Excel
 
 ---
 
@@ -440,6 +526,8 @@ Acesse a documentação interativa:
 - Suporte a autenticação JWT via Supabase (opcional)
 - API Key para rotas internas (opcional)
 - CORS configurável para restringir origens
+- Em desenvolvimento, permite localhost em qualquer porta
+- Em produção, usa origens específicas configuradas via `CORS_ORIGINS`
 
 ---
 
@@ -453,6 +541,8 @@ Acesse a documentação interativa:
 python run_server.py
 ```
 
+O script configura automaticamente o `ProactorEventLoop` necessário para o Playwright funcionar no Windows.
+
 ### Problema: Certificado não encontrado
 
 **Solução:** Verifique se o certificado foi importado corretamente:
@@ -460,6 +550,9 @@ python run_server.py
 ```bash
 # Verificar certificados armazenados
 ls certificados_armazenados/
+
+# Verificar no banco de dados
+python -c "from src.db.session import SessionLocal; from src.db.models import Certificado; db = SessionLocal(); print([c.cnpj for c in db.query(Certificado).all()])"
 ```
 
 ### Problema: Erro de importação de módulos
@@ -471,14 +564,32 @@ cd Backend
 python run_server.py
 ```
 
+### Problema: CORS bloqueando requisições do frontend
+
+**Solução:** 
+- Em desenvolvimento, o sistema permite automaticamente localhost em qualquer porta
+- Em produção, configure `CORS_ORIGINS` no arquivo `.env`:
+  ```
+  CORS_ORIGINS=http://seu-frontend.com,https://seu-frontend.com
+  ```
+
+### Problema: Chave FERNET_KEY perdida
+
+**Solução:** Se você perder a chave FERNET_KEY, não será possível descriptografar os certificados salvos. Neste caso:
+- Os certificados antigos não poderão ser recuperados
+- Você precisará fazer upload novamente dos certificados
+- Uma nova chave será gerada automaticamente
+
 ---
 
 ## 📝 Notas Importantes
 
 1. **Windows**: Sempre use `run_server.py` para iniciar o servidor, pois configura o event loop corretamente
 2. **Certificados**: A chave FERNET_KEY é crítica - não a perca ou você não conseguirá descriptografar os certificados
-3. **Concorrência**: O sistema limita o número de navegadores simultâneos para evitar sobrecarga
+3. **Concorrência**: O sistema limita o número de navegadores simultâneos para evitar sobrecarga (configurável em `settings.json`)
 4. **Logs**: Todos os logs são salvos e podem ser consultados para debug
+5. **Downloads**: Os arquivos baixados são organizados automaticamente por CNPJ/ano/mês conforme configurado em `settings.json`
+6. **Banco de Dados**: O banco SQLite é criado automaticamente na primeira execução em `db/certificados.db`
 
 ---
 
@@ -487,6 +598,16 @@ python run_server.py
 - [REFATORACAO.md](docs/REFATORACAO.md) - Detalhes da refatoração do código
 - [ROTAS_NECESSARIAS.md](docs/ROTAS_NECESSARIAS.md) - Documentação completa das rotas
 - [REVISAO_ARQUITETURA.md](docs/REVISAO_ARQUITETURA.md) - Revisão da arquitetura
+- [REFATORACAO_ASYNC_PLAYWRIGHT.md](docs/REFATORACAO_ASYNC_PLAYWRIGHT.md) - Detalhes da refatoração assíncrona
+- [TESTAR_ROTAS.md](docs/TESTAR_ROTAS.md) - Guia para testar as rotas da API
+
+---
+
+## 🔄 Versionamento
+
+- **Versão atual**: 1.0.0
+- **FastAPI**: 0.115.0+
+- **Python**: 3.10+
 
 ---
 
@@ -512,3 +633,14 @@ Este projeto é proprietário e confidencial.
 
 Para dúvidas ou suporte, entre em contato com a equipe de desenvolvimento.
 
+---
+
+## 🎯 Próximos Passos
+
+- [ ] Implementar testes automatizados (unitários e integração)
+- [ ] Adicionar suporte a PostgreSQL para produção
+- [ ] Implementar cache de resultados para melhorar performance
+- [ ] Adicionar métricas e monitoramento (Prometheus/Grafana)
+- [ ] Melhorar documentação de API com exemplos práticos
+- [ ] Implementar sistema de notificações para execuções
+- [ ] Adicionar suporte a webhooks para eventos do sistema
