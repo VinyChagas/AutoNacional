@@ -2,33 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Nova Paleta de Cores Ultra Futurista */
+/* ============================================================================
+   TOKENS - Dashboard Premium (Light + Dark Suave)
+   ============================================================================ */
+
 :root {
-  --color-primary-light: #A9D9D4;
-  --color-secondary: #7EBFB3;
-  --color-accent: #8BCB70;
-  --color-depth: #1E2615;
-  --color-dark: #0C0D0A;
-  
-  /* Cores com transparência para glassmorphism */
-  --glass-primary: rgba(169, 217, 212, 0.15);
-  --glass-secondary: rgba(126, 191, 179, 0.2);
-  --glass-accent: rgba(139, 203, 112, 0.25);
-  --glass-dark: rgba(30, 38, 21, 0.4);
+  /* Light */
+  --bg: #F6F8FC;
+  --surface: #FFFFFF;
+  --surface-2: #F2F5FB;
+  --border: rgba(15, 23, 42, 0.08);
+  --text: #0F172A;
+  --text-muted: #64748B;
+
+  /* Accent */
+  --primary: #4F46E5;
+  --primary-2: #7C3AED;
+  --success: #22C55E;
+  --danger: #EF4444;
+  --warning: #F59E0B;
+  --info: #3B82F6;
+
+  /* Aliases para compatibilidade */
+  --bg-page: var(--bg);
+  --bg-card: var(--surface);
+  --bg-input: var(--surface-2);
+  --text-primary: var(--text);
+  --border-color: var(--border);
+
+  /* Animação */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --duration-fast: 200ms;
+  --duration-normal: 350ms;
+  --duration-slow: 500ms;
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 14px;
+  --radius-xs: 10px;
+
+  /* Card shadow light */
+  --shadow-card: 0 2px 12px rgba(15, 23, 42, 0.06);
 }
 
-/* Estilos Globais Futuristas Minimalistas */
-* {
-  @apply transition-all duration-300;
+/* Dark (SUAVE) */
+.dark {
+  --bg: #0F172A;
+  --surface: #141F33;
+  --surface-2: #182743;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #EAF0FF;
+  --text-muted: rgba(234, 240, 255, 0.70);
+
+  --bg-page: var(--bg);
+  --bg-card: var(--surface);
+  --bg-input: var(--surface-2);
+  --text-primary: var(--text);
+  --border-color: var(--border);
+
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 body {
-  background: radial-gradient(circle at center, #ffffff 0%, #ffffff 90%, rgba(169, 217, 212, 0.1) 100%);
+  background: var(--bg);
   background-attachment: fixed;
   min-height: 100vh;
   overflow-x: hidden;
   overflow-y: auto;
-  color: #0C0D0A;
+  color: var(--text);
+  transition: background 0.4s var(--ease-out-expo), color 0.4s var(--ease-out-expo);
 }
 
 html {
@@ -36,132 +78,56 @@ html {
   overflow-y: auto;
 }
 
-/* Efeitos de Brilho Sutil */
-@keyframes subtle-glow {
-  0%, 100% {
-    box-shadow: 0 0 20px rgba(139, 203, 112, 0.2);
-  }
-  50% {
-    box-shadow: 0 0 30px rgba(139, 203, 112, 0.4);
-  }
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
-/* Glassmorphism Minimalista */
-.glass {
-  background: var(--glass-primary);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(169, 217, 212, 0.3);
-}
-
-.glass-strong {
-  background: var(--glass-secondary);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(126, 191, 179, 0.4);
-}
-
-/* Botões Minimalistas Futuristas */
-.btn-futuristic {
-  @apply relative overflow-hidden;
-  background: linear-gradient(135deg, #8BCB70 0%, #7EBFB3 100%);
-  border: 1px solid rgba(139, 203, 112, 0.3);
-  box-shadow: 0 4px 20px rgba(139, 203, 112, 0.2);
-  color: #0C0D0A;
-  font-weight: 600;
-}
-
-.btn-futuristic::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s;
-}
-
-.btn-futuristic:hover::before {
-  left: 100%;
-}
-
-.btn-futuristic:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 30px rgba(139, 203, 112, 0.4);
-  background: linear-gradient(135deg, #8BCB70 0%, #8BCB70 100%);
-}
-
-/* Cards Minimalistas Futuristas */
-.card-futuristic {
-  @apply relative overflow-hidden;
-  background: var(--glass-primary);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(169, 217, 212, 0.3);
-  box-shadow: 0 4px 24px rgba(30, 38, 21, 0.1);
-  transition: all 0.3s ease;
-}
-
-.card-futuristic::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #8BCB70, transparent);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
-.card-futuristic:hover::before {
-  opacity: 1;
-}
-
-.card-futuristic:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 40px rgba(139, 203, 112, 0.2);
-  border-color: rgba(139, 203, 112, 0.5);
-  background: var(--glass-secondary);
-}
-
-/* Scrollbar Minimalista */
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(169, 217, 212, 0.1);
-  border-radius: 4px;
+  background: rgba(79, 70, 229, 0.06);
+  border-radius: 10px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #8BCB70, #7EBFB3);
-  border-radius: 4px;
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 10px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #7EBFB3, #8BCB70);
+  background: rgba(100, 116, 139, 0.6);
 }
 
-/* Animação shimmer para barras de progresso */
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Glassmorphism / Cards legacy */
+.glass {
+  background: rgba(79, 70, 229, 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+}
+
+.glass-strong {
+  background: rgba(79, 70, 229, 0.1);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+}
+
 @keyframes shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 .animate-shimmer {

@@ -1,0 +1,66 @@
+// Estilos específicos do componente de credenciais
+// Mantém consistência com o design do sistema
+
+// Classes para cards selecionados
+.card-selected {
+  border-color: #8BCB70 !important;
+  background-color: rgba(139, 203, 112, 0.2) !important;
+}
+
+.card-unselected {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  
+  &:hover {
+    border-color: rgba(139, 203, 112, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(139, 203, 112, 0.2);
+  }
+}
+
+// Classes para círculos de seleção
+.circle-selected {
+  border-color: #8BCB70 !important;
+  background-color: #8BCB70 !important;
+}
+
+.circle-unselected {
+  border-color: rgba(255, 255, 255, 0.5) !important;
+}
+
+// Cards de seleção (Tipo de Login e Regime Tributário)
+button[type="button"] {
+  cursor: pointer;
+  transform: scale(1);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    transform: scale(1.02);
+  }
+  
+  &:active {
+    transform: scale(0.98);
+  }
+  
+  &.card-selected:hover {
+    box-shadow: 0 4px 12px rgba(139, 203, 112, 0.3);
+  }
+}
+
+// Animação suave para o círculo de seleção
+.w-5.h-5.rounded-full {
+  transition: all 0.2s ease;
+}
+
+// Classes para mensagens de validação
+.validacao-sucesso {
+  background-color: rgba(139, 203, 112, 0.3) !important;
+  color: white !important;
+  border-color: rgba(139, 203, 112, 0.5) !important;
+}
+
+.validacao-erro {
+  background-color: rgba(239, 68, 68, 0.3) !important;
+  color: white !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+

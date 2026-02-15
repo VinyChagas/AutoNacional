@@ -1,0 +1,777 @@
+<div class="w-full py-8">
+  <div class="container mx-auto px-4 max-w-7xl">
+    <!-- Header -->
+    <div class="mb-10">
+      <h2 class="text-4xl md:text-5xl font-bold mb-4 text-[#0C0D0A]">Empresas</h2>
+      <p class="text-lg md:text-xl text-[#1E2615] font-light">
+        Cadastro unificado de empresas, certificados e credenciais
+      </p>
+      <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
+    </div>
+
+    <!-- Toast -->
+    @if (toastSucesso) {
+      <div class="mb-6 p-4 bg-[#8BCB70]/20 border border-[#8BCB70]/50 text-[#0C0D0A] rounded-xl">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <span class="font-semibold">{{ toastSucesso }}</span>
+        </div>
+      </div>
+    }
+    @if (toastErro) {
+      <div class="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-xl">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+          <span>{{ toastErro }}</span>
+        </div>
+      </div>
+    }
+
+    <!-- Filtros e Busca -->
+    <div class="glass-strong rounded-2xl p-4 mb-6 border">
+      <div class="flex flex-wrap gap-4 items-center">
+        <div class="flex-1 min-w-[200px]">
+          <input
+            type="text"
+            [(ngModel)]="search"
+            (ngModelChange)="carregar()"
+            placeholder="Buscar por CNPJ ou Razão Social..."
+            class="w-full px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 placeholder-[#1E2615]/50"
+          />
+        </div>
+        <select
+          [ngModel]="contabilidadeId"
+          (ngModelChange)="contabilidadeId = $event; carregar()"
+          class="px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 min-w-[200px]"
+        >
+          <option [ngValue]="null">Todas as contabilidades</option>
+          @for (c of contabilidades; track c.id) {
+            <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
+          }
+        </select>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="toggleComCert" (ngModelChange)="carregar(); aplicarFiltroCertVencido()" />
+          <span class="text-sm font-medium text-[#0C0D0A]">Com certificado</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="toggleComCred" (ngModelChange)="carregar()" />
+          <span class="text-sm font-medium text-[#0C0D0A]">Com credenciais</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="toggleCertVencido" (ngModelChange)="carregar()" />
+          <span class="text-sm font-medium text-[#0C0D0A]">Cert. vencido</span>
+        </label>
+        <span class="text-[#1E2615]/60">|</span>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="toggleSemCert" (ngModelChange)="carregar()" />
+          <span class="text-sm font-medium text-[#0C0D0A]">Sem certificado</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="toggleSemCred" (ngModelChange)="carregar()" />
+          <span class="text-sm font-medium text-[#0C0D0A]">Sem credenciais</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="toggleSemMetodo" (ngModelChange)="carregar()" />
+          <span class="text-sm font-medium text-[#0C0D0A]">Sem nenhum método</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Barra de ações em massa (quando há seleção) -->
+    @if (selectedIds.size > 0) {
+      <div class="mb-6 flex items-center gap-4 p-4 rounded-xl bg-[#8BCB70]/20 border border-[#8BCB70]/40">
+        <span class="font-semibold text-[#0C0D0A]">{{ selectedIds.size }} selecionados</span>
+        <button
+          (click)="abrirModalExcluir()"
+          class="px-4 py-2 rounded-lg flex items-center gap-2 bg-red-500/90 hover:bg-red-600 text-white font-medium transition-colors"
+          title="Excluir selecionados"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+          </svg>
+          Excluir selecionados
+        </button>
+        <button
+          (click)="limparSelecao()"
+          class="px-4 py-2 rounded-lg border border-[#1E2615]/30 hover:bg-[#1E2615]/5 font-medium text-[#0C0D0A] transition-colors"
+        >
+          Limpar seleção
+        </button>
+      </div>
+    }
+
+    <!-- Botões de Ação -->
+    <div class="mb-6 flex gap-3 flex-wrap">
+      <button
+        (click)="abrirModalCadastrar()"
+        class="btn-futuristic px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+        </svg>
+        Cadastrar
+      </button>
+      <button
+        (click)="abrirModalImportCert()"
+        class="px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] hover:bg-[#8BCB70]/30 transition-all"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+        </svg>
+        Importar Certificados (Lote)
+      </button>
+      <button
+        (click)="abrirModalImportCred()"
+        class="px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 border-2 border-[#7EBFB3] bg-[#7EBFB3]/20 text-[#0C0D0A] hover:bg-[#7EBFB3]/30 transition-all"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+        </svg>
+        Importar Credenciais (Planilha)
+      </button>
+      <button
+        (click)="abrirModalValidar()"
+        class="px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 border-2 border-[#8BCB70] bg-[#8BCB70]/20 text-[#0C0D0A] hover:bg-[#8BCB70]/30 transition-all"
+      >
+        <span>✅</span>
+        Validar
+      </button>
+    </div>
+
+    <!-- Painel de progresso da validação -->
+    @if (validarStatus === 'RUNNING') {
+      <div class="mb-6 p-4 rounded-xl bg-[#8BCB70]/20 border border-[#8BCB70]/40">
+        <p class="font-semibold text-[#0C0D0A] mb-2">Validação em andamento</p>
+        <p class="text-sm text-[#1E2615]">
+          Processando {{ validarProcessed }}/{{ validarTotal }} | OK: {{ validarOk }} | Erros: {{ validarErrors }}
+        </p>
+        <div class="mt-2 h-2 bg-[#1E2615]/10 rounded-full overflow-hidden">
+          <div
+            class="h-full bg-[#8BCB70] transition-all duration-300"
+            [style.width.%]="validarProgress"
+          ></div>
+        </div>
+      </div>
+    }
+
+    <!-- Tabela -->
+    <div class="glass-strong rounded-2xl border overflow-hidden">
+      @if (loading) {
+        <div class="p-12 text-center">
+          <svg class="animate-spin w-10 h-10 mx-auto text-[#8BCB70]" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p class="mt-4 text-[#1E2615]">Carregando...</p>
+        </div>
+      } @else if (filtrados.length === 0) {
+        <div class="p-12 text-center text-[#1E2615]">
+          <p>Nenhuma empresa encontrada.</p>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[#8BCB70]/30 bg-[#8BCB70]/10">
+                <th class="px-4 py-3 text-left w-12">
+                  <label class="flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      [checked]="isTodosSelecionados()"
+                      [indeterminate]="isIndeterminado()"
+                      (change)="toggleSelecionarTodos()"
+                      class="rounded border-[#8BCB70] text-[#8BCB70] focus:ring-[#8BCB70]"
+                    />
+                  </label>
+                </th>
+                <th class="px-4 py-3 text-left font-semibold text-[#0C0D0A]">
+                  <button type="button" (click)="toggleSort('cnpj')" class="flex items-center gap-1 hover:text-[#8BCB70] transition-colors">
+                    CNPJ <span class="text-xs">{{ getSortIcon('cnpj') }}</span>
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-left font-semibold text-[#0C0D0A]">
+                  <button type="button" (click)="toggleSort('razao_social')" class="flex items-center gap-1 hover:text-[#8BCB70] transition-colors">
+                    Razão Social <span class="text-xs">{{ getSortIcon('razao_social') }}</span>
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-left font-semibold text-[#0C0D0A]">
+                  <button type="button" (click)="toggleSort('contabilidade_nome')" class="flex items-center gap-1 hover:text-[#8BCB70] transition-colors">
+                    Contabilidade <span class="text-xs">{{ getSortIcon('contabilidade_nome') }}</span>
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-left font-semibold text-[#0C0D0A]">
+                  <button type="button" (click)="toggleSort('cert_validade')" class="flex items-center gap-1 hover:text-[#8BCB70] transition-colors">
+                    Certificado <span class="text-xs">{{ getSortIcon('cert_validade') }}</span>
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-left font-semibold text-[#0C0D0A]">
+                  <button type="button" (click)="toggleSort('has_credenciais')" class="flex items-center gap-1 hover:text-[#8BCB70] transition-colors">
+                    Credenciais <span class="text-xs">{{ getSortIcon('has_credenciais') }}</span>
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-left font-semibold text-[#0C0D0A]">
+                  <button type="button" (click)="toggleSort('status_geral')" class="flex items-center gap-1 hover:text-[#8BCB70] transition-colors">
+                    Status <span class="text-xs">{{ getSortIcon('status_geral') }}</span>
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-right font-semibold text-[#0C0D0A]">Editar</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of filtrados; track item.id) {
+                <tr class="border-b border-[#1E2615]/10 hover:bg-[#8BCB70]/5 transition-colors">
+                  <td class="px-4 py-3 w-12">
+                    <input
+                      type="checkbox"
+                      [checked]="selectedIds.has(item.id)"
+                      (change)="toggleSelecionar(item)"
+                      class="rounded border-[#8BCB70] text-[#8BCB70] focus:ring-[#8BCB70]"
+                    />
+                  </td>
+                  <td class="px-4 py-3 font-mono text-[#0C0D0A]">{{ formatarCNPJ(item.cnpj) }}</td>
+                  <td class="px-4 py-3 text-[#0C0D0A]">{{ item.razao_social }}</td>
+                  <td class="px-4 py-3 text-[#1E2615]">{{ getContabilidadeNome(item) }}</td>
+                  <td class="px-4 py-3">
+                    @if (item.has_certificado) {
+                      <span [class.text-red-600]="isCertificadoVencido(item)" class="font-medium">
+                        Sim
+                        @if (item.cert_validade) {
+                          <span class="text-xs block">({{ item.cert_validade }})</span>
+                        }
+                      </span>
+                    } @else {
+                      <span class="text-[#1E2615]/60">Não</span>
+                    }
+                  </td>
+                  <td class="px-4 py-3">
+                    @if (item.has_credenciais) {
+                      <span class="font-medium text-[#0C0D0A]">Sim</span>
+                      @if (item.cred_status) {
+                        <span class="text-xs block">({{ item.cred_status }})</span>
+                      }
+                    } @else {
+                      <span class="text-[#1E2615]/60">Não</span>
+                    }
+                  </td>
+                  <td class="px-4 py-3">
+                    @if (item.status_geral) {
+                      <span
+                        [class]="{
+                          'px-2 py-0.5 rounded-full text-xs font-medium': true,
+                          'bg-green-100 text-green-800': item.status_geral === 'OPERACIONAL',
+                          'bg-yellow-100 text-yellow-800': item.status_geral === 'PARCIAL',
+                          'bg-red-100 text-red-800': item.status_geral === 'INOPERANTE'
+                        }"
+                        [title]="item.status_geral_motivo ?? ''"
+                      >
+                        {{ item.status_geral === 'OPERACIONAL' ? '🟢' : item.status_geral === 'PARCIAL' ? '🟡' : '🔴' }}
+                        {{ item.status_geral }}
+                      </span>
+                    } @else {
+                      <span class="text-[#1E2615]/60">-</span>
+                    }
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    <button
+                      (click)="abrirModalEditar(item)"
+                      class="p-2 rounded-lg hover:bg-[#8BCB70]/20 text-[#8BCB70] transition-colors"
+                      title="Editar"
+                    >
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+<!-- Modal Validar -->
+@if (modalValidarAberto) {
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" (click)="!validarIniciando && fecharModalValidar()">
+    <div class="glass-strong rounded-2xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">Validação de Cadastros</h3>
+        <button (click)="fecharModalValidar()" [disabled]="validarIniciando" class="text-[#1E2615] hover:text-[#0C0D0A] disabled:opacity-50">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <!-- Seção A: O que validar -->
+      <div class="mb-6">
+        <p class="text-sm font-semibold text-[#0C0D0A] mb-3">O que validar</p>
+        <label class="flex items-center gap-2 cursor-pointer mb-2">
+          <input type="checkbox" [(ngModel)]="validarCert" />
+          <span class="text-[#1E2615]">Certificados digitais</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" [(ngModel)]="validarCred" />
+          <span class="text-[#1E2615]">Credenciais (CNPJ + senha)</span>
+        </label>
+      </div>
+
+      <!-- Seção B: Escopo -->
+      <div class="mb-6">
+        <p class="text-sm font-semibold text-[#0C0D0A] mb-3">Escopo</p>
+        @if (selectedIds.size > 0) {
+          <label class="flex items-center gap-2 cursor-pointer mb-2">
+            <input type="radio" [(ngModel)]="validarEscopo" value="SELECTED" name="validarEscopo" />
+            <span class="text-[#1E2615]">Somente empresas selecionadas ({{ selectedIds.size }})</span>
+          </label>
+        }
+        <label class="flex items-center gap-2 cursor-pointer mb-2">
+          <input type="radio" [(ngModel)]="validarEscopo" value="FILTERED" name="validarEscopo" />
+          <span class="text-[#1E2615]">Todas as empresas filtradas</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" [(ngModel)]="validarEscopo" value="ALL" name="validarEscopo" />
+          <span class="text-[#1E2615]">Todas as empresas do sistema</span>
+        </label>
+      </div>
+
+      <!-- Seção C: Avançado -->
+      <div class="mb-6">
+        <button
+          type="button"
+          (click)="validarAvancadoAberto = !validarAvancadoAberto"
+          class="text-sm font-semibold text-[#8BCB70] hover:underline"
+        >
+          {{ validarAvancadoAberto ? '▼' : '▶' }} Avançado
+        </button>
+        @if (validarAvancadoAberto) {
+          <div class="mt-3 space-y-3 pl-4 border-l-2 border-[#8BCB70]/30">
+            <div>
+              <label class="block text-xs text-[#1E2615] mb-1">Concorrência</label>
+              <select [(ngModel)]="validarConcorrencia" class="w-full px-3 py-2 rounded-lg border border-[#8BCB70]/30 text-sm">
+                <option [ngValue]="1">1</option>
+                <option [ngValue]="2">2</option>
+                <option [ngValue]="4">4</option>
+                <option [ngValue]="8">8</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-[#1E2615] mb-1">Timeout por login (s)</label>
+              <input type="number" [(ngModel)]="validarTimeout" min="10" max="300" class="w-full px-3 py-2 rounded-lg border border-[#8BCB70]/30 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs text-[#1E2615] mb-1">Parar após X erros seguidos</label>
+              <input type="number" [(ngModel)]="validarStopErros" min="1" max="20" class="w-full px-3 py-2 rounded-lg border border-[#8BCB70]/30 text-sm" />
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- Seção D: Resumo e botões -->
+      <div class="mb-4">
+        <p class="text-sm text-[#1E2615] mb-4">{{ resumoValidacao() }}</p>
+        <div class="flex gap-3 justify-end">
+          <button (click)="fecharModalValidar()" [disabled]="validarIniciando" class="px-4 py-2 rounded-lg border border-[#1E2615]/30 font-medium disabled:opacity-50">
+            Cancelar
+          </button>
+          <button
+            (click)="iniciarValidacao()"
+            [disabled]="!podeIniciarValidacao() || validarIniciando"
+            class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50"
+          >
+            @if (validarIniciando) { Iniciando... } @else { Iniciar validação }
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Modal Exclusão em Massa -->
+@if (modalExcluirAberto) {
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" (click)="!excluindoEmMassa && fecharModalExcluir()">
+    <div class="glass-strong rounded-2xl p-8 max-w-md w-full" (click)="$event.stopPropagation()">
+      <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">Confirmar exclusão</h3>
+      <p class="text-[#1E2615] mb-6">
+        Tem certeza que deseja excluir {{ selectedIds.size }} empresa(s)? Isso removerá certificados e credenciais vinculadas.
+      </p>
+      <div class="flex gap-3 justify-end">
+        <button
+          (click)="fecharModalExcluir()"
+          [disabled]="excluindoEmMassa"
+          class="px-4 py-2 rounded-lg border border-[#1E2615]/30 hover:bg-[#1E2615]/5 font-medium disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+        <button
+          (click)="confirmarExclusaoEmMassa()"
+          [disabled]="excluindoEmMassa"
+          class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white font-medium disabled:opacity-50"
+        >
+          @if (excluindoEmMassa) { Excluindo... } @else { Confirmar exclusão }
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Modal Cadastrar -->
+@if (modalCadastrarAberto) {
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" (click)="fecharModalCadastrar()">
+    <div class="glass-strong rounded-2xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">Cadastrar Empresa</h3>
+        <button (click)="fecharModalCadastrar()" class="text-[#1E2615] hover:text-[#0C0D0A]">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      @if (passoCadastrar === 'escolha') {
+        <div class="flex gap-4">
+          <button
+            (click)="escolherCadastroCert()"
+            class="flex-1 p-6 rounded-xl border-2 border-[#8BCB70] bg-[#8BCB70]/10 hover:bg-[#8BCB70]/20 transition-all text-[#0C0D0A] font-semibold"
+          >
+            <svg class="w-12 h-12 mx-auto mb-2 text-[#8BCB70]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+            </svg>
+            Certificado Digital
+          </button>
+          <button
+            (click)="escolherCadastroCred()"
+            class="flex-1 p-6 rounded-xl border-2 border-[#7EBFB3] bg-[#7EBFB3]/10 hover:bg-[#7EBFB3]/20 transition-all text-[#0C0D0A] font-semibold"
+          >
+            <svg class="w-12 h-12 mx-auto mb-2 text-[#7EBFB3]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+            </svg>
+            Credencial (CNPJ + Senha)
+          </button>
+        </div>
+      }
+
+      @if (passoCadastrar === 'cert') {
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Arquivo .pfx ou .p12</label>
+            <input type="file" accept=".pfx,.p12" (change)="onCertFileChange($event)" class="w-full text-sm" />
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Senha</label>
+            <input type="password" [(ngModel)]="certSenha" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" placeholder="Senha do certificado" />
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button (click)="passoCadastrar = 'escolha'" class="px-4 py-2 rounded-lg border border-[#1E2615]/30">Voltar</button>
+            <button
+              (click)="salvarCadastroCert()"
+              [disabled]="!certFile || !(certSenha || '').trim() || salvandoCadastro"
+              class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50"
+            >
+              @if (salvandoCadastro) { Cadastrando... } @else { Cadastrar }
+            </button>
+          </div>
+        </div>
+      }
+
+      @if (passoCadastrar === 'cred') {
+        <form [formGroup]="credForm" (ngSubmit)="salvarCadastroCred()" class="space-y-4">
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">CNPJ *</label>
+            <input formControlName="cnpj" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" placeholder="00.000.000/0000-00" />
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Razão Social *</label>
+            <input formControlName="razao_social" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" placeholder="Nome da empresa" />
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Senha *</label>
+            <input formControlName="senha" type="password" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" placeholder="Senha de acesso" />
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Contabilidade</label>
+            <select formControlName="contabilidade_id" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30">
+              <option [ngValue]="null">Nenhuma</option>
+              @for (c of contabilidades; track c.id) {
+                <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
+              }
+            </select>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button type="button" (click)="passoCadastrar = 'escolha'" class="px-4 py-2 rounded-lg border border-[#1E2615]/30">Voltar</button>
+            <button type="submit" [disabled]="credForm.invalid || salvandoCadastro" class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50">
+              @if (salvandoCadastro) { Cadastrando... } @else { Cadastrar }
+            </button>
+          </div>
+        </form>
+      }
+    </div>
+  </div>
+}
+
+<!-- Modal Editar -->
+@if (modalEditarAberto && editandoEmpresa) {
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" (click)="fecharModalEditar()">
+    <div class="glass-strong rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">{{ editandoEmpresa.empresa.razao_social }} ({{ formatarCNPJ(editandoEmpresa.empresa.cnpj) }})</h3>
+        <button (click)="fecharModalEditar()" class="text-[#1E2615] hover:text-[#0C0D0A]">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <!-- Abas -->
+      <div class="flex gap-2 mb-6 border-b border-[#1E2615]/20">
+        <button
+          (click)="editTab = 'dados'"
+          [class.border-b-2]="editTab === 'dados'"
+          [class.border-[#8BCB70]]="editTab === 'dados'"
+          [class.text-[#8BCB70]]="editTab === 'dados'"
+          class="px-4 py-2 font-medium text-[#1E2615]"
+        >
+          Dados
+        </button>
+        <button
+          (click)="editTab = 'cert'"
+          [class.border-b-2]="editTab === 'cert'"
+          [class.border-[#8BCB70]]="editTab === 'cert'"
+          [class.text-[#8BCB70]]="editTab === 'cert'"
+          class="px-4 py-2 font-medium text-[#1E2615]"
+        >
+          Certificado
+        </button>
+        <button
+          (click)="editTab = 'cred'"
+          [class.border-b-2]="editTab === 'cred'"
+          [class.border-[#8BCB70]]="editTab === 'cred'"
+          [class.text-[#8BCB70]]="editTab === 'cred'"
+          class="px-4 py-2 font-medium text-[#1E2615]"
+        >
+          Credenciais
+        </button>
+      </div>
+
+      @if (editTab === 'dados') {
+        <form [formGroup]="editDadosForm" (ngSubmit)="salvarEdicaoDados()" class="space-y-4">
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Razão Social *</label>
+            <input formControlName="razao_social" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" />
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Regime</label>
+            <input formControlName="regime" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" placeholder="Simples Nacional, etc." />
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Contabilidade</label>
+            <select formControlName="contabilidade_id" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30">
+              <option [ngValue]="null">Nenhuma</option>
+              @for (c of contabilidades; track c.id) {
+                <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
+              }
+            </select>
+          </div>
+          <button type="submit" [disabled]="editDadosForm.invalid || salvandoEdicao" class="btn-futuristic px-6 py-2 rounded-lg">
+            @if (salvandoEdicao) { Salvando... } @else { Salvar Dados }
+          </button>
+        </form>
+      }
+
+      @if (editTab === 'cert') {
+        <div class="space-y-4">
+          @if (editCertificados.length > 0) {
+            <div class="p-4 rounded-lg bg-[#8BCB70]/10 border border-[#8BCB70]/30">
+              <p class="font-semibold text-[#0C0D0A] mb-2">Certificados cadastrados:</p>
+              @for (cert of editCertificados; track cert.id) {
+                <p class="text-sm text-[#1E2615]">Validade: {{ cert.data_validade || '-' }}</p>
+              }
+            </div>
+          }
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Adicionar novo certificado</label>
+            <input type="file" accept=".pfx,.p12" (change)="onEditCertFileChange($event)" class="w-full text-sm mb-2" />
+            <input type="password" [(ngModel)]="editCertSenha" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30 mb-2" placeholder="Senha do certificado" />
+            <button
+              (click)="adicionarCertificado()"
+              [disabled]="!editCertFile || !(editCertSenha || '').trim() || adicionandoCert"
+              class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50"
+            >
+              @if (adicionandoCert) { Adicionando... } @else { Adicionar Certificado }
+            </button>
+          </div>
+        </div>
+      }
+
+      @if (editTab === 'cred') {
+        <div class="space-y-4">
+          @if (editandoEmpresa.credenciais.length > 0) {
+            <div class="p-4 rounded-lg bg-[#8BCB70]/10 border border-[#8BCB70]/30">
+              <p class="font-semibold text-[#0C0D0A] mb-2">Credenciais cadastradas:</p>
+              @for (cred of editandoEmpresa.credenciais; track cred.id) {
+                <p class="text-sm text-[#1E2615]">{{ cred.tipo }} - Usuário: {{ cred.usuario }} - Status: {{ cred.status }}</p>
+              }
+            </div>
+          }
+          <div>
+            <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Adicionar nova credencial (atualizar senha)</label>
+            <form [formGroup]="editCredForm" (ngSubmit)="adicionarCredencial()">
+              <input formControlName="senha" type="password" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30 mb-2" placeholder="Nova senha" />
+              <button type="submit" [disabled]="editCredForm.invalid || adicionandoCred" class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50">
+                @if (adicionandoCred) { Adicionando... } @else { Adicionar / Atualizar Credencial }
+              </button>
+            </form>
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+}
+
+<!-- Modal Import Certificados -->
+@if (modalImportCertAberto) {
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" (click)="fecharModalImportCert()">
+    <div class="glass-strong rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">Importar Certificados em Lote</h3>
+        <button (click)="fecharModalImportCert()" class="text-[#1E2615] hover:text-[#0C0D0A]">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Arquivos .pfx ou .p12</label>
+          <input type="file" accept=".pfx,.p12" multiple (change)="onImportCertFilesChange($event)" class="w-full text-sm" />
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Senha (comum a todos)</label>
+          <input type="password" [(ngModel)]="importCertSenha" class="w-full px-4 py-2 rounded-lg border border-[#8BCB70]/30" />
+        </div>
+
+        @if (!importCertPreview) {
+          <button
+            (click)="fazerPreviewCert()"
+            [disabled]="!importCertFiles.length || !(importCertSenha || '').trim() || loadingPreviewCert"
+            class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50"
+          >
+            @if (loadingPreviewCert) { Analisando... } @else { Visualizar Preview }
+          </button>
+        } @else {
+          <div class="max-h-48 overflow-y-auto border rounded-lg p-2">
+            @for (item of importCertPreview.items; track item.indice) {
+              <div class="flex justify-between items-center py-1 text-sm" [class.text-red-600]="item.acao === 'ERRO'">
+                <span>{{ item.cnpj || item.erro }} {{ item.razao_social }} {{ item.data_validade || '' }}</span>
+                <span class="font-medium">{{ item.acao }}</span>
+              </div>
+            }
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button (click)="importCertPreview = null" class="px-4 py-2 rounded-lg border border-[#1E2615]/30">Voltar</button>
+            <button
+              (click)="confirmarImportCert()"
+              [disabled]="importCertConfirmando"
+              class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50"
+            >
+              @if (importCertConfirmando) { Importando... } @else { Confirmar Importação }
+            </button>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Modal Import Credenciais -->
+@if (modalImportCredAberto) {
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" (click)="fecharModalImportCred()">
+    <div class="glass-strong rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-[#0C0D0A]">Importar Credenciais (Planilha)</h3>
+        <button (click)="fecharModalImportCred()" class="text-[#1E2615] hover:text-[#0C0D0A]">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-semibold text-[#0C0D0A] mb-1">Arquivo .xlsx ou .csv</label>
+          <p class="text-xs text-[#1E2615]/70 mb-1">Colunas: A=Razão Social | B=Tipo de Login | C=CNPJ/CPF | D=Senha | E=Regime Tributário</p>
+          <div class="flex gap-2 items-center">
+            <input type="file" accept=".xlsx,.xls,.csv" (change)="onImportCredFileChange($event)" class="flex-1 text-sm" />
+            <button type="button" (click)="baixarPlanilhaModeloCred()" class="px-3 py-1.5 text-sm border border-[#8BCB70]/50 rounded-lg hover:bg-[#8BCB70]/10 transition-colors">
+              Baixar modelo
+            </button>
+          </div>
+        </div>
+
+        @if (!importCredPreview && !loadingPreviewCred) {
+          @if (importCredFile) {
+            <button
+              (click)="fazerPreviewCredComDados()"
+              class="btn-futuristic px-6 py-2 rounded-lg"
+            >
+              Visualizar Preview
+            </button>
+          } @else {
+            <p class="text-sm text-[#1E2615]/70">Selecione um arquivo para visualizar o preview automaticamente</p>
+          }
+        } @else if (loadingPreviewCred) {
+          <div class="flex items-center gap-2 py-4">
+            <svg class="animate-spin w-6 h-6 text-[#8BCB70]" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-[#1E2615] font-medium">Analisando planilha...</span>
+          </div>
+        } @else {
+          <div class="space-y-2">
+            <div class="flex items-center gap-3 mb-2">
+              <span class="text-sm font-medium text-[#0C0D0A]">{{ importCredSelecionados.size }} de {{ getImportCredCountImportaveis() }} selecionados para importar</span>
+              <button type="button" (click)="selecionarTodosImportCred()" class="text-xs text-[#8BCB70] hover:underline font-medium">Selecionar todos</button>
+              <button type="button" (click)="desmarcarTodosImportCred()" class="text-xs text-[#1E2615]/70 hover:underline">Desmarcar todos</button>
+            </div>
+            <div class="max-h-48 overflow-y-auto border rounded-lg p-2 space-y-1">
+              @for (item of (importCredPreview?.items ?? []); track item.linha) {
+                <label
+                  class="flex items-center gap-3 py-2 px-2 rounded hover:bg-[#8BCB70]/5 cursor-pointer"
+                  [class.opacity-60]="item.acao === 'ERRO'"
+                  [class.cursor-not-allowed]="item.acao === 'ERRO'"
+                >
+                  @if (item.acao !== 'ERRO') {
+                    <input
+                      type="checkbox"
+                      [checked]="importCredSelecionados.has(item.linha)"
+                      (change)="toggleImportCredItem(item.linha, true)"
+                      class="rounded border-[#8BCB70] text-[#8BCB70] focus:ring-[#8BCB70]"
+                    />
+                  } @else {
+                    <span class="w-4 h-4 block"></span>
+                  }
+                  <span class="flex-1 text-sm" [class.text-red-600]="item.acao === 'ERRO'">
+                    {{ item.razao_social }} — {{ item.documento }} ({{ item.tipo }})
+                    @if (item.acao === 'ERRO') {
+                      <span class="font-medium ml-2">{{ item.erro || '' }}</span>
+                    } @else {
+                      <span class="text-xs ml-2 text-[#1E2615]/70">{{ item.acao }}</span>
+                    }
+                  </span>
+                </label>
+              }
+            </div>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button (click)="importCredPreview = null; importCredSessionId = null" class="px-4 py-2 rounded-lg border border-[#1E2615]/30">Voltar</button>
+            <button
+              (click)="confirmarImportCred()"
+              [disabled]="importCredConfirmando || importCredSelecionados.size === 0"
+              class="btn-futuristic px-6 py-2 rounded-lg disabled:opacity-50"
+            >
+              @if (importCredConfirmando) { Importando... } @else { Confirmar Importação ({{ importCredSelecionados.size }}) }
+            </button>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+}

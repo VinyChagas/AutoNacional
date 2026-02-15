@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, BehaviorSubject } from 'rxjs';
 import { catchError } from 'rxjs/operators';
+import { environment } from '../../environments/environment';
 
 export interface Certificado {
   id: string;
@@ -60,7 +61,7 @@ export interface CertificadoImportacaoLoteResponse {
   providedIn: 'root'
 })
 export class CertificadoService {
-  private baseUrl = 'http://localhost:8000/api';
+  private baseUrl = environment.apiUrl;
   private storageKey = 'certificados_armazenados';
   private certificadosSubject = new BehaviorSubject<Certificado[]>([]);
   public certificados$ = this.certificadosSubject.asObservable();
@@ -137,7 +138,7 @@ export class CertificadoService {
     // nas contabilidades fique sempre consistente.
     const cnpjLimpo = this.limparCNPJ(certificado.cnpj);
 
-    this.http.delete<void>(`${this.baseUrl}/certificados/metadados/cnpj/${cnpjLimpo}`)
+    this.http.delete<void>(`${this.baseUrl}/certificados/cnpj/${cnpjLimpo}`)
       .pipe(
         catchError((error: HttpErrorResponse) => {
           console.error('❌ Erro ao remover certificado no backend:', error);

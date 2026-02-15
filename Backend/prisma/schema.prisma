@@ -1,0 +1,142 @@
+// Schema Prisma - AutoNacional Backend
+// PostgreSQL (Supabase)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// Contabilidades (para vínculo com empresas e certificados)
+// ============================================================================
+model Contabilidade {
+  id                Int      @id @default(autoincrement())
+  nomeContabilidade String   @map("nome_contabilidade")
+  cnpj              String   @unique
+  email             String?
+  telefone          String?
+  responsavel       String?
+  dataCadastro      DateTime @default(now()) @map("data_cadastro")
+
+  empresas     Empresa[]
+  certificados Certificado[]
+
+  @@map("contabilidades")
+}
+
+// ============================================================================
+// Empresas
+// ============================================================================
+model Empresa {
+  id              Int      @id @default(autoincrement())
+  cnpj            String   @unique
+  razaoSocial     String   @map("razao_social")
+  regime          String?
+  ativo           Boolean  @default(true)
+  contabilidadeId Int?     @map("contabilidade_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  contabilidade Contabilidade? @relation(fields: [contabilidadeId], references: [id], onDelete: SetNull)
+  credenciais   Credencial[]
+  execucoes     Execucao[]
+
+  @@map("empresas")
+}
+
+// ============================================================================
+// Credenciais (login CNPJ/CPF + senha)
+// ============================================================================
+model Credencial {
+  id                 Int       @id @default(autoincrement())
+  empresaId          Int       @map("empresa_id")
+  tipo               String // CNPJ_SENHA ou CPF_SENHA
+  usuario            String // CNPJ ou CPF (sem formatação)
+  senhaCriptografada String    @map("senha_criptografada")
+  status             String    @default("NAO_TESTADO") // NAO_TESTADO, OK, INVALIDA, BLOQUEADA
+  ultimoTesteEm      DateTime? @map("ultimo_teste_em")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, tipo])
+  @@map("credenciais")
+}
+
+// ============================================================================
+// Certificados Digitais (arquivo PFX no Storage + senha criptografada)
+// ============================================================================
+model Certificado {
+  id                  Int      @id @default(autoincrement())
+  cnpj                String
+  arquivo             String?  // Path no Supabase Storage
+  senhaCriptografada  String?  @map("senha_criptografada")
+  dataValidade        String?  @map("data_validade") // ISO string ou DD/MM/YYYY
+  empresaId           String?  @map("empresa_id")
+  contabilidadeId     Int?     @map("contabilidade_id")
+  dataCadastro        DateTime @default(now()) @map("data_cadastro")
+
+  contabilidade Contabilidade? @relation(fields: [contabilidadeId], references: [id], onDelete: SetNull)
+
+  @@map("certificados_digitais")
+}
+
+// ============================================================================
+// Settings (AutomationSettings - única linha)
+// ============================================================================
+model Settings {
+  id                        Int     @id @default(autoincrement())
+  headless                  Boolean @default(false)
+  companyTimeoutSeconds     Int     @default(300) @map("company_timeout_seconds")
+  maxRetriesPerStep         Int     @default(3) @map("max_retries_per_step")
+  minActionDelayMs          Int     @default(500) @map("min_action_delay_ms")
+  maxConcurrentBrowsers     Int     @default(5) @map("max_concurrent_browsers")
+  defaultConcurrentBrowsers Int     @default(3) @map("default_concurrent_browsers")
+  browserLaunchDelayMs      Int     @default(1000) @map("browser_launch_delay_ms")
+  viewportPreset            String  @default("FULLHD") @map("viewport_preset")
+  viewportWidth             Int?    @map("viewport_width")
+  viewportHeight            Int?    @map("viewport_height")
+  downloadsBasePath         String  @default("./downloads") @map("downloads_base_path")
+  downloadsPattern          String  @default("{cnpj}/{ano}/{mes}") @map("downloads_pattern")
+  logsPath                  String  @default("./logs") @map("logs_path")
+  tempPath                  String  @default("./temp") @map("temp_path")
+  logLevel                  String  @default("INFO") @map("log_level")
+  saveErrorScreenshots      Boolean @default(true) @map("save_error_screenshots")
+  generatePdfReport         Boolean @default(true) @map("generate_pdf_report")
+  logRetentionDays          Int     @default(30) @map("log_retention_days")
+  maxErrorsInPanel          Int     @default(100) @map("max_errors_in_panel")
+
+  @@map("settings")
+}
+
+// ============================================================================
+// Execuções (histórico de automações)
+// ============================================================================
+model Execucao {
+  id                Int       @id @default(autoincrement())
+  empresaId         Int       @map("empresa_id")
+  cnpj              String?
+  status            String    @default("pendente")
+  etapaAtual        String    @default("inicio") @map("etapa_atual")
+  progresso         Int       @default(0)
+  periodoInicio     String?   @map("periodo_inicio")
+  periodoFim        String?   @map("periodo_fim")
+  tipo              String    @default("ambas")
+  mensagem          String?   @default("Aguardando execução...")
+  dataInicio        DateTime? @map("data_inicio")
+  dataFim           DateTime? @map("data_fim")
+  mensagemErro      String?   @map("mensagem_erro")
+  qtdNotasEmitidas  Int       @default(0) @map("qtd_notas_emitidas")
+  qtdNotasRecebidas Int       @default(0) @map("qtd_notas_recebidas")
+  resultadoFinal    String?   @map("resultado_final")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  atualizadoEm      DateTime  @updatedAt @map("atualizado_em")
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@map("execucoes")
+}

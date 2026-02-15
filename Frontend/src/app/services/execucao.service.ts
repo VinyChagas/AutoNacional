@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { throwError } from 'rxjs';
+import { environment } from '../../environments/environment';
 
 export type StatusExecucao = 'fila' | 'executando' | 'finalizado' | 'falhou';
 export type ResultadoFinal = 'SEM_MOVIMENTO' | 'NOTAS_EMITIDAS' | 'NOTAS_RECEBIDAS' | 'NFS_ENCONTRADAS';
@@ -27,6 +28,7 @@ export interface ExecucaoEmpresa {
   dataFim?: Date;
   erro?: string;
   mostrarLogs?: boolean; // Propriedade para controlar exibição de logs
+  tipoAutenticacao?: 'certificado' | 'credenciais'; // Tipo de autenticação usado
 }
 
 // Mantém compatibilidade com código antigo
@@ -81,8 +83,10 @@ export interface MultiplasExecucoesRequest {
   empresas: Array<{
     empresa_id: string;
     cnpj: string;
+    tipo_autenticacao?: string; // "certificado" ou "credenciais"
   }>;
-  competencia: string;
+  dataInicio: string;
+  dataFim: string;
   tipo: string;
   headless: boolean;
 }
@@ -102,7 +106,7 @@ export interface MultiplasExecucoesResponse {
   providedIn: 'root'
 })
 export class ExecucaoService {
-  private baseUrl = 'http://localhost:8000/api';
+  private baseUrl = environment.apiUrl;
 
   constructor(private http: HttpClient) {}
 
@@ -120,12 +124,13 @@ export class ExecucaoService {
 
   executarEmpresa(
     empresaId: string,
-    competencia: string,
+    dataInicio: string,
+    dataFim: string,
     tipo: string = 'ambas',
     headless: boolean = false
   ): Observable<ExecucaoStatusResponse> {
     return this.http.post<ExecucaoStatusResponse>(
-      `${this.baseUrl}/execucao/${empresaId}?competencia=${competencia}&tipo=${tipo}&headless=${headless}`,
+      `${this.baseUrl}/execucao/${empresaId}?dataInicio=${encodeURIComponent(dataInicio)}&dataFim=${encodeURIComponent(dataFim)}&tipo=${tipo}&headless=${headless}`,
       {}
     ).pipe(
       catchError((error) => {

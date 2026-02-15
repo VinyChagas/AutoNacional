@@ -1,8 +1,10 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule, RouterOutlet, NavigationEnd, Router } from '@angular/router';
 import { filter } from 'rxjs/operators';
 import { trigger, transition, style, query, animateChild, group, animate } from '@angular/animations';
+import { SidebarService } from '../../services/sidebar.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-layout',
@@ -183,10 +185,15 @@ import { trigger, transition, style, query, animateChild, group, animate } from 
     ])
   ]
 })
-export class LayoutComponent {
+export class LayoutComponent implements OnInit, OnDestroy {
   currentRoute = 'home';
+  sidebarCollapsed: boolean;
+  private sub?: Subscription;
 
-  constructor(private router: Router) {
+  constructor(
+    private router: Router,
+    private sidebar: SidebarService,
+  ) {
     // Detecta mudanças de rota
     this.router.events
       .pipe(filter(event => event instanceof NavigationEnd))
@@ -195,8 +202,8 @@ export class LayoutComponent {
         
         if (url.includes('/home')) {
           this.currentRoute = 'home';
-        } else if (url.includes('/certificados')) {
-          this.currentRoute = 'certificados';
+        } else if (url.includes('/empresas')) {
+          this.currentRoute = 'empresas';
         } else if (url.includes('/execucao')) {
           this.currentRoute = 'execucao';
         } else if (url.includes('/contabilidades')) {
@@ -205,6 +212,19 @@ export class LayoutComponent {
           this.currentRoute = 'configuracoes';
         }
       });
+    this.sidebarCollapsed = this.sidebar.collapsed;
+  }
+
+  ngOnInit(): void {
+    this.sub = this.sidebar.collapsedState.subscribe((v) => (this.sidebarCollapsed = v));
+  }
+
+  ngOnDestroy(): void {
+    this.sub?.unsubscribe();
+  }
+
+  toggleSidebar(): void {
+    this.sidebar.toggle();
   }
 
   getRouteOutletState(outlet: RouterOutlet) {

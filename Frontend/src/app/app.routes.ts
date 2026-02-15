@@ -1,10 +1,10 @@
 import { Routes } from '@angular/router';
 import { LayoutComponent } from './components/layout/layout.component';
 import { HomeComponent } from './components/home/home.component';
-import { CertificadoUploadComponent } from './components/certificado-upload/certificado-upload.component';
 import { ExecucaoComponent } from './components/execucao/execucao.component';
 import { ConfiguracoesComponent } from './components/configuracoes/configuracoes.component';
 import { ContabilidadesComponent } from './components/contabilidades/contabilidades.component';
+import { EmpresasComponent } from './components/empresas/empresas.component';
 
 export const routes: Routes = [
   {
@@ -22,9 +22,19 @@ export const routes: Routes = [
         data: { animation: 'home' }
       },
       {
+        path: 'empresas',
+        component: EmpresasComponent,
+        data: { animation: 'empresas' }
+      },
+      {
         path: 'certificados',
-        component: CertificadoUploadComponent,
-        data: { animation: 'certificados' }
+        redirectTo: 'empresas',
+        pathMatch: 'full'
+      },
+      {
+        path: 'credenciais',
+        redirectTo: 'empresas',
+        pathMatch: 'full'
       },
       {
         path: 'execucao',

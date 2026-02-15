@@ -1,0 +1,79 @@
+export type StatusGeral = 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
+export interface EmpresaAgregada {
+    id: number;
+    cnpj: string;
+    razao_social: string;
+    regime: string | null;
+    contabilidade_id: number | null;
+    contabilidade_nome?: string | null;
+    ativo: boolean;
+    created_at: Date;
+    updated_at: Date;
+    has_certificado: boolean;
+    cert_validade: string | null;
+    has_credenciais: boolean;
+    cred_status: string | null;
+    status_geral: StatusGeral;
+    status_geral_motivo?: string | null;
+}
+export interface EmpresaListagemParams {
+    search?: string;
+    contabilidade_id?: number;
+    has_cert?: boolean;
+    has_cred?: boolean;
+    sem_cert?: boolean;
+    sem_cred?: boolean;
+    sem_metodo?: boolean;
+    page?: number;
+    limit?: number;
+    sort?: 'cnpj' | 'razao_social' | 'contabilidade_nome' | 'cert_validade' | 'has_credenciais' | 'status_geral';
+    order?: 'asc' | 'desc';
+}
+export interface EmpresaListagemResult {
+    items: EmpresaAgregada[];
+    total: number;
+    page: number;
+    limit: number;
+}
+/**
+ * Lista empresas com campos agregados.
+ * Busca em lotes e aplica filtros has_cert/has_cred em memória quando necessário
+ * (para manter compatibilidade com schema atual; com view seria mais eficiente).
+ */
+export declare function listarComAgregados(params: EmpresaListagemParams): Promise<EmpresaListagemResult>;
+export interface EmpresaDetalhada {
+    empresa: {
+        id: number;
+        cnpj: string;
+        razao_social: string;
+        regime: string | null;
+        contabilidade_id: number | null;
+        ativo: boolean;
+        created_at: string;
+        updated_at: string;
+    };
+    certificados_digitais: Array<{
+        id: number;
+        cnpj: string;
+        arquivo: string | null;
+        data_validade: string | null;
+        contabilidade_id: number | null;
+        data_cadastro: string;
+    }>;
+    credenciais: Array<{
+        id: number;
+        tipo: string;
+        usuario: string;
+        status: string;
+        ultimo_teste_em: string | null;
+    }>;
+}
+/**
+ * Exclui empresas em massa (cascade: certificados por CNPJ + credenciais via FK).
+ */
+export declare function deletarEmMassa(ids: number[]): Promise<number>;
+/**
+ * Obtém empresa por ID com certificados e credenciais.
+ */
+export declare function obterPorIdComDetalhes(id: number): Promise<EmpresaDetalhada | null>;
+//# sourceMappingURL=empresas.repo.d.ts.map
