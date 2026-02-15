@@ -149,7 +149,11 @@ export class CredenciaisComponent implements OnInit, AfterViewChecked {
       }
     });
     
-    this.empresasService.listar().subscribe({
+    const listar$ = this.contabilidadeSelecionadaId !== null
+      ? this.empresasService.listarPorContabilidade(this.contabilidadeSelecionadaId)
+      : this.empresasService.listar();
+
+    listar$.subscribe({
       next: async (empresas) => {
         this.empresas = []; // Limpa empresas existentes
         
@@ -333,7 +337,7 @@ export class CredenciaisComponent implements OnInit, AfterViewChecked {
       const id = typeof contabilidadeId === 'string' ? parseInt(contabilidadeId) : contabilidadeId;
       this.contabilidadeSelecionadaId = isNaN(id) ? null : id;
     }
-    this.filtrarEmpresasPorContabilidade();
+    this.carregarEmpresas();
   }
 
   carregarContabilidades(): void {

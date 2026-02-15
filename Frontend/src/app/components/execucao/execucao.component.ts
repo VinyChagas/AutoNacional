@@ -332,22 +332,25 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
     try {
       // Busca certificados e empresas em paralelo
+      // Certificados: empresas que usam autenticação por certificado
+      // Empresas com has_cred: empresas que usam credenciais (login/senha)
       const [certificadosResponse, empresas] = await Promise.all([
         firstValueFrom(
           this.certificadoService.listarCertificadosPorContabilidade(this.contabilidadeSelecionada!)
         ),
         firstValueFrom(
-          this.empresasService.listarPorContabilidade(this.contabilidadeSelecionada!)
+          this.empresasService.listarPorContabilidade(this.contabilidadeSelecionada!, 0, 1000, true)
         )
       ]);
       
-      // Filtra apenas certificados validados (não vencidos)
+      // Filtra certificados: inclui todos; só exclui os que têm data_vencimento E estão vencidos
       const hoje = new Date();
       hoje.setHours(0, 0, 0, 0);
       
       this.certificadosDisponiveis = certificadosResponse.certificados.filter(cert => {
-        if (!cert.data_vencimento) return false;
+        if (!cert.data_vencimento) return true; // Sem data = considera válido
         const dataVencimento = new Date(cert.data_vencimento);
+        if (isNaN(dataVencimento.getTime())) return true; // Data inválida = considera válido
         dataVencimento.setHours(0, 0, 0, 0);
         return dataVencimento >= hoje;
       });

@@ -5,10 +5,14 @@ Frontend em Angular 17 com Tailwind CSS para gerenciamento de certificados digit
 ## 📋 Sobre o Projeto
 
 Este frontend fornece:
-- **Interface web moderna** para upload de certificados digitais A1 (.pfx/.p12)
-- **Integração com API REST** do backend Python
+- **Tela Empresas** – cadastro unificado de empresas, certificados digitais A1 (.pfx/.p12) e credenciais (CNPJ+senha)
+- **Execução** – automação NFSe com seleção de empresas
+- **Contabilidades** – gestão de contabilidades parceiras
+- **Integração com API REST** do backend Node.js (Express)
 - **Design responsivo** usando Tailwind CSS
 - **Componentes standalone** do Angular 17
+
+> **Nota:** As telas antigas "Certificados" e "Credenciais" foram descontinuadas. As rotas `/certificados` e `/credenciais` redirecionam para `/empresas`. Veja `docs/FLUXO_EMPRESAS.md` para detalhes.
 
 ## 🚀 Instalação Rápida
 
@@ -84,18 +88,23 @@ npm test
 
 ## 🔧 Funcionalidades
 
-### ✅ Upload de Certificados Digitais
+### ✅ Tela Empresas (Cadastro Unificado)
 
-- Interface intuitiva para upload de certificados A1 (.pfx/.p12)
-- Validação de formulário (CNPJ e senha obrigatórios)
-- Feedback visual de sucesso/erro
-- Integração com backend Python via API REST
+- Listagem com busca (CNPJ/razão social), filtros por contabilidade e status (certificado/credenciais)
+- Cadastro via **Certificado Digital** (upload PFX) ou **Credencial** (CNPJ+senha)
+- Importação em lote: certificados (Preview + Confirmar) e credenciais (planilha xlsx/csv)
+- Modal de edição com abas: Dados, Certificado, Credenciais
+
+### ✅ Execução e Contabilidades
+
+- Execução de automação NFSe com seleção de empresas
+- Gestão de contabilidades parceiras
 
 ### ✅ Design Moderno
 
 - Interface responsiva com Tailwind CSS
 - Componentes standalone do Angular 17
-- Feedback visual claro para o usuário
+- Feedback visual claro (toasts de sucesso/erro)
 
 ## 🛠️ Tecnologias
 
@@ -109,15 +118,15 @@ npm test
 
 ### URL do Backend
 
-Por padrão, o frontend se conecta ao backend em:
+Por padrão, o frontend se conecta ao backend Node.js em:
 ```
-http://localhost:8000/api
+http://localhost:3000/api
 ```
 
-Para alterar, edite `src/app/services/certificado.service.ts`:
+Para alterar, edite `src/environments/environment.ts`:
 
 ```typescript
-private baseUrl = 'http://localhost:8000/api'; // Altere aqui
+apiUrl: 'http://localhost:3000/api'
 ```
 
 ### Porta do Servidor
@@ -160,38 +169,15 @@ export const routes: Routes = [
 
 ## 🔌 Integração com Backend
 
-O frontend se comunica com o backend através de:
+O frontend se comunica com o backend Node.js (Express). Principais endpoints:
 
-### Endpoint de Upload
+- `GET /api/empresas` – Listagem com filtros
+- `POST /api/empresas/cadastro/certificado` – Upload PFX (multipart)
+- `POST /api/empresas/cadastro/credencial` – Cadastro CNPJ+senha
+- `POST /api/imports/certificados/preview` e `confirmar`
+- `POST /api/imports/credenciais/preview` e `confirmar`
 
-```typescript
-POST http://localhost:8000/api/certificados
-Content-Type: multipart/form-data
-
-cnpj: string
-senha: string
-certificado: File
-```
-
-### Exemplo de Uso do Serviço
-
-```typescript
-import { CertificadoService } from './services/certificado.service';
-
-constructor(private certificadoService: CertificadoService) {}
-
-uploadCertificado(cnpj: string, senha: string, arquivo: File) {
-  this.certificadoService.uploadCertificado(cnpj, senha, arquivo)
-    .subscribe({
-      next: (response) => {
-        console.log('Sucesso:', response);
-      },
-      error: (error) => {
-        console.error('Erro:', error);
-      }
-    });
-}
-```
+Veja `docs/FLUXO_EMPRESAS.md` para documentação completa do fluxo.
 
 ## ⚠️ Troubleshooting
 
@@ -208,7 +194,7 @@ ng serve --port 4200
 ```
 
 ### Erro: "Backend não responde"
-- Verifique se o backend está rodando em `http://localhost:8000`
+- Verifique se o backend Node.js está rodando em `http://localhost:3000`
 - Verifique se CORS está configurado no backend
 - Abra o console do navegador (F12) para ver erros detalhados
 
@@ -229,12 +215,12 @@ npm start
 | `npm run watch` | Compila e observa mudanças |
 | `npm test` | Executa testes unitários |
 
-## 🎯 Próximos Passos
+## 🎯 Estado Atual
 
-Funcionalidades planejadas:
-- [ ] Dashboard de certificados cadastrados
-- [ ] Listagem de empresas
-- [ ] Execução de automação NFSe via interface
+- [x] Tela Empresas com cadastro unificado (certificados + credenciais)
+- [x] Importação em lote (Preview + Confirmar)
+- [x] Execução de automação NFSe via interface
+- [x] Gestão de contabilidades
 - [ ] Histórico de operações
 - [ ] Autenticação de usuários
 

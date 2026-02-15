@@ -1,0 +1,19 @@
+export declare const BACKEND_DIR: string;
+export declare const CERTIFICATES_DIR: string;
+export declare const FERNET_KEY: string;
+export declare const CRYPTO_KEY: string;
+export declare const CERT_STORAGE_BUCKET: string;
+export declare const DATABASE_URL: string;
+export declare const APP_CRED_KEY: string;
+export declare const SUPABASE_URL: string;
+export declare const SUPABASE_SERVICE_ROLE_KEY: string;
+export declare const SUPABASE_JWKS_URL: string;
+export declare const SUPABASE_AUDIENCE: string;
+export declare const SUPABASE_ISSUER: string;
+export declare const INTERNAL_API_KEY: string;
+export declare const CORS_ORIGINS: string[];
+export declare const PLAYWRIGHT_TIMEOUT: number;
+export declare const PLAYWRIGHT_HEADLESS: boolean;
+export declare const QUEUE_TIMEOUT: number;
+export declare const PORT: number;
+//# sourceMappingURL=config.d.ts.map

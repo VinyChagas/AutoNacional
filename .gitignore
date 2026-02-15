@@ -1,13 +1,3 @@
-# Python
-Backend/.venv/
-Backend/__pycache__/
-Backend/**/__pycache__/
-Backend/*.pyc
-Backend/*.pyo
-Backend/*.egg-info/
-Backend/.pytest_cache/
-Backend/*.log
-
 # Database files (SQLite) - Criados automaticamente
 Backend/db/*.db
 Backend/db/*.db-journal
@@ -44,10 +34,9 @@ Backend/certificados_armazenados/
 Backend/*.pfx.enc
 Backend/*.pwd.enc
 
-Backend/src/db/
-
 Backend/downloads/
-
-*.pyc
+Backend/temp/
 
 Backend/db_mock.sqlite
+
+Backend/node_modules/

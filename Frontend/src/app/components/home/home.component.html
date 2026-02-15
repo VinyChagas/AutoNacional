@@ -1,82 +1,253 @@
-<div class="w-full py-12 px-4">
-  <div class="max-w-6xl mx-auto">
-    <!-- Header Minimalista -->
-    <div class="text-center mb-16 animate-float">
-      <h1 class="text-5xl md:text-6xl font-bold mb-6 text-[#0C0D0A]">
-        Bem-vindo ao AutoNacional
-      </h1>
-      <p class="text-lg md:text-xl text-[#1E2615] font-light tracking-wide max-w-2xl mx-auto">
-        Sistema de gerenciamento de certificados digitais e automação NFSe
-      </p>
-      <div class="mt-6 h-0.5 w-24 mx-auto bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
+<div class="dashboard-container">
+  <!-- Header do Dashboard - espaçamento UI/UX + modo noturno -->
+  <header class="dashboard-header" @fadeIn>
+    <div class="header-left">
+      <div class="search-box">
+        <svg class="search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        </svg>
+        <input type="text" placeholder="Search" [(ngModel)]="busca" class="search-input" />
+      </div>
     </div>
+    <div class="header-center">
+      <span class="data-atual">{{ getDataAtual() }}</span>
+    </div>
+    <div class="header-right">
+      <button class="header-icon-btn" (click)="theme.toggle()" [title]="theme.isDark() ? 'Modo claro' : 'Modo noturno'" type="button">
+        @if (theme.isDark()) {
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+          </svg>
+        } @else {
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+          </svg>
+        }
+      </button>
+      <button class="header-icon-btn" routerLink="/configuracoes" title="Configurações" type="button">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </button>
+      <button class="header-icon-btn" title="Notificações" type="button">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+        </svg>
+      </button>
+      <div class="avatar">
+        <span class="avatar-initial">{{ nomeUsuario.charAt(0).toUpperCase() }}</span>
+        <span class="avatar-status"></span>
+      </div>
+    </div>
+  </header>
 
-    <!-- Cards principais -->
-    <div class="grid md:grid-cols-2 gap-8 mb-12">
-      <!-- Card Certificados -->
-      <div class="card-futuristic rounded-2xl p-8 group cursor-pointer" routerLink="/certificados">
-        <div class="flex items-center mb-6">
-          <div class="relative">
-            <div class="absolute inset-0 bg-[#8BCB70]/30 rounded-xl blur-lg opacity-50 group-hover:opacity-75 transition-opacity"></div>
-            <div class="relative bg-[#8BCB70] p-4 rounded-xl">
-              <svg class="w-8 h-8 text-[#0C0D0A]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-              </svg>
-            </div>
-          </div>
-          <h2 class="text-2xl font-bold text-[#0C0D0A] ml-4">Certificados Digitais</h2>
+  <!-- Título + Filtro -->
+  <section class="dashboard-title-row" @fadeIn>
+    <div class="dashboard-title">
+      <h1 class="title">Olá, {{ nomeUsuario }} 👋</h1>
+      <p class="subtitle">Resumo operacional do seu sistema NFSe</p>
+    </div>
+    <div class="period-filter">
+      <select [(ngModel)]="periodo" (ngModelChange)="onChangePeriodo()" class="period-select">
+        @for (p of periodos; track p.value) {
+          <option [value]="p.value">{{ p.label }}</option>
+        }
+      </select>
+      <svg class="period-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- Skeleton Loading -->
+  @if (loading && !resumo) {
+    <div class="skeleton-grid">
+      @for (i of [1,2,3,4]; track i) {
+        <div class="skeleton-card"></div>
+      }
+    </div>
+  }
+
+  <!-- Linha 1 – KPIs Principais -->
+  @if (resumo) {
+    <section class="kpi-row" @fadeIn>
+      <!-- Card 1 – Gradiente azul→roxo (destaque) -->
+      <div class="kpi-card kpi-card-featured">
+        <button class="card-arrow-btn" type="button" title="Ver mais">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7h-10v10"/>
+          </svg>
+        </button>
+        <span class="kpi-label">Empresas Operacionais</span>
+        <span class="kpi-value">{{ resumo.empresas_operacionais }}</span>
+        @if (resumo.empresas_operacionais_variacao !== undefined) {
+          <span class="badge badge-success">
+            <svg class="badge-arrow" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/></svg>
+            +{{ resumo.empresas_operacionais_variacao }}%
+          </span>
+        }
+        <span class="kpi-hint">Este mês vs anterior</span>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="kpi-card">
+        <button class="card-arrow-btn card-arrow-gray" type="button" title="Ver mais">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7h-10v10"/>
+          </svg>
+        </button>
+        <span class="kpi-label">Total de Empresas</span>
+        <span class="kpi-value">{{ resumo.empresas_total }}</span>
+        <span class="badge badge-danger">
+          <svg class="badge-arrow badge-arrow-down" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+          -2,67%
+        </span>
+        <span class="kpi-hint">Este mês vs anterior</span>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="kpi-card">
+        <button class="card-arrow-btn card-arrow-gray" type="button" title="Ver mais">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7h-10v10"/>
+          </svg>
+        </button>
+        <span class="kpi-label">Certificados Vencendo</span>
+        <span class="kpi-value">{{ resumo.certificados_vencendo }}</span>
+        <span class="badge badge-danger">
+          <svg class="badge-arrow badge-arrow-down" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+          -2,67%
+        </span>
+        <span class="kpi-hint">Este mês vs anterior</span>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="kpi-card">
+        <button class="card-arrow-btn card-arrow-gray" type="button" title="Ver mais">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7h-10v10"/>
+          </svg>
+        </button>
+        <span class="kpi-label">Credenciais Inválidas</span>
+        <span class="kpi-value">{{ resumo.credenciais_invalidas }}</span>
+        <span class="badge badge-success">
+          <svg class="badge-arrow" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/></svg>
+          +5,67%
+        </span>
+        <span class="kpi-hint">Este mês vs anterior</span>
+      </div>
+    </section>
+
+    <!-- Linha 2 – Gráficos lado a lado (Bar 2fr | Pie 1fr) -->
+    <section class="charts-row" @fadeIn>
+      <div class="chart-card chart-card-bar">
+        <button class="card-arrow-btn card-arrow-gray" type="button" title="Ver mais">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7h-10v10"/>
+          </svg>
+        </button>
+        <div class="chart-title-row">
+          <h3 class="chart-title">Execuções nos Últimos 7 Dias</h3>
+          <span class="chart-subtitle">Este mês vs anterior</span>
         </div>
-        <p class="text-[#1E2615] mb-6 leading-relaxed">Gerencie seus certificados digitais de forma segura e eficiente com tecnologia de ponta.</p>
-        <div class="flex items-center text-[#8BCB70] font-semibold group-hover:text-[#7EBFB3] transition-colors">
-          <span>Acessar</span>
-          <svg class="w-5 h-5 ml-2 transform group-hover:translate-x-2 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+        <div class="chart-container chart-container-bar">
+          <canvas baseChart
+            [data]="barChartData"
+            [options]="barChartOptions"
+            type="bar">
+          </canvas>
+        </div>
+      </div>
+      <div class="chart-card chart-card-pie">
+        <button class="card-arrow-btn card-arrow-gray" type="button" title="Ver mais">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7h-10v10"/>
+          </svg>
+        </button>
+        <div class="chart-title-row">
+          <h3 class="chart-title">Empresas por Regime Tributário</h3>
+          <span class="chart-subtitle">Este mês vs anterior</span>
+        </div>
+        <div class="chart-container chart-container-pie">
+          <canvas baseChart
+            [data]="pieChartData"
+            [options]="pieChartOptions"
+            type="pie">
+          </canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Linha 3 – Métricas Operacionais -->
+    <section class="metrics-row" @fadeIn>
+      <div class="metric-card">
+        <div class="metric-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
           </svg>
         </div>
+        <span class="metric-label">Total de Execuções no Mês</span>
+        <span class="metric-value">{{ resumo.execucoes_mes }}</span>
       </div>
-
-      <!-- Card Execução -->
-      <div class="card-futuristic rounded-2xl p-8 group cursor-pointer" routerLink="/execucao">
-        <div class="flex items-center mb-6">
-          <div class="relative">
-            <div class="absolute inset-0 bg-[#8BCB70]/30 rounded-xl blur-lg opacity-50 group-hover:opacity-75 transition-opacity"></div>
-            <div class="relative bg-[#8BCB70] p-4 rounded-xl">
-              <svg class="w-8 h-8 text-[#0C0D0A]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-            </div>
-          </div>
-          <h2 class="text-2xl font-bold text-[#0C0D0A] ml-4">Execução</h2>
-        </div>
-        <p class="text-[#1E2615] mb-6 leading-relaxed">Execute processos automatizados e gerencie suas operações em tempo real.</p>
-        <div class="flex items-center text-[#8BCB70] font-semibold group-hover:text-[#7EBFB3] transition-colors">
-          <span>Acessar</span>
-          <svg class="w-5 h-5 ml-2 transform group-hover:translate-x-2 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+      <div class="metric-card">
+        <div class="metric-icon metric-icon-success">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
         </div>
+        <span class="metric-label">Taxa de Sucesso</span>
+        <span class="metric-value">{{ resumo.taxa_sucesso }}%</span>
       </div>
-    </div>
+      <div class="metric-card">
+        <div class="metric-icon metric-icon-info">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+          </svg>
+        </div>
+        <span class="metric-label">Notas Encontradas</span>
+        <span class="metric-value">{{ resumo.notas_encontradas }}</span>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon metric-icon-danger">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <span class="metric-label">Erros no Mês</span>
+        <span class="metric-value">{{ resumo.erros_mes }}</span>
+      </div>
+    </section>
 
-    <!-- Card de Informações -->
-    <div class="glass-strong rounded-2xl p-8 border">
-      <h3 class="text-2xl font-bold text-[#0C0D0A] mb-6">
-        Informações do Sistema
-      </h3>
-      <div class="space-y-4">
-        <div class="flex items-start group">
-          <div class="w-2 h-2 bg-[#8BCB70] rounded-full mt-2 mr-4 group-hover:animate-pulse"></div>
-          <p class="text-[#1E2615] flex-1">Sistema desenvolvido para automação de processos NFSe</p>
+    <!-- Linha 4 – Alertas -->
+    <section class="alerts-row" @fadeIn>
+      <div class="alert-card" [routerLink]="['/empresas']">
+        <div class="alert-icon alert-icon-warning">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path>
+          </svg>
         </div>
-        <div class="flex items-start group">
-          <div class="w-2 h-2 bg-[#8BCB70] rounded-full mt-2 mr-4 group-hover:animate-pulse"></div>
-          <p class="text-[#1E2615] flex-1">Gerenciamento seguro de certificados digitais</p>
-        </div>
-        <div class="flex items-start group">
-          <div class="w-2 h-2 bg-[#8BCB70] rounded-full mt-2 mr-4 group-hover:animate-pulse"></div>
-          <p class="text-[#1E2615] flex-1">Interface moderna e intuitiva com tecnologia de ponta</p>
-        </div>
+        <span class="alert-label">Empresas sem método</span>
+        <span class="alert-value">{{ resumo.empresas_sem_metodo ?? 0 }}</span>
       </div>
-    </div>
-  </div>
+      <div class="alert-card" [routerLink]="['/empresas']">
+        <div class="alert-icon alert-icon-danger">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <span class="alert-label">Certificados Vencidos</span>
+        <span class="alert-value">{{ resumo.certificados_vencidos ?? 0 }}</span>
+      </div>
+      <div class="alert-card" [routerLink]="['/empresas']">
+        <div class="alert-icon alert-icon-info">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <span class="alert-label">Empresas não validadas há mais de 7 dias</span>
+        <span class="alert-value">{{ resumo.empresas_nao_validadas ?? 0 }}</span>
+      </div>
+    </section>
+  }
 </div>

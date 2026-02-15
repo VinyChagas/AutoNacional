@@ -1,64 +1,377 @@
-// Estilos específicos do componente Layout
+// Layout Dashboard - Sidebar Colapsável (240px / 72px)
+// ============================================================================
 
-.nav-pill {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  background: rgba(169, 217, 212, 0.2);
-  border-color: rgba(126, 191, 179, 0.3);
-  transition: all 0.3s ease;
-  border-radius: 12px;
-  
-  &:hover {
-    border-color: rgba(139, 203, 112, 0.5);
-    box-shadow: 0 4px 24px rgba(139, 203, 112, 0.15);
-  }
+$sidebar-expanded: 240px;
+$sidebar-collapsed: 72px;
+$sidebar-header-bg: #1e3a8a;
+$sidebar-header-bg-dark: #141F33;
+$sidebar-bg: linear-gradient(180deg, #dbeafe 0%, #eff6ff 50%, #ffffff 100%);
+$sidebar-bg-dark: linear-gradient(180deg, #141F33 0%, #182743 100%);
+$nav-icon-color: #4b5563;
+$nav-icon-color-dark: rgba(234, 240, 255, 0.7);
+$nav-active-bg: #374151;
+$nav-active-bg-dark: rgba(79, 70, 229, 0.35);
+$radius-sidebar: 0 24px 24px 0;
+$radius-nav: 12px;
+$transition-sidebar: width 200ms ease, min-width 200ms ease;
+$transition-label: opacity 150ms ease, transform 150ms ease;
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg-page);
+  transition: background 0.4s var(--ease-out-expo);
 }
 
-.nav-icon {
-  cursor: pointer;
-  min-width: 50px;
-  
-  &:hover {
-    transform: translateY(-1px);
+// Sidebar - colapsável
+.sidebar {
+  width: $sidebar-expanded;
+  min-width: $sidebar-expanded;
+  background: $sidebar-bg;
+  border-right: 1px solid rgba(59, 130, 246, 0.1);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 100;
+  border-radius: $radius-sidebar;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.04);
+  transition: $transition-sidebar, background 0.4s var(--ease-out-expo), border-color 0.4s var(--ease-out-expo);
+  overflow: hidden;
+
+  .dark & {
+    background: $sidebar-bg-dark;
+    border-right-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
   }
-  
-  // Garante que o ícone seja clicável mesmo com padding reduzido
-  & > div {
-    min-width: 36px;
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  
-  &.active {
-    .nav-icon-content {
-      transform: scale(1.05);
+
+  &.sidebar-collapsed {
+    width: $sidebar-collapsed;
+    min-width: $sidebar-collapsed;
+    border-radius: 0 20px 20px 0;
+
+    .sidebar-brand .brand-name,
+    .nav-label {
+      opacity: 0;
+      transform: translateX(-6px);
+      width: 0;
+      min-width: 0;
+      margin-left: 0;
+      overflow: hidden;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .sidebar-header {
+      padding: 12px;
+      justify-content: center;
+    }
+
+    .sidebar-brand {
+      justify-content: center;
+    }
+
+    .logo-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .nav-item {
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    .sidebar-nav {
+      align-items: center;
+    }
+
+    .sidebar-footer .nav-item {
+      justify-content: center;
     }
   }
 }
 
-// Responsividade
-@media (max-width: 640px) {
-  .nav-pill {
-    padding: 0.5rem 0.75rem;
-    
-    .nav-icon {
-      min-width: 44px;
-      
-      & > div {
-        min-width: 32px;
-        min-height: 32px;
-      }
-      
-      svg {
-        width: 1.125rem;
-        height: 1.125rem;
-      }
-      
-      span {
-        font-size: 0.625rem;
-      }
+// Header: Logo + Nome + Toggle
+.sidebar-header {
+  background: $sidebar-header-bg;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  border-radius: 0 24px 0 0;
+  transition: padding 200ms ease, background 0.4s var(--ease-out-expo);
+  min-height: 56px;
+
+  .dark & {
+    background: $sidebar-header-bg-dark;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.logo-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    width: 28px;
+    height: 28px;
+    opacity: 0.95;
+    transition: width 200ms ease, height 200ms ease;
+  }
+}
+
+.brand-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+  transition: $transition-label;
+  overflow: hidden;
+}
+
+.sidebar-toggle {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: white;
+  flex-shrink: 0;
+  transition: background 0.25s ease, transform 0.25s ease;
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.28);
+    transform: scale(1.05);
+  }
+
+  &:active {
+    transform: scale(0.96);
+  }
+}
+
+// Navegação
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  overflow-x: hidden;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 46px;
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: $radius-nav;
+  color: $nav-icon-color;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+
+  .dark & {
+    color: $nav-icon-color-dark;
+  }
+
+  &:hover {
+    color: #1e40af;
+    background: rgba(59, 130, 246, 0.12);
+  }
+
+  .dark &:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
+
+  &.active .nav-icon-wrap,
+  .nav-icon-wrap.active {
+    background: $nav-active-bg;
+    color: white;
+  }
+
+  .dark &.active .nav-icon-wrap,
+  .dark & .nav-icon-wrap.active {
+    background: $nav-active-bg-dark;
+    color: var(--text);
+  }
+
+  &.active .nav-label {
+    color: inherit;
+    font-weight: 600;
+  }
+}
+
+.nav-icon-wrap {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+
+  svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.nav-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: $transition-label;
+  min-width: 0;
+}
+
+// Footer
+.sidebar-footer {
+  padding: 12px;
+  display: flex;
+  justify-content: stretch;
+  border-top: 1px solid rgba(59, 130, 246, 0.08);
+  transition: border-color 0.4s var(--ease-out-expo);
+
+  .dark & {
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .nav-item {
+    width: 100%;
+  }
+}
+
+.nav-collapse-btn {
+  background: none;
+  border: none;
+  font: inherit;
+}
+
+// Área principal - margin acompanha a sidebar
+.main-wrapper {
+  flex: 1;
+  margin-left: $sidebar-expanded;
+  min-height: 100vh;
+  transition: margin-left 200ms ease;
+}
+
+.app-layout.sidebar-collapsed .main-wrapper,
+aside.sidebar.sidebar-collapsed ~ .main-wrapper {
+  margin-left: $sidebar-collapsed;
+}
+
+.main-content {
+  width: 100%;
+  min-height: 100vh;
+}
+
+// Responsivo - mobile: sidebar colapsada
+@media (max-width: 768px) {
+  .sidebar {
+    width: $sidebar-collapsed;
+    min-width: $sidebar-collapsed;
+    border-radius: 0 20px 20px 0;
+
+    .sidebar-brand .brand-name,
+    .nav-label {
+      opacity: 0;
+      width: 0;
+      min-width: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .sidebar-header {
+      padding: 12px;
+      justify-content: center;
+    }
+
+    .sidebar-toggle {
+      display: none;
+    }
+
+    .sidebar-brand {
+      justify-content: center;
+    }
+
+    .logo-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .nav-item {
+      justify-content: center;
+      padding: 0;
+    }
+
+    .sidebar-nav {
+      align-items: center;
+    }
+
+    .sidebar-footer .nav-item {
+      justify-content: center;
+    }
+  }
+
+  .main-wrapper {
+    margin-left: $sidebar-collapsed;
+  }
+
+  .nav-item {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .nav-icon-wrap {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+
+    svg {
+      width: 18px;
+      height: 18px;
     }
   }
 }

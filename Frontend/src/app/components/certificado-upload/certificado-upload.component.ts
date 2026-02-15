@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators, FormsModule } 
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
 import { CertificadoService, Certificado, CertificadoValidacaoLoteResponse, CertificadoImportacaoLoteResponse } from '../../services/certificado.service';
 import { ContabilidadeService } from '../../services/contabilidade.service';
 import { Contabilidade } from '../../models/contabilidade.model';
@@ -700,7 +701,7 @@ export class CertificadoUploadComponent implements OnInit, OnDestroy {
         
         try {
           await firstValueFrom(
-            this.http.delete<void>(`http://localhost:8000/api/certificados/metadados/cnpj/${cnpjLimpo}`)
+            this.http.delete<void>(`${environment.apiUrl}/certificados/cnpj/${cnpjLimpo}`)
           );
           
           // Remove da lista local usando o serviço para manter consistência
