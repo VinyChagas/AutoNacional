@@ -298,9 +298,17 @@ aside.sidebar.sidebar-collapsed ~ .main-wrapper {
   margin-left: $sidebar-collapsed;
 }
 
-.main-content {
-  width: 100%;
+.main-inner {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.main-content {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 // Responsivo - mobile: sidebar colapsada

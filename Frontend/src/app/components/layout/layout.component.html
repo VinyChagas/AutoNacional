@@ -1,4 +1,5 @@
 <div class="app-layout" [class.sidebar-collapsed]="sidebarCollapsed">
+  <app-toast-container></app-toast-container>
   <!-- Sidebar Lateral Colapsável -->
   <aside class="sidebar" [class.sidebar-collapsed]="sidebarCollapsed">
     <!-- Logo + Nome do Sistema / Toggle -->
@@ -126,8 +127,11 @@
 
   <!-- Área Principal -->
   <div class="main-wrapper">
-    <div [@routeAnimations]="getRouteOutletState(outlet)" class="main-content">
-      <router-outlet #outlet="outlet"></router-outlet>
+    <div class="main-inner">
+      <app-header></app-header>
+      <div [@routeAnimations]="getRouteOutletState(outlet)" class="main-content">
+        <router-outlet #outlet="outlet"></router-outlet>
+      </div>
     </div>
   </div>
 </div>

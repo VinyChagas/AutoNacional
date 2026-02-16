@@ -56,7 +56,6 @@ export class HomeComponent implements OnInit {
   resumo: DashboardResumo | null = null;
   execucoes: ExecucaoPorDia[] = [];
   distribuicao: DistribuicaoRegime[] = [];
-  busca = '';
   nomeUsuario = 'Usuário';
 
   // Gráfico de barras - Execuções
@@ -191,15 +190,6 @@ export class HomeComponent implements OnInit {
   formatarData(s: string): string {
     const d = new Date(s);
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
-  }
-
-  getDataAtual(): string {
-    return new Date().toLocaleDateString('pt-BR', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
   }
 
   onChangePeriodo(): void {

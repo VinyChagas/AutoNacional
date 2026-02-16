@@ -7,6 +7,7 @@ export interface Contabilidade {
   responsavel?: string;
   data_cadastro?: string;
   certificados_vinculados?: number;
+  empresas_vinculadas_count?: number;
 }
 
 export interface ContabilidadeCreate {

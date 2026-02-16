@@ -31,4 +31,11 @@ export class SidebarService {
     this.collapsed$.next(value);
     localStorage.setItem(STORAGE_KEY, value ? '1' : '0');
   }
+
+  /** Recolhe a sidebar se estiver expandida. Use ao abrir painéis laterais direitos. */
+  collapseIfExpanded(): void {
+    if (!this.collapsed$.getValue()) {
+      this.setCollapsed(true);
+    }
+  }
 }
