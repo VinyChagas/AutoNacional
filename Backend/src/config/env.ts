@@ -64,7 +64,7 @@ function validateEnv(): EnvConfig {
     CORS_ORIGINS:
       process.env.CORS_ORIGINS ||
       'http://localhost:4200,http://127.0.0.1:4200',
-    PORT: parseInt(process.env.PORT || '3000', 10),
+    PORT: parseInt(process.env.PORT || '4321', 10),
     NODE_ENV: process.env.NODE_ENV || 'development',
   };
 }

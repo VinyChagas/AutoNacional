@@ -54,12 +54,20 @@ export async function criarOuAtualizar(
 
 export async function atualizarStatus(
   credencialId: number,
-  status: string
+  status: string,
+  ultimaMensagem?: string | null
 ): Promise<Credencial | null> {
   try {
+    const data: { status: string; ultimoTesteEm: Date; ultimaMensagem?: string | null } = {
+      status,
+      ultimoTesteEm: new Date(),
+    };
+    if (ultimaMensagem !== undefined) {
+      data.ultimaMensagem = ultimaMensagem;
+    }
     return await prisma.credencial.update({
       where: { id: credencialId },
-      data: { status, ultimoTesteEm: new Date() },
+      data,
     });
   } catch {
     return null;

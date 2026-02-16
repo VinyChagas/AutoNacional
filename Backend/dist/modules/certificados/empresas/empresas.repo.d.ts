@@ -13,6 +13,8 @@ export interface EmpresaAgregada {
     cert_validade: string | null;
     has_credenciais: boolean;
     cred_status: string | null;
+    cred_ultimo_teste_em: string | null;
+    cred_ultima_mensagem: string | null;
     status_geral: StatusGeral;
     status_geral_motivo?: string | null;
 }
@@ -69,7 +71,9 @@ export interface EmpresaDetalhada {
     }>;
 }
 /**
- * Exclui empresas em massa (cascade: certificados por CNPJ + credenciais via FK).
+ * Exclui empresas em massa na ordem: credenciais → certificados_digitais → empresas.
+ * Ignora IDs inexistentes e retorna a quantidade efetivamente deletada.
+ * Certificados são removidos por empresaId e também por cnpj (para registros legados sem empresaId).
  */
 export declare function deletarEmMassa(ids: number[]): Promise<number>;
 /**

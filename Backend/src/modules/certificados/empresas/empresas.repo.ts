@@ -74,6 +74,8 @@ export interface EmpresaAgregada {
   cert_validade: string | null;
   has_credenciais: boolean;
   cred_status: string | null;
+  cred_ultimo_teste_em: string | null;
+  cred_ultima_mensagem: string | null;
   status_geral: StatusGeral;
   status_geral_motivo?: string | null;
 }
@@ -158,7 +160,7 @@ export async function listarComAgregados(
     }),
     prisma.credencial.findMany({
       where: { empresaId: { in: ids } },
-      select: { empresaId: true, status: true, ultimoTesteEm: true },
+      select: { empresaId: true, status: true, ultimoTesteEm: true, ultimaMensagem: true },
       orderBy: [{ ultimoTesteEm: 'desc' }, { updatedAt: 'desc' }],
     }),
     contabIds.length > 0
@@ -179,9 +181,15 @@ export async function listarComAgregados(
     else if (!certPorCnpj.has(cn)) certPorCnpj.set(cn, dv);
   }
 
-  const credPorEmpresa = new Map<number, string>();
+  const credPorEmpresa = new Map<number, { status: string; ultimoTesteEm: Date | null; ultimaMensagem: string | null }>();
   for (const cr of creds) {
-    if (!credPorEmpresa.has(cr.empresaId)) credPorEmpresa.set(cr.empresaId, cr.status);
+    if (!credPorEmpresa.has(cr.empresaId)) {
+      credPorEmpresa.set(cr.empresaId, {
+        status: cr.status,
+        ultimoTesteEm: cr.ultimoTesteEm ?? null,
+        ultimaMensagem: cr.ultimaMensagem ?? null,
+      });
+    }
   }
 
   const contabPorId = new Map<number, string>();
@@ -194,7 +202,12 @@ export async function listarComAgregados(
     const hasCert = certs.some((c) => normCnpj(c.cnpj) === cn);
     const certVal = certPorCnpj.get(cn) ?? null;
     const hasCred = credPorEmpresa.has(e.id);
-    const credStat = credPorEmpresa.get(e.id) ?? null;
+    const credData = credPorEmpresa.get(e.id);
+    const credStat = credData?.status ?? null;
+    const credUltimoTeste = credData?.ultimoTesteEm
+      ? credData.ultimoTesteEm.toISOString()
+      : null;
+    const credUltimaMsg = credData?.ultimaMensagem ?? null;
     const { status, motivo } = calcularStatusGeral(hasCert, certVal, hasCred, credStat);
     return {
       id: e.id,
@@ -210,6 +223,8 @@ export async function listarComAgregados(
       cert_validade: certVal,
       has_credenciais: hasCred,
       cred_status: credStat,
+      cred_ultimo_teste_em: credUltimoTeste,
+      cred_ultima_mensagem: credUltimaMsg,
       status_geral: status,
       status_geral_motivo: motivo,
     };
@@ -300,25 +315,37 @@ export interface EmpresaDetalhada {
 }
 
 /**
- * Exclui empresas em massa (cascade: certificados por CNPJ + credenciais via FK).
+ * Exclui empresas em massa na ordem: credenciais → certificados_digitais → empresas.
+ * Ignora IDs inexistentes e retorna a quantidade efetivamente deletada.
+ * Certificados são removidos por empresaId e também por cnpj (para registros legados sem empresaId).
  */
 export async function deletarEmMassa(ids: number[]): Promise<number> {
   if (ids.length === 0) return 0;
+  const idsSet = [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0))];
   const empresas = await prisma.empresa.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: idsSet } },
     select: { id: true, cnpj: true },
   });
-  const cnps = empresas.map((e) => normCnpj(e.cnpj));
   const empresaIds = empresas.map((e) => e.id);
+  const cnps = empresas.map((e) => normCnpj(e.cnpj));
+  if (empresaIds.length === 0) return 0;
+
+  const empresaIdStrings = empresaIds.map(String);
 
   await prisma.$transaction(async (tx) => {
-    if (cnps.length > 0) {
-      await tx.certificado.deleteMany({ where: { cnpj: { in: cnps } } });
-    }
+    await tx.credencial.deleteMany({ where: { empresaId: { in: empresaIds } } });
+    await tx.certificado.deleteMany({
+      where: {
+        OR: [
+          { empresaId: { in: empresaIdStrings } },
+          ...(cnps.length > 0 ? [{ cnpj: { in: cnps } }] : []),
+        ],
+      },
+    });
     await tx.empresa.deleteMany({ where: { id: { in: empresaIds } } });
   });
 
-  return empresas.length;
+  return empresaIds.length;
 }
 
 /**

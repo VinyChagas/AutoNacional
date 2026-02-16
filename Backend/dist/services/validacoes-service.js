@@ -33,12 +33,15 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.registrarClienteSSE = registrarClienteSSE;
 exports.iniciarValidacao = iniciarValidacao;
 exports.obterJob = obterJob;
 exports.cancelarJob = cancelarJob;
+exports.iniciarValidacaoLegacy = iniciarValidacaoLegacy;
 const logger_1 = require("../infrastructure/logger");
 const empresasRepo = __importStar(require("../modules/certificados/empresas/empresas.repo"));
 const credenciaisRepo = __importStar(require("../repositories/credenciais"));
+const validar_credencial_nfse_1 = require("../automation/validar-credencial-nfse");
 const logger = (0, logger_1.getLogger)('validacoes-service');
 function normCnpj(cnpj) {
     return cnpj.replace(/[.\/\-\s]/g, '').trim();
@@ -55,48 +58,311 @@ function parseDataValidade(val) {
     return isNaN(d.getTime()) ? null : d;
 }
 const jobs = new Map();
+const PING_INTERVAL_MS = 15000;
+function emitEvent(res, event, data) {
+    try {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+    catch {
+        /* client disconnected */
+    }
+}
+function registrarClienteSSE(jobId, res) {
+    let job = jobs.get(jobId);
+    if (!job) {
+        job = {
+            id: jobId,
+            status: 'PENDING',
+            progress: 0,
+            total: 0,
+            ok: 0,
+            invalidas: 0,
+            erros: 0,
+            processed: 0,
+            items: [],
+            clients: new Set(),
+            isRunning: false,
+        };
+        jobs.set(jobId, job);
+    }
+    job.clients.add(res);
+    res.on('close', () => {
+        job?.clients.delete(res);
+    });
+    const pingInterval = setInterval(() => {
+        if (res.writableEnded) {
+            clearInterval(pingInterval);
+            return;
+        }
+        try {
+            res.write(`: ping\n\n`);
+        }
+        catch {
+            clearInterval(pingInterval);
+        }
+    }, PING_INTERVAL_MS);
+    res.on('close', () => clearInterval(pingInterval));
+    if (job.items.length > 0) {
+        for (const item of job.items) {
+            emitEvent(res, 'progress', item);
+        }
+    }
+    if (job.status === 'DONE' || job.status === 'FAILED') {
+        emitEvent(res, 'done', {
+            job_id: jobId,
+            totals: { ok: job.ok, invalidas: job.invalidas, erros: job.erros },
+        });
+        res.end();
+    }
+}
+function broadcastProgress(jobId, item) {
+    const job = jobs.get(jobId);
+    if (!job)
+        return;
+    job.items.push(item);
+    for (const res of job.clients) {
+        if (!res.writableEnded) {
+            emitEvent(res, 'progress', item);
+        }
+    }
+}
+function broadcastDone(jobId) {
+    const job = jobs.get(jobId);
+    if (!job)
+        return;
+    const payload = {
+        job_id: jobId,
+        totals: { ok: job.ok, invalidas: job.invalidas, erros: job.erros },
+    };
+    for (const res of job.clients) {
+        if (!res.writableEnded) {
+            emitEvent(res, 'done', payload);
+            res.end();
+        }
+    }
+    job.clients.clear();
+}
 async function iniciarValidacao(payload) {
     const jobId = `val_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const empresaIds = await resolverEscopo(payload);
+    const empresaIds = payload.empresa_ids ?? [];
     const total = empresaIds.length;
+    if (total === 0) {
+        throw new Error('Nenhuma empresa para validar');
+    }
     const job = {
         id: jobId,
-        status: 'RUNNING',
+        status: 'PENDING',
         progress: 0,
         total,
         ok: 0,
-        errors: 0,
+        invalidas: 0,
+        erros: 0,
         processed: 0,
+        items: [],
+        clients: new Set(),
+        isRunning: false,
     };
     jobs.set(jobId, job);
-    const concurrency = payload.options?.concurrency ?? 2;
-    const timeoutSeconds = payload.options?.timeoutSeconds ?? 60;
-    const stopOnConsecutiveErrors = payload.options?.stopOnConsecutiveErrors ?? 5;
+    const validarCert = Boolean(payload.validar_certificados);
+    const validarCred = Boolean(payload.validar_credenciais);
+    const headless = payload.headless !== false;
     setImmediate(async () => {
+        const j = jobs.get(jobId);
+        if (!j)
+            return;
+        j.status = 'RUNNING';
+        j.isRunning = true;
         try {
-            await executarValidacao(jobId, empresaIds, payload.targets, {
-                concurrency,
-                timeoutSeconds,
-                stopOnConsecutiveErrors,
-            });
+            await executarValidacao(jobId, empresaIds, { validarCert, validarCred, headless });
         }
         catch (err) {
             logger.error({ err, jobId }, 'Erro na validação');
-            const j = jobs.get(jobId);
-            if (j && j.status === 'RUNNING') {
-                j.status = 'FAILED';
+            const j2 = jobs.get(jobId);
+            if (j2?.status === 'RUNNING') {
+                j2.status = 'FAILED';
             }
+        }
+        finally {
+            const j2 = jobs.get(jobId);
+            if (j2) {
+                j2.isRunning = false;
+                if (j2.status === 'RUNNING')
+                    j2.status = 'DONE';
+            }
+            broadcastDone(jobId);
         }
     });
     return jobId;
 }
-async function resolverEscopo(payload) {
+async function executarValidacao(jobId, empresaIds, opts) {
+    const job = jobs.get(jobId);
+    if (!job || job.status !== 'RUNNING')
+        return;
+    const total = empresaIds.length;
+    job.total = total;
+    for (let i = 0; i < total; i++) {
+        const j = jobs.get(jobId);
+        if (!j || j.status !== 'RUNNING')
+            break;
+        const empresaId = empresaIds[i];
+        try {
+            const detalhes = await empresasRepo.obterPorIdComDetalhes(empresaId);
+            if (!detalhes) {
+                broadcastProgress(jobId, {
+                    empresa_id: empresaId,
+                    step: 'cert',
+                    status: 'ERRO',
+                    message: 'Empresa não encontrada',
+                    updated_at: new Date().toISOString(),
+                });
+                job.processed++;
+                job.erros++;
+                continue;
+            }
+            const cnpj = normCnpj(detalhes.empresa.cnpj);
+            const razaoSocial = detalhes.empresa.razao_social;
+            if (opts.validarCert && detalhes.certificados_digitais?.length) {
+                const cert = detalhes.certificados_digitais[0];
+                const dt = parseDataValidade(cert.data_validade);
+                const hoje = new Date();
+                hoje.setHours(0, 0, 0, 0);
+                const certStatus = !dt ? 'ERRO_CERT' : dt < hoje ? 'VENCIDO' : dt <= addDays(hoje, 30) ? 'VENCENDO' : 'VALIDO';
+                const ok = dt && dt >= hoje;
+                if (ok)
+                    job.ok++;
+                else
+                    job.erros++;
+                broadcastProgress(jobId, {
+                    empresa_id: empresaId,
+                    cnpj,
+                    razao_social: razaoSocial,
+                    step: 'cert',
+                    status: ok ? 'OK' : 'VENCIDO',
+                    message: ok ? 'Certificado válido' : 'Certificado vencido',
+                    updated_at: new Date().toISOString(),
+                    cert_status: certStatus,
+                });
+            }
+            if (opts.validarCred) {
+                if (!detalhes.credenciais?.length) {
+                    broadcastProgress(jobId, {
+                        empresa_id: empresaId,
+                        cnpj,
+                        razao_social: razaoSocial,
+                        step: 'cred',
+                        status: 'ERRO_VALIDACAO',
+                        message: 'Empresa sem credenciais cadastradas',
+                        updated_at: new Date().toISOString(),
+                    });
+                }
+                else {
+                    const cred = detalhes.credenciais[0];
+                    const credFull = await credenciaisRepo.obterPorId(cred.id);
+                    broadcastProgress(jobId, {
+                        empresa_id: empresaId,
+                        cnpj,
+                        razao_social: razaoSocial,
+                        step: 'cred',
+                        status: 'TESTANDO',
+                        message: 'Validando...',
+                        updated_at: new Date().toISOString(),
+                    });
+                    if (!credFull) {
+                        logger.warn({ empresaId }, 'Credencial não encontrada para empresa');
+                        broadcastProgress(jobId, {
+                            empresa_id: empresaId,
+                            cnpj,
+                            razao_social: razaoSocial,
+                            step: 'cred',
+                            status: 'ERRO_VALIDACAO',
+                            message: 'Credencial não encontrada',
+                            updated_at: new Date().toISOString(),
+                        });
+                        job.erros++;
+                    }
+                    else {
+                        const senha = credenciaisRepo.descriptografarSenha(credFull);
+                        const documentoLogin = (cred.usuario || credFull.usuario || cnpj).replace(/\D/g, '');
+                        logger.info({ empresaId, docLen: documentoLogin.length, headless: opts.headless }, 'Iniciando validação Playwright');
+                        const resultado = await (0, validar_credencial_nfse_1.validarCredencialNfse)(documentoLogin, senha, {
+                            timeoutSeconds: 60,
+                            headless: opts.headless,
+                        });
+                        logger.info({ empresaId, status: resultado.status }, 'Validação Playwright concluída');
+                        await credenciaisRepo.atualizarStatus(cred.id, resultado.status, resultado.message);
+                        if (resultado.ok) {
+                            job.ok++;
+                        }
+                        else if (resultado.status === 'INVALIDA') {
+                            job.invalidas++;
+                        }
+                        else {
+                            job.erros++;
+                        }
+                        broadcastProgress(jobId, {
+                            empresa_id: empresaId,
+                            cnpj,
+                            razao_social: razaoSocial,
+                            step: 'cred',
+                            status: resultado.status,
+                            message: resultado.message,
+                            updated_at: new Date().toISOString(),
+                            cred_status: resultado.status,
+                        });
+                    }
+                }
+            }
+        }
+        catch (err) {
+            logger.warn({ err, empresaId, jobId }, 'Erro ao validar empresa');
+            broadcastProgress(jobId, {
+                empresa_id: empresaId,
+                step: 'cred',
+                status: 'ERRO_VALIDACAO',
+                message: err instanceof Error ? err.message : 'Erro inesperado',
+                updated_at: new Date().toISOString(),
+            });
+            job.erros++;
+        }
+        job.processed++;
+        job.progress = Math.round((job.processed / total) * 100);
+    }
+    const j = jobs.get(jobId);
+    if (j?.status === 'RUNNING') {
+        j.status = 'DONE';
+    }
+}
+function addDays(d, days) {
+    const r = new Date(d);
+    r.setDate(r.getDate() + days);
+    return r;
+}
+function obterJob(jobId) {
+    return jobs.get(jobId);
+}
+function cancelarJob(jobId) {
+    const job = jobs.get(jobId);
+    if (!job || job.status !== 'RUNNING')
+        return false;
+    job.status = 'CANCELED';
+    return true;
+}
+async function iniciarValidacaoLegacy(payload) {
+    const empresaIds = await resolverEscopoLegacy(payload);
+    return iniciarValidacao({
+        empresa_ids: empresaIds,
+        validar_certificados: payload.targets.includes('CERTIFICADO'),
+        validar_credenciais: payload.targets.includes('CREDENCIAL'),
+        headless: true,
+    });
+}
+async function resolverEscopoLegacy(payload) {
     if (payload.scope.mode === 'SELECTED' && payload.scope.empresa_ids?.length) {
         return payload.scope.empresa_ids;
     }
     const filters = payload.filters ?? {};
-    const sortVal = filters.sort;
     const sortWhitelist = ['cnpj', 'razao_social', 'contabilidade_nome', 'cert_validade', 'has_credenciais', 'status_geral'];
+    const sortVal = filters.sort;
     const sort = typeof sortVal === 'string' && sortWhitelist.includes(sortVal)
         ? sortVal
         : undefined;
@@ -115,113 +381,5 @@ async function resolverEscopo(payload) {
     };
     const result = await empresasRepo.listarComAgregados(params);
     return result.items.map((i) => i.id);
-}
-async function executarValidacao(jobId, empresaIds, targets, options) {
-    const job = jobs.get(jobId);
-    if (!job || job.status !== 'RUNNING')
-        return;
-    let consecErrors = 0;
-    const total = empresaIds.length;
-    job.total = total;
-    for (let i = 0; i < total; i++) {
-        const j = jobs.get(jobId);
-        if (!j || j.status !== 'RUNNING')
-            break;
-        if (consecErrors >= options.stopOnConsecutiveErrors) {
-            j.status = 'FAILED';
-            logger.warn({ jobId, consecErrors }, 'Parando após erros consecutivos');
-            break;
-        }
-        const empresaId = empresaIds[i];
-        let erroNeste = false;
-        try {
-            const detalhes = await empresasRepo.obterPorIdComDetalhes(empresaId);
-            if (!detalhes) {
-                job.processed++;
-                job.errors++;
-                consecErrors++;
-                erroNeste = true;
-                continue;
-            }
-            const cnpj = normCnpj(detalhes.empresa.cnpj);
-            if (targets.includes('CERTIFICADO') && detalhes.certificados_digitais?.length) {
-                const cert = detalhes.certificados_digitais[0];
-                const dt = parseDataValidade(cert.data_validade);
-                const hoje = new Date();
-                hoje.setHours(0, 0, 0, 0);
-                if (dt && dt >= hoje) {
-                    job.ok++;
-                    consecErrors = 0;
-                }
-                else {
-                    job.errors++;
-                    consecErrors++;
-                    erroNeste = true;
-                }
-            }
-            if (targets.includes('CREDENCIAL') && detalhes.credenciais?.length) {
-                const cred = detalhes.credenciais[0];
-                const credFull = await credenciaisRepo.obterPorId(cred.id);
-                if (!credFull) {
-                    job.errors++;
-                    consecErrors++;
-                    erroNeste = true;
-                }
-                else {
-                    const senha = credenciaisRepo.descriptografarSenha(credFull);
-                    const resultado = await validarCredencialLogin(cnpj, senha, options.timeoutSeconds);
-                    if (resultado) {
-                        await credenciaisRepo.atualizarStatus(cred.id, 'OK');
-                        job.ok++;
-                    }
-                    else {
-                        await credenciaisRepo.atualizarStatus(cred.id, 'INVALIDA');
-                        job.errors++;
-                        consecErrors++;
-                        erroNeste = true;
-                    }
-                }
-            }
-            if (!erroNeste)
-                consecErrors = 0;
-        }
-        catch (err) {
-            logger.warn({ err, empresaId, jobId }, 'Erro ao validar empresa');
-            job.errors++;
-            consecErrors++;
-        }
-        job.processed++;
-        job.progress = Math.round((job.processed / total) * 100);
-    }
-    const j = jobs.get(jobId);
-    if (j && j.status === 'RUNNING') {
-        j.status = 'DONE';
-    }
-}
-/**
- * Valida credencial via login no portal NFSe (CNPJ + senha).
- * Stub: por enquanto apenas verifica se há credencial; expansão futura com Playwright.
- */
-async function validarCredencialLogin(cnpj, senha, _timeoutSeconds) {
-    if (!cnpj || !senha)
-        return false;
-    try {
-        const { validarCredencialNfse } = await Promise.resolve().then(() => __importStar(require('../automation/validar-credencial-nfse')));
-        return await validarCredencialNfse(cnpj, senha, _timeoutSeconds);
-    }
-    catch (err) {
-        logger.debug({ err, cnpj }, 'Validar credencial NFSe indisponível - usando stub');
-        return false;
-    }
-}
-function obterJob(jobId) {
-    return jobs.get(jobId);
-}
-function cancelarJob(jobId) {
-    const job = jobs.get(jobId);
-    if (!job || job.status !== 'RUNNING')
-        return false;
-    job.status = 'CANCELED';
-    return true;
 }
 //# sourceMappingURL=validacoes-service.js.map

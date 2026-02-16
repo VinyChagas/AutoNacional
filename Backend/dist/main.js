@@ -19,6 +19,7 @@ const validacoes_1 = __importDefault(require("./routers/validacoes"));
 const execucao_1 = __importDefault(require("./routers/execucao"));
 const contabilidades_1 = __importDefault(require("./routers/contabilidades"));
 const relatorios_1 = __importDefault(require("./routers/relatorios"));
+const dashboard_1 = __importDefault(require("./routers/dashboard"));
 const nfse_1 = __importDefault(require("./routers/nfse"));
 const execution_service_1 = require("./services/execution-service");
 const certificate_loader_1 = require("./services/certificate-loader");
@@ -50,6 +51,7 @@ app.use('/api/validacoes', validacoes_1.default);
 app.use('/api/execucao', execucao_1.default);
 app.use('/api/contabilidades', contabilidades_1.default);
 app.use('/api/relatorios', relatorios_1.default);
+app.use('/api/dashboard', dashboard_1.default);
 app.use('/api/nfse', nfse_1.default);
 app.use(error_handler_1.errorHandler);
 async function bootstrap() {

@@ -9,6 +9,7 @@ exports.deletar = deletar;
 exports.contarCertificados = contarCertificados;
 exports.contarEmpresas = contarEmpresas;
 exports.obterTotalVinculados = obterTotalVinculados;
+exports.obterEmpresasVinculadasPorIds = obterEmpresasVinculadasPorIds;
 exports.obterTotalVinculadosPorIds = obterTotalVinculadosPorIds;
 /**
  * Repositório de contabilidades.
@@ -92,6 +93,25 @@ async function obterTotalVinculados(contabilidadeId) {
         contarEmpresas(contabilidadeId),
     ]);
     return certs + empresas;
+}
+/**
+ * Total de empresas vinculadas por contabilidade (em batch).
+ */
+async function obterEmpresasVinculadasPorIds(contabilidadeIds) {
+    if (contabilidadeIds.length === 0)
+        return {};
+    const rows = await client_1.prisma.empresa.groupBy({
+        by: ['contabilidadeId'],
+        where: { contabilidadeId: { in: contabilidadeIds } },
+        _count: { id: true },
+    });
+    const result = {};
+    for (const row of rows) {
+        if (row.contabilidadeId != null) {
+            result[row.contabilidadeId] = row._count.id;
+        }
+    }
+    return result;
 }
 /**
  * Total de vinculados para múltiplas contabilidades (em batch).

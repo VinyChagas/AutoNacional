@@ -79,4 +79,4 @@ export const QUEUE_TIMEOUT = parseInt(
 // Servidor
 // ============================================================================
 
-export const PORT = parseInt(process.env.PORT || '3000', 10);
+export const PORT = parseInt(process.env.PORT || '4321', 10);

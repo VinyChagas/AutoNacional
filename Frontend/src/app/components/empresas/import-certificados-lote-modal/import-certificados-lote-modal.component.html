@@ -1,0 +1,209 @@
+@if (isOpen) {
+  <div class="import-modal-overlay">
+    <div class="import-modal">
+      <div class="import-modal-header">
+        <h2 class="import-modal-title">Importar Certificados em Lote</h2>
+        <button
+          type="button"
+          class="import-modal-close"
+          (click)="fechar()"
+          aria-label="Fechar"
+        >
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="import-modal-body">
+        <!-- Seleção de arquivos -->
+        <div class="import-select-wrap">
+          <input
+            #fileInput
+            type="file"
+            accept=".pfx,.p12"
+            multiple
+            (change)="onFilesSelected($event)"
+            class="import-file-hidden"
+          />
+          <button
+            type="button"
+            class="import-btn-select"
+            (click)="acionarFileInput(fileInput)"
+          >
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Selecionar certificados (.pfx/.p12)
+          </button>
+        </div>
+
+        @if (items.length > 0) {
+          <!-- Senha para pré-visualizar -->
+          <div class="import-preview-row">
+            <div class="import-preview-senha">
+              <label class="import-label">Senha padrão para pré-visualizar</label>
+              <input
+                type="password"
+                [(ngModel)]="previewSenha"
+                class="import-input"
+                placeholder="Se todos usam a mesma senha"
+                [disabled]="loadingPreview"
+              />
+            </div>
+            <button
+              type="button"
+              class="import-btn-preview"
+              (click)="onPreview()"
+              [disabled]="loadingPreview || previewSenha.trim().length < 3"
+            >
+              {{ loadingPreview ? 'Pré-visualizando...' : 'Pré-visualizar' }}
+            </button>
+          </div>
+
+          <!-- Filtros -->
+          <div class="import-filters">
+            <div class="import-chips">
+              <button
+                type="button"
+                class="import-chip"
+                [class.import-chip-active]="filtroStatus === 'todos'"
+                (click)="filtroStatus = 'todos'"
+              >
+                Todos ({{ totalCount }})
+              </button>
+              <button
+                type="button"
+                class="import-chip"
+                [class.import-chip-active]="filtroStatus === 'validos'"
+                (click)="filtroStatus = 'validos'"
+              >
+                Válidos ({{ validosCount }})
+              </button>
+              <button
+                type="button"
+                class="import-chip"
+                [class.import-chip-active]="filtroStatus === 'vencidos'"
+                (click)="filtroStatus = 'vencidos'"
+              >
+                Vencidos ({{ vencidosCount }})
+              </button>
+            </div>
+            <label class="import-toggle-wrap">
+              <input
+                type="checkbox"
+                [(ngModel)]="ordenarValidosPrimeiro"
+                class="import-checkbox"
+              />
+              <span>Ordenar: Válidos primeiro</span>
+            </label>
+            <input
+              type="text"
+              [(ngModel)]="busca"
+              class="import-search"
+              placeholder="Buscar por CNPJ ou Razão Social"
+            />
+          </div>
+
+          <!-- Tabela -->
+          <div class="import-table-wrap">
+            <table class="import-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>CNPJ</th>
+                  <th>Contabilidade</th>
+                  <th>Senha</th>
+                  <th class="th-actions">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (item of itemsFiltradosOrdenados; track item.localId) {
+                  <tr
+                    class="import-row"
+                    [class.import-row-removing]="item.status === 'IMPORTADO'"
+                  >
+                    <td>
+                      <span
+                        class="import-badge"
+                        [ngClass]="getStatusBadgeClass(item.status)"
+                      >
+                        {{ getStatusLabel(item.status) }}
+                      </span>
+                    </td>
+                    <td class="td-mono">
+                      {{ item.cnpj ? formatarCNPJ(item.cnpj) : item.filename }}
+                    </td>
+                    <td>
+                      <select
+                        [(ngModel)]="item.contabilidade_id"
+                        class="import-select"
+                        [disabled]="item.status === 'DUPLICADO' || item.status === 'ERRO' || item.status === 'IMPORTANDO'"
+                      >
+                        <option [ngValue]="null">Selecione...</option>
+                        @for (c of contabilidades; track c.id) {
+                          <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
+                        }
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="password"
+                        [(ngModel)]="item.senha"
+                        class="import-input import-input-senha"
+                        placeholder="Senha"
+                        [disabled]="item.status === 'DUPLICADO' || item.status === 'ERRO' || item.status === 'IMPORTANDO'"
+                        autocomplete="off"
+                      />
+                    </td>
+                    <td class="td-actions">
+                      @if (item.status === 'IMPORTANDO') {
+                        <span class="import-spinner"></span>
+                      } @else if (item.status !== 'IMPORTADO') {
+                        <button
+                          type="button"
+                          class="import-btn-import"
+                          (click)="onImportar(item)"
+                          [disabled]="!canImportar(item)"
+                        >
+                          Validar & Importar
+                        </button>
+                      }
+                    </td>
+                  </tr>
+                  @if (item.message) {
+                    <tr class="import-row-message">
+                      <td colspan="5" class="td-error">{{ item.message }}</td>
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+            @if (itemsFiltradosOrdenados.length === 0) {
+              <p class="import-empty">Nenhum item corresponde aos filtros.</p>
+            }
+          </div>
+        } @else {
+          <p class="import-hint">Selecione um ou mais arquivos .pfx ou .p12 acima.</p>
+        }
+      </div>
+
+      <div class="import-modal-footer">
+        <button
+          type="button"
+          class="import-btn import-btn-secondary"
+          (click)="fechar()"
+        >
+          Fechar
+        </button>
+        <button
+          type="button"
+          class="import-btn import-btn-primary"
+          (click)="onConcluir()"
+        >
+          Concluir
+        </button>
+      </div>
+    </div>
+  </div>
+}

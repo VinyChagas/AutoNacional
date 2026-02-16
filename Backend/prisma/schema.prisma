@@ -56,8 +56,9 @@ model Credencial {
   tipo               String // CNPJ_SENHA ou CPF_SENHA
   usuario            String // CNPJ ou CPF (sem formatação)
   senhaCriptografada String    @map("senha_criptografada")
-  status             String    @default("NAO_TESTADO") // NAO_TESTADO, OK, INVALIDA, BLOQUEADA
+  status             String    @default("NAO_TESTADO") // NAO_TESTADO, OK, INVALIDA, ERRO_VALIDACAO, BLOQUEADA
   ultimoTesteEm      DateTime? @map("ultimo_teste_em")
+  ultimaMensagem     String?   @map("ultima_mensagem") // Ex: "Senha incorreta", "Falha ao validar"
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 

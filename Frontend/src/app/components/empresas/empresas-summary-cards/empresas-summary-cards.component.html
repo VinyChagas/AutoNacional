@@ -1,0 +1,14 @@
+<div class="summary-cards-grid">
+  @for (card of cards; track card.id) {
+    <button
+      type="button"
+      class="summary-card"
+      [class.summary-card-active]="isCardActive(card)"
+      (click)="onCardClick(card.preset)"
+    >
+      <span class="summary-card-title">{{ card.title }}</span>
+      <span class="summary-card-value">{{ card.value }}</span>
+      <span class="summary-card-subtext">{{ card.subtext }}</span>
+    </button>
+  }
+</div>

@@ -1,6 +1,33 @@
 /** Interfaces para tela Empresas (cadastro unificado) - API Express */
 
-export type StatusGeral = 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
+export type StatusGeral =
+  | 'OPERACIONAL'
+  | 'PARCIAL'
+  | 'INOPERANTE'
+  | 'ATENCAO';
+
+export type CredStatusApi =
+  | 'SEM_CREDENCIAIS'
+  | 'INATIVA'
+  | 'NAO_TESTADO'
+  | 'TESTANDO'
+  | 'OK'
+  | 'INVALIDA'
+  | 'ERRO_VALIDACAO';
+
+/** Linha de empresa para painel operacional (tabela + cards). */
+export interface EmpresaRow {
+  id: string;
+  cnpj: string;
+  razao_social: string;
+  contabilidade?: { id: number; nome: string } | null;
+  possui_certificado: boolean;
+  cert_validade: string | null;
+  possui_credenciais: boolean;
+  cred_status: CredStatusApi | null;
+  cred_ultimo_teste_em: string | null;
+  cred_ultima_mensagem: string | null;
+}
 
 export interface EmpresaListagemItem {
   id: string;
@@ -16,8 +43,48 @@ export interface EmpresaListagemItem {
   cert_validade: string | null;
   has_credenciais: boolean;
   cred_status: string | null;
+  cred_ultimo_teste_em?: string | null;
+  cred_ultima_mensagem?: string | null;
   status_geral?: StatusGeral | null;
   status_geral_motivo?: string | null;
+}
+
+/**
+ * Adapta EmpresaListagemItem da API para EmpresaRow (painel operacional).
+ * Deriva valores quando campos não existem no payload.
+ */
+export function toEmpresaRow(item: EmpresaListagemItem): EmpresaRow {
+  const credStatus = (item.cred_status ?? '')
+    .toString()
+    .toUpperCase()
+    .replace(/\s/g, '_');
+  const credMap: Record<string, CredStatusApi> = {
+    SEM_CREDENCIAIS: 'SEM_CREDENCIAIS',
+    INATIVA: 'INATIVA',
+    NAO_TESTADO: 'NAO_TESTADO',
+    TESTANDO: 'TESTANDO',
+    OK: 'OK',
+    INVALIDA: 'INVALIDA',
+    INVALIDO: 'INVALIDA',
+    ERRO_VALIDACAO: 'ERRO_VALIDACAO',
+  };
+  const credStatusNorm = credMap[credStatus] ?? 'NAO_TESTADO';
+
+  return {
+    id: item.id,
+    cnpj: item.cnpj,
+    razao_social: item.razao_social,
+    contabilidade:
+      item.contabilidade_id != null && item.contabilidade_nome
+        ? { id: item.contabilidade_id, nome: item.contabilidade_nome }
+        : null,
+    possui_certificado: Boolean(item.has_certificado),
+    cert_validade: item.cert_validade ?? null,
+    possui_credenciais: Boolean(item.has_credenciais),
+    cred_status: item.has_credenciais ? credStatusNorm : null,
+    cred_ultimo_teste_em: item.cred_ultimo_teste_em ?? null,
+    cred_ultima_mensagem: item.cred_ultima_mensagem ?? null,
+  };
 }
 
 export type SortField =
@@ -99,7 +166,8 @@ export interface PreviewCertificadosResponse {
     razao_social: string;
     data_validade: string | null;
     existe_empresa: boolean;
-    acao: 'IMPORTAR' | 'ERRO';
+    existe_certificado?: boolean;
+    acao: 'IMPORTAR' | 'ERRO' | 'DUPLICADO';
     erro?: string;
   }>;
 }
@@ -117,6 +185,22 @@ export interface ConfirmarCertificadosResponse {
 }
 
 // Imports - Credenciais
+export interface PreviewCredenciaisRow {
+  rowIndex: number;
+  linha: number;
+  razao_social: string;
+  tipo_login: 'CNPJ' | 'CPF';
+  documento_raw: string;
+  documento_digits: string;
+  documento_formatado: string;
+  regime: string | null;
+  senha_masked: true;
+  exists: boolean;
+  valid: boolean;
+  errors: string[];
+  duplicado_na_planilha?: boolean;
+}
+
 export interface PreviewCredenciaisResponse {
   session_id: string;
   total: number;
@@ -132,11 +216,26 @@ export interface PreviewCredenciaisResponse {
     acao: 'CRIAR_EMPRESA' | 'CRIAR_CREDENCIAL' | 'ATUALIZAR_CREDENCIAL' | 'ERRO';
     erro?: string;
   }>;
+  rows: PreviewCredenciaisRow[];
+}
+
+export interface ConfirmarCredenciaisRow {
+  rowIndex: number;
+  contabilidade_id?: number;
 }
 
 export interface ConfirmarCredenciaisPayload {
   session_id: string;
-  linhas_aprovadas: number[];
+  contabilidade_id_default: number;
+  updateExisting: boolean;
+  rows?: ConfirmarCredenciaisRow[];
+  linhas_aprovadas?: number[];
+}
+
+export interface ConfirmarCredenciaisResultItem {
+  rowIndex: number;
+  status: 'IMPORTED' | 'UPDATED' | 'SKIPPED_EXISTS' | 'ERROR';
+  message?: string;
 }
 
 export interface ConfirmarCredenciaisResponse {
@@ -144,4 +243,6 @@ export interface ConfirmarCredenciaisResponse {
   criadas: number;
   atualizadas: number;
   erros: number;
+  skipped?: number;
+  results: ConfirmarCredenciaisResultItem[];
 }

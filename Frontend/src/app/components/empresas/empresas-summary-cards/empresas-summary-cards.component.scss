@@ -1,0 +1,81 @@
+// Cards do painel operacional - estilo consistente com a tela
+$radius: 20px;
+$top-bar: 4px;
+
+.summary-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 1024px) {
+  .summary-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .summary-cards-grid {
+    grid-template-columns: 1fr;
+    margin-bottom: 1.75rem;
+  }
+}
+
+.summary-card {
+  background: var(--bg-card);
+  border-radius: $radius;
+  padding: 1.25rem 1.35rem;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: $top-bar;
+    background: linear-gradient(
+      90deg,
+      rgba(79, 70, 229, 0.5) 0%,
+      rgba(124, 58, 237, 0.45) 100%
+    );
+    border-radius: $radius $radius 0 0;
+  }
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    border-color: rgba(79, 70, 229, 0.25);
+  }
+
+  &.summary-card-active {
+    border-color: rgba(79, 70, 229, 0.4);
+    box-shadow: 0 4px 20px rgba(79, 70, 229, 0.12);
+  }
+
+  .summary-card-title {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .summary-card-value {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .summary-card-subtext {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+}

@@ -8,10 +8,7 @@ import * as repoLegacy from '../../../repositories/empresas';
 import * as cadastroCertificadoService from './cadastro-certificado.service';
 import * as cadastroCredencialService from './cadastro-credencial.service';
 import { jsonSuccess, jsonError, jsonCreated } from '../../../middleware/response';
-
-function limparCnpj(cnpj: string): string {
-  return cnpj.replace(/[.\/\-\s]/g, '').trim();
-}
+import { normalizeCnpj } from '../../../utils/cnpj';
 
 function toListagemItem(row: {
   id: number;
@@ -27,6 +24,8 @@ function toListagemItem(row: {
   cert_validade: string | null;
   has_credenciais: boolean;
   cred_status: string | null;
+  cred_ultimo_teste_em?: string | null;
+  cred_ultima_mensagem?: string | null;
   status_geral: string;
   status_geral_motivo?: string | null;
 }) {
@@ -44,6 +43,8 @@ function toListagemItem(row: {
     cert_validade: row.cert_validade ?? null,
     has_credenciais: Boolean(row.has_credenciais),
     cred_status: row.cred_status ?? null,
+    cred_ultimo_teste_em: row.cred_ultimo_teste_em ?? null,
+    cred_ultima_mensagem: row.cred_ultima_mensagem ?? null,
     status_geral: row.status_geral ?? null,
     status_geral_motivo: row.status_geral_motivo ?? null,
   };
@@ -99,7 +100,7 @@ export async function listarPorContabilidade(req: Request, res: Response): Promi
 }
 
 export async function obterPorCnpj(req: Request, res: Response): Promise<void> {
-  const cnpj = limparCnpj(String(req.params.cnpj ?? ''));
+  const cnpj = normalizeCnpj(String(req.params.cnpj ?? ''));
   const empresa = await repoLegacy.obterEmpresaPorCnpj(cnpj);
   if (!empresa) {
     jsonError(res, `Empresa com CNPJ ${cnpj} não encontrada`, 404);
@@ -112,9 +113,11 @@ export async function obterPorCnpj(req: Request, res: Response): Promise<void> {
 export async function cadastroCertificado(req: Request, res: Response): Promise<void> {
   const file = req.file as Express.Multer.File | undefined;
   const senha = (req.body?.senha ?? '').trim();
-  const contabilidadeId = req.body?.contabilidade_id
-    ? parseInt(String(req.body.contabilidade_id), 10)
-    : undefined;
+  const contabilidadeIdRaw = req.body?.contabilidade_id;
+  const contabilidadeId =
+    contabilidadeIdRaw != null && contabilidadeIdRaw !== ''
+      ? parseInt(String(contabilidadeIdRaw), 10)
+      : undefined;
 
   if (!file?.buffer?.length) {
     jsonError(res, 'Arquivo do certificado (.pfx ou .p12) é obrigatório', 400);
@@ -122,6 +125,10 @@ export async function cadastroCertificado(req: Request, res: Response): Promise<
   }
   if (!senha) {
     jsonError(res, 'Senha do certificado é obrigatória', 400);
+    return;
+  }
+  if (contabilidadeId == null || isNaN(contabilidadeId) || contabilidadeId < 1) {
+    jsonError(res, 'contabilidade_id é obrigatório e deve ser um número positivo', 400);
     return;
   }
   const ext = (file.originalname || '').toLowerCase();
@@ -134,7 +141,7 @@ export async function cadastroCertificado(req: Request, res: Response): Promise<
     const result = await cadastroCertificadoService.cadastrarPorCertificado({
       buffer: file.buffer,
       senha,
-      contabilidade_id: !isNaN(contabilidadeId!) && contabilidadeId! > 0 ? contabilidadeId : undefined,
+      contabilidade_id: contabilidadeId,
     });
     jsonCreated(res, result, 'Certificado cadastrado com sucesso');
   } catch (err) {
@@ -163,12 +170,8 @@ export async function excluirEmMassa(req: Request, res: Response): Promise<void>
     return;
   }
 
-  try {
-    const deleted = await repo.deletarEmMassa(ids);
-    jsonSuccess(res, { success: true, deleted });
-  } catch (err) {
-    throw err;
-  }
+  const deleted = await repo.deletarEmMassa(ids);
+  jsonSuccess(res, { deleted });
 }
 
 export async function cadastroCredencial(req: Request, res: Response): Promise<void> {
@@ -176,9 +179,14 @@ export async function cadastroCredencial(req: Request, res: Response): Promise<v
   const cnpj = typeof body.cnpj === 'string' ? body.cnpj.trim() : '';
   const razao_social = typeof body.razao_social === 'string' ? body.razao_social : undefined;
   const senha = typeof body.senha === 'string' ? body.senha : '';
-  const tipo = typeof body.tipo === 'string' && (body.tipo === 'CNPJ_SENHA' || body.tipo === 'CPF_SENHA')
-    ? body.tipo
-    : 'CNPJ_SENHA';
+  let tipo: 'CNPJ_SENHA' | 'CPF_SENHA' =
+    typeof body.tipo === 'string' && (body.tipo === 'CNPJ_SENHA' || body.tipo === 'CPF_SENHA')
+      ? body.tipo
+      : 'CNPJ_SENHA';
+  const docDigitos = cnpj.replace(/\D/g, '').length;
+  if (docDigitos === 11 && tipo === 'CNPJ_SENHA') {
+    tipo = 'CPF_SENHA';
+  }
   const usuario = typeof body.usuario === 'string' ? body.usuario : undefined;
   const contabilidade_idRaw = body.contabilidade_id;
 

@@ -46,11 +46,18 @@ async function criarOuAtualizar(empresaId, tipo, usuario, senha) {
         },
     });
 }
-async function atualizarStatus(credencialId, status) {
+async function atualizarStatus(credencialId, status, ultimaMensagem) {
     try {
+        const data = {
+            status,
+            ultimoTesteEm: new Date(),
+        };
+        if (ultimaMensagem !== undefined) {
+            data.ultimaMensagem = ultimaMensagem;
+        }
         return await client_1.prisma.credencial.update({
             where: { id: credencialId },
-            data: { status, ultimoTesteEm: new Date() },
+            data,
         });
     }
     catch {

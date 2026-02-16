@@ -1,6 +1,6 @@
 /**
  * Serviço de importação em lote de credenciais via planilha.
- * Fluxo: Preview (session) → Confirmar (linhas aprovadas).
+ * Fluxo: Preview (session) → Commit (linhas selecionadas + contabilidade).
  */
 import { randomUUID } from 'crypto';
 import { prisma } from '../../db/client';
@@ -11,6 +11,7 @@ import {
   validarCPF,
   cnpjParaEmpresa,
 } from '../../utils/documento.utils';
+import { formatarDocumento } from '../../utils/documento.utils';
 import { parsePlanilhaCredenciais, type LinhaCredencial } from '../../utils/planilha.parser';
 
 export type AcaoPreview =
@@ -18,6 +19,22 @@ export type AcaoPreview =
   | 'CRIAR_CREDENCIAL'
   | 'ATUALIZAR_CREDENCIAL'
   | 'ERRO';
+
+export interface PreviewRowCred {
+  rowIndex: number;
+  linha: number;
+  razao_social: string;
+  tipo_login: 'CNPJ' | 'CPF';
+  documento_raw: string;
+  documento_digits: string;
+  documento_formatado: string;
+  regime: string | null;
+  senha_masked: true;
+  exists: boolean;
+  valid: boolean;
+  errors: string[];
+  duplicado_na_planilha?: boolean;
+}
 
 export interface PreviewItemCred {
   linha: number;
@@ -36,11 +53,13 @@ export interface PreviewCredenciaisResult {
   validos: number;
   erros: number;
   items: PreviewItemCred[];
+  rows: PreviewRowCred[];
 }
 
 interface SessionData {
   linhas: LinhaCredencial[];
   items: PreviewItemCred[];
+  rows: PreviewRowCred[];
   createdAt: number;
 }
 
@@ -72,133 +91,100 @@ export async function previewCredenciais(
 ): Promise<PreviewCredenciaisResult> {
   const linhas = parsePlanilhaCredenciais(buffer);
   const items: PreviewItemCred[] = [];
+  const rows: PreviewRowCred[] = [];
   let validos = 0;
   let erros = 0;
 
-  for (const row of linhas) {
+  const docsNaPlanilha = new Map<string, number>();
+  const cnpjEmpresas = linhas.map((r) => {
+    const t = r.tipo_login === 'CPF' ? 'CPF' : 'CNPJ';
+    return cnpjParaEmpresa(r.cnpj_ou_cpf, t);
+  });
+  const empresasExistentes = await prisma.empresa.findMany({
+    where: { cnpj: { in: [...new Set(cnpjEmpresas)] } },
+    select: { cnpj: true },
+  });
+  const cnpjExists = new Set(empresasExistentes.map((e) => e.cnpj));
+
+  for (let idx = 0; idx < linhas.length; idx++) {
+    const row = linhas[idx];
     const doc = normalizarDocumento(row.cnpj_ou_cpf);
     const tipoRaw = String(row.tipo_login ?? 'CNPJ').toUpperCase().trim();
     const tipo: 'CNPJ' | 'CPF' =
       tipoRaw === 'CPF' ? 'CPF' : tipoRaw === 'CNPJ' ? 'CNPJ' : 'CNPJ';
+    const cnpjEmp = cnpjParaEmpresa(row.cnpj_ou_cpf, tipo);
+    const errors: string[] = [];
+    let valid = true;
 
-    // Validar Tipo de Login
+    const firstLinha = docsNaPlanilha.get(cnpjEmp);
+    const duplicadoNaPlanilha = firstLinha !== undefined;
+    if (!duplicadoNaPlanilha) docsNaPlanilha.set(cnpjEmp, row.linha);
+    else errors.push('Documento duplicado na planilha');
+
     if (tipoRaw !== 'CNPJ' && tipoRaw !== 'CPF') {
-      items.push({
-        linha: row.linha,
-        razao_social: row.razao_social,
-        documento: row.cnpj_ou_cpf,
-        tipo: tipoRaw || '(vazio)',
-        existe_empresa: false,
-        existe_credencial: false,
-        acao: 'ERRO',
-        erro: 'Tipo de Login deve ser CNPJ ou CPF',
-      });
-      erros++;
-      continue;
+      errors.push('Tipo de Login deve ser CNPJ ou CPF');
+      valid = false;
     }
-
-    // Validar Razão Social
     if (!row.razao_social?.trim()) {
-      items.push({
-        linha: row.linha,
-        razao_social: row.razao_social || '',
-        documento: doc,
-        tipo,
-        existe_empresa: false,
-        existe_credencial: false,
-        acao: 'ERRO',
-        erro: 'Razão Social é obrigatória',
-      });
-      erros++;
-      continue;
+      errors.push('Razão Social é obrigatória');
+      valid = false;
     }
-
-    // Validar documento
     if (tipo === 'CNPJ' && !validarCNPJ(row.cnpj_ou_cpf)) {
-      items.push({
-        linha: row.linha,
-        razao_social: row.razao_social,
-        documento: doc || '(vazio)',
-        tipo,
-        existe_empresa: false,
-        existe_credencial: false,
-        acao: 'ERRO',
-        erro: 'CNPJ deve conter 14 dígitos',
-      });
-      erros++;
-      continue;
+      errors.push('CNPJ deve conter 14 dígitos');
+      valid = false;
     }
     if (tipo === 'CPF' && !validarCPF(row.cnpj_ou_cpf)) {
-      items.push({
-        linha: row.linha,
-        razao_social: row.razao_social,
-        documento: doc || '(vazio)',
-        tipo,
-        existe_empresa: false,
-        existe_credencial: false,
-        acao: 'ERRO',
-        erro: 'CPF deve conter 11 dígitos',
-      });
-      erros++;
-      continue;
+      errors.push('CPF deve conter 11 dígitos');
+      valid = false;
     }
-
-    // Validar Senha
     if (!row.senha?.trim()) {
-      items.push({
-        linha: row.linha,
-        razao_social: row.razao_social,
-        documento: doc,
-        tipo,
-        existe_empresa: false,
-        existe_credencial: false,
-        acao: 'ERRO',
-        erro: 'Senha é obrigatória',
-      });
-      erros++;
-      continue;
+      errors.push('Senha é obrigatória');
+      valid = false;
+    } else if (row.senha.trim().length < 3) {
+      errors.push('Senha deve ter no mínimo 3 caracteres');
+      valid = false;
     }
 
-    const cnpjEmp = cnpjParaEmpresa(row.cnpj_ou_cpf, tipo);
-    const tipoCred = tipo === 'CPF' ? 'CPF_SENHA' : 'CNPJ_SENHA';
+    const exists = cnpjExists.has(cnpjEmp);
+    const finalValid = valid && !duplicadoNaPlanilha;
+    if (finalValid) validos++;
+    else erros++;
 
-    const empresa = await prisma.empresa.findUnique({
-      where: { cnpj: cnpjEmp },
-    });
-    const credencial =
-      empresa &&
-      (await prisma.credencial.findUnique({
-        where: { empresaId_tipo: { empresaId: empresa.id, tipo: tipoCred } },
-      }));
-
-    const existe_empresa = !!empresa;
-    const existe_credencial = !!credencial;
-
-    let acao: AcaoPreview;
-    if (!empresa) {
-      acao = 'CRIAR_EMPRESA';
-    } else if (!credencial) {
-      acao = 'CRIAR_CREDENCIAL';
-    } else {
-      acao = 'ATUALIZAR_CREDENCIAL';
-    }
+    let acao: AcaoPreview = finalValid ? (exists ? 'ATUALIZAR_CREDENCIAL' : 'CRIAR_EMPRESA') : 'ERRO';
 
     items.push({
       linha: row.linha,
       razao_social: row.razao_social,
       documento: doc,
       tipo,
-      existe_empresa,
-      existe_credencial,
+      existe_empresa: exists,
+      existe_credencial: false,
       acao,
+      erro: errors[0],
     });
-    validos++;
+
+    rows.push({
+      rowIndex: idx,
+      linha: row.linha,
+      razao_social: row.razao_social,
+      tipo_login: tipo,
+      documento_raw: row.cnpj_ou_cpf,
+      documento_digits: doc,
+      documento_formatado: formatarDocumento(row.cnpj_ou_cpf, tipo),
+      regime: row.regime?.trim() || null,
+      senha_masked: true,
+      exists,
+      valid: finalValid,
+      errors,
+      duplicado_na_planilha: duplicadoNaPlanilha,
+    });
   }
 
   const session_id = randomUUID();
   sessions.set(session_id, {
     linhas,
     items,
+    rows,
     createdAt: Date.now(),
   });
 
@@ -208,12 +194,27 @@ export async function previewCredenciais(
     validos,
     erros,
     items,
+    rows,
   };
+}
+
+export interface CommitRowInput {
+  rowIndex: number;
+  contabilidade_id?: number;
 }
 
 export interface ConfirmarCredenciaisInput {
   session_id: string;
-  linhas_aprovadas: number[];
+  linhas_aprovadas?: number[];
+  contabilidade_id_default: number;
+  updateExisting: boolean;
+  rows?: CommitRowInput[];
+}
+
+export interface CommitResultItem {
+  rowIndex: number;
+  status: 'IMPORTED' | 'UPDATED' | 'SKIPPED_EXISTS' | 'ERROR';
+  message?: string;
 }
 
 export interface ConfirmarCredenciaisResult {
@@ -221,6 +222,8 @@ export interface ConfirmarCredenciaisResult {
   criadas: number;
   atualizadas: number;
   erros: number;
+  skipped: number;
+  results: CommitResultItem[];
 }
 
 export async function confirmarCredenciais(
@@ -231,24 +234,57 @@ export async function confirmarCredenciais(
     throw new Error('Sessão inválida ou expirada. Faça o preview novamente.');
   }
 
-  const linhasAprovadas = new Set(input.linhas_aprovadas);
-  const linhasParaProcessar = session.linhas.filter((l) =>
-    linhasAprovadas.has(l.linha)
-  );
-
-  // Validar que as linhas aprovadas não têm ERRO
-  const itensValidos = session.items.filter(
-    (i) => linhasAprovadas.has(i.linha) && i.acao !== 'ERRO'
-  );
-  if (itensValidos.length !== linhasParaProcessar.length) {
-    throw new Error('Algumas linhas aprovadas contêm erro. Faça o preview novamente.');
+  const contabDefault = input.contabilidade_id_default;
+  if (!contabDefault || contabDefault < 1) {
+    throw new Error('Contabilidade é obrigatória para importar.');
   }
 
+  const rowOverrides = new Map<number, number>();
+  if (Array.isArray(input.rows)) {
+    for (const r of input.rows) {
+      if (r.contabilidade_id != null && r.contabilidade_id > 0) {
+        rowOverrides.set(r.rowIndex, r.contabilidade_id);
+      }
+    }
+  }
+
+  const indicesAprovados = new Set<number>(
+    Array.isArray(input.rows) && input.rows.length > 0
+      ? input.rows.map((r) => r.rowIndex)
+      : (input.linhas_aprovadas ?? []).map((linha) =>
+          session.linhas.findIndex((l) => l.linha === linha)
+        ).filter((i) => i >= 0)
+  );
+
+  const results: CommitResultItem[] = [];
   let criadas = 0;
   let atualizadas = 0;
   let erros = 0;
+  let skipped = 0;
 
-  for (const row of linhasParaProcessar) {
+  for (let idx = 0; idx < session.linhas.length; idx++) {
+    if (!indicesAprovados.has(idx)) continue;
+
+    const row = session.linhas[idx];
+    const rowPreview = session.rows?.[idx];
+    const contabId = rowOverrides.get(idx) ?? contabDefault;
+
+    if (!row) {
+      results.push({ rowIndex: idx, status: 'ERROR', message: 'Linha não encontrada' });
+      erros++;
+      continue;
+    }
+
+    if (rowPreview && !rowPreview.valid) {
+      results.push({
+        rowIndex: idx,
+        status: 'ERROR',
+        message: rowPreview.errors?.[0] ?? 'Linha inválida',
+      });
+      erros++;
+      continue;
+    }
+
     try {
       const doc = normalizarDocumento(row.cnpj_ou_cpf);
       const tipo = row.tipo_login;
@@ -259,17 +295,33 @@ export async function confirmarCredenciais(
         where: { cnpj: cnpjEmp },
       });
 
+      if (empresa && !input.updateExisting) {
+        const credExist = await prisma.credencial.findUnique({
+          where: { empresaId_tipo: { empresaId: empresa.id, tipo: tipoCred } },
+        });
+        if (credExist) {
+          results.push({
+            rowIndex: idx,
+            status: 'SKIPPED_EXISTS',
+            message: 'Empresa já possui credenciais cadastradas',
+          });
+          skipped++;
+          continue;
+        }
+      }
+
       if (!empresa) {
         empresa = await prisma.empresa.create({
           data: {
             cnpj: cnpjEmp,
             razaoSocial: row.razao_social.trim(),
             regime: row.regime?.trim() || null,
+            contabilidadeId: contabId,
           },
         });
-        criadas++;
+        // Não incrementar aqui - contamos por linha/credencial, não por operação de empresa
       } else {
-        const updates: { razaoSocial?: string; regime?: string | null } = {};
+        const updates: { razaoSocial?: string; regime?: string | null; contabilidadeId?: number } = {};
         const razaoNova = row.razao_social?.trim();
         const regimeNovo = row.regime?.trim() || null;
         if (razaoNova && razaoNova !== empresa.razaoSocial) {
@@ -277,6 +329,9 @@ export async function confirmarCredenciais(
         }
         if (regimeNovo !== (empresa.regime ?? null)) {
           updates.regime = regimeNovo;
+        }
+        if (contabId && contabId !== (empresa.contabilidadeId ?? null)) {
+          updates.contabilidadeId = contabId;
         }
         if (Object.keys(updates).length > 0) {
           await prisma.empresa.update({
@@ -288,7 +343,7 @@ export async function confirmarCredenciais(
 
       const senhaCriptografada = encryptPassword(row.senha);
       const credencial = await prisma.credencial.findUnique({
-        where: { empresaId_tipo: { empresaId: empresa.id, tipo: tipoCred } },
+        where: { empresaId_tipo: { empresaId: empresa!.id, tipo: tipoCred } },
       });
 
       if (credencial) {
@@ -296,21 +351,24 @@ export async function confirmarCredenciais(
           where: { id: credencial.id },
           data: { usuario: doc, senhaCriptografada },
         });
-        atualizadas++;
+        atualizadas++; // 1 linha atualizada
+        results.push({ rowIndex: idx, status: 'UPDATED', message: 'Credenciais atualizadas' });
       } else {
         await prisma.credencial.create({
           data: {
-            empresaId: empresa.id,
+            empresaId: empresa!.id,
             tipo: tipoCred,
             usuario: doc,
             senhaCriptografada,
           },
         });
-        criadas++;
+        criadas++; // 1 linha importada (empresa nova ou credencial nova)
+        results.push({ rowIndex: idx, status: 'IMPORTED', message: 'Importado com sucesso' });
       }
     } catch (e) {
+      const msg = (e as Error).message;
+      results.push({ rowIndex: idx, status: 'ERROR', message: msg });
       erros++;
-      // Não interrompe o processamento
     }
   }
 
@@ -321,5 +379,7 @@ export async function confirmarCredenciais(
     criadas,
     atualizadas,
     erros,
+    skipped,
+    results,
   };
 }

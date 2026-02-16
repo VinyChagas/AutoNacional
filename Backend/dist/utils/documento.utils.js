@@ -7,6 +7,7 @@ exports.normalizarDocumento = normalizarDocumento;
 exports.validarCNPJ = validarCNPJ;
 exports.validarCPF = validarCPF;
 exports.cnpjParaEmpresa = cnpjParaEmpresa;
+exports.formatarDocumento = formatarDocumento;
 /**
  * Remove máscara de documento (pontos, traços, barras, espaços).
  */
@@ -68,5 +69,18 @@ function cnpjParaEmpresa(documento, tipo) {
         return '000' + n;
     }
     return n;
+}
+/**
+ * Formata documento para exibição (CNPJ ou CPF).
+ */
+function formatarDocumento(doc, tipo) {
+    const n = normalizarDocumento(doc);
+    if (tipo === 'CPF' && n.length === 11) {
+        return n.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+    }
+    if (n.length === 14) {
+        return n.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    }
+    return n || '-';
 }
 //# sourceMappingURL=documento.utils.js.map

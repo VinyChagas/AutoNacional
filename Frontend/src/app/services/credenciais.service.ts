@@ -31,6 +31,14 @@ export class CredenciaisService {
     );
   }
 
+  atualizarStatus(credencialId: number, status: string): Observable<CredencialResponse> {
+    return this.http
+      .put<CredencialResponse>(`${this.baseUrl}/credenciais/${credencialId}/status`, null, {
+        params: { status },
+      })
+      .pipe(catchError(this.handleError));
+  }
+
   excluir(credencialId: number): Observable<void> {
     return this.http.delete<void>(`${this.baseUrl}/credenciais/${credencialId}`).pipe(
       catchError(this.handleError)

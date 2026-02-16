@@ -27,7 +27,7 @@ function gerarStoragePath(cnpj: string, contabilidadeId?: number | null): string
   return `empresa/${cn}/certs/${ts}.pfx`;
 }
 
-export type AcaoCert = 'IMPORTAR' | 'ERRO';
+export type AcaoCert = 'IMPORTAR' | 'ERRO' | 'DUPLICADO';
 
 export interface PreviewItemCert {
   indice: number;
@@ -35,6 +35,7 @@ export interface PreviewItemCert {
   razao_social: string;
   data_validade: string | null;
   existe_empresa: boolean;
+  existe_certificado: boolean;
   acao: AcaoCert;
   erro?: string;
 }
@@ -63,16 +64,21 @@ export async function previewCertificados(
     try {
       const parsed = parseCertificado(validFiles[i].buffer, senha);
       const cnpjLimpo = normCnpj(parsed.cnpj);
-      const existeEmpresa = !!(await prisma.empresa.findUnique({
-        where: { cnpj: cnpjLimpo },
-      }));
+      const [existeEmpresa, existingCert] = await Promise.all([
+        prisma.empresa.findUnique({ where: { cnpj: cnpjLimpo } }),
+        certRepo.obterPorCnpj(cnpjLimpo),
+      ]);
+      const existeCertificado = !!existingCert;
+      const acao: AcaoCert = existeCertificado ? 'DUPLICADO' : 'IMPORTAR';
       items.push({
         indice: i,
         cnpj: parsed.cnpj,
         razao_social: parsed.razao_social,
         data_validade: parsed.data_validade,
-        existe_empresa: existeEmpresa,
-        acao: 'IMPORTAR',
+        existe_empresa: !!existeEmpresa,
+        existe_certificado: existeCertificado,
+        acao,
+        ...(existeCertificado && { erro: 'CNPJ já possui certificado cadastrado' }),
       });
     } catch (e) {
       items.push({
@@ -81,6 +87,7 @@ export async function previewCertificados(
         razao_social: '',
         data_validade: null,
         existe_empresa: false,
+        existe_certificado: false,
         acao: 'ERRO',
         erro: (e as Error).message,
       });
