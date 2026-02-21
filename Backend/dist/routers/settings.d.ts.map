@@ -1,1 +1,1 @@
-{"version":3,"file":"settings.d.ts","sourceRoot":"","sources":["../../src/routers/settings.ts"],"names":[],"mappings":"AAQA,QAAA,MAAM,MAAM,4CAAW,CAAC;AAuHxB,eAAe,MAAM,CAAC"}
+{"version":3,"file":"settings.d.ts","sourceRoot":"","sources":["../../src/routers/settings.ts"],"names":[],"mappings":"AAcA,QAAA,MAAM,MAAM,4CAAW,CAAC;AAExB,uDAAuD;AACvD,eAAO,MAAM,gBAAgB;;;;;;;;;mBASJ,MAAM,GAAG,IAAI;oBACZ,MAAM,GAAG,IAAI;;;;;;;;;;CAUtC,CAAC;AAyTF,eAAe,MAAM,CAAC"}

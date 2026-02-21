@@ -40,6 +40,16 @@ export async function obterEmpresaPorId(
   });
 }
 
+/** Empresa com relação contabilidade (para nome da pasta de downloads). */
+export async function obterEmpresaComContabilidade(
+  empresaId: number
+): Promise<(Empresa & { contabilidade: { nomeContabilidade: string } | null }) | null> {
+  return prisma.empresa.findUnique({
+    where: { id: empresaId },
+    include: { contabilidade: true },
+  }) as Promise<(Empresa & { contabilidade: { nomeContabilidade: string } | null }) | null>;
+}
+
 export async function obterEmpresaPorCnpj(cnpj: string): Promise<Empresa | null> {
   const cnpjLimpo = limparCnpj(cnpj);
   return prisma.empresa.findUnique({

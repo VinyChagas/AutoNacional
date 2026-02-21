@@ -212,7 +212,7 @@ async function confirmarCredenciais(input) {
                         contabilidadeId: contabId,
                     },
                 });
-                criadas++;
+                // Não incrementar aqui - contamos por linha/credencial, não por operação de empresa
             }
             else {
                 const updates = {};
@@ -243,7 +243,7 @@ async function confirmarCredenciais(input) {
                     where: { id: credencial.id },
                     data: { usuario: doc, senhaCriptografada },
                 });
-                atualizadas++;
+                atualizadas++; // 1 linha atualizada
                 results.push({ rowIndex: idx, status: 'UPDATED', message: 'Credenciais atualizadas' });
             }
             else {
@@ -255,7 +255,7 @@ async function confirmarCredenciais(input) {
                         senhaCriptografada,
                     },
                 });
-                criadas++;
+                criadas++; // 1 linha importada (empresa nova ou credencial nova)
                 results.push({ rowIndex: idx, status: 'IMPORTED', message: 'Importado com sucesso' });
             }
         }

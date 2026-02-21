@@ -13,14 +13,17 @@ const init_1 = require("./db/init");
 const supabase_1 = require("./config/supabase");
 const error_handler_1 = require("./middleware/error-handler");
 const settings_1 = __importDefault(require("./routers/settings"));
+const config_2 = __importDefault(require("./routers/config"));
 const modules_1 = require("./modules");
 const execucoes_1 = __importDefault(require("./routers/execucoes"));
 const validacoes_1 = __importDefault(require("./routers/validacoes"));
 const execucao_1 = __importDefault(require("./routers/execucao"));
+const logs_1 = __importDefault(require("./routers/logs"));
 const contabilidades_1 = __importDefault(require("./routers/contabilidades"));
 const relatorios_1 = __importDefault(require("./routers/relatorios"));
 const dashboard_1 = __importDefault(require("./routers/dashboard"));
 const nfse_1 = __importDefault(require("./routers/nfse"));
+const metrics_1 = __importDefault(require("./routers/metrics"));
 const execution_service_1 = require("./services/execution-service");
 const certificate_loader_1 = require("./services/certificate-loader");
 if (!process.stdin.isTTY) {
@@ -42,6 +45,7 @@ app.get('/health', (_req, res) => {
     res.json({ status: 'ok', message: 'AutoNacional API está funcionando' });
 });
 app.use('/api/settings', settings_1.default);
+app.use('/api/config', config_2.default);
 app.use('/api/empresas', modules_1.empresasRouter);
 app.use('/api/credenciais', modules_1.credenciaisRouter);
 app.use('/api/certificados', modules_1.certificadosRouter);
@@ -49,10 +53,12 @@ app.use('/api/imports', modules_1.importsRouter);
 app.use('/api/execucoes', execucoes_1.default);
 app.use('/api/validacoes', validacoes_1.default);
 app.use('/api/execucao', execucao_1.default);
+app.use('/api/logs', logs_1.default);
 app.use('/api/contabilidades', contabilidades_1.default);
 app.use('/api/relatorios', relatorios_1.default);
 app.use('/api/dashboard', dashboard_1.default);
 app.use('/api/nfse', nfse_1.default);
+app.use('/api/metrics', metrics_1.default);
 app.use(error_handler_1.errorHandler);
 async function bootstrap() {
     try {

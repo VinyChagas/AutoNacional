@@ -102,11 +102,11 @@ async function validarCredencialNfse(documento, senha, opts = {}) {
             urlLower.includes('/home') ||
             urlLower.includes('/principal');
         // 3) Sucesso por conteúdo da página (SPA pode manter mesma URL)
+        // Não usar "Portal de Gestão" - aparece também na tela de login
         const seletoresSucesso = [
             'text=/dashboard/i',
             'text=/painel/i',
             'text=/emissor nacional/i',
-            'text=/portal de gestão/i',
             'text=/área do emissor/i',
             'text=/bem-vindo/i',
             '[href*="Dashboard"]',

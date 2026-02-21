@@ -8,6 +8,7 @@ import { seedDefaultSettings } from './db/init';
 import { ensureCertificadosBucket } from './config/supabase';
 import { errorHandler } from './middleware/error-handler';
 import settingsRouter from './routers/settings';
+import configRouter from './routers/config';
 import {
   empresasRouter,
   credenciaisRouter,
@@ -17,10 +18,12 @@ import {
 import execucoesRouter from './routers/execucoes';
 import validacoesRouter from './routers/validacoes';
 import execucaoRouter from './routers/execucao';
+import logsRouter from './routers/logs';
 import contabilidadesRouter from './routers/contabilidades';
 import relatoriosRouter from './routers/relatorios';
 import dashboardRouter from './routers/dashboard';
 import nfseRouter from './routers/nfse';
+import metricsRouter from './routers/metrics';
 import { setCertificateLoader } from './services/execution-service';
 import { carregarCertificadoPorCnpj } from './services/certificate-loader';
 
@@ -51,6 +54,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/settings', settingsRouter);
+app.use('/api/config', configRouter);
 app.use('/api/empresas', empresasRouter);
 app.use('/api/credenciais', credenciaisRouter);
 app.use('/api/certificados', certificadosRouter);
@@ -58,10 +62,12 @@ app.use('/api/imports', importsRouter);
 app.use('/api/execucoes', execucoesRouter);
 app.use('/api/validacoes', validacoesRouter);
 app.use('/api/execucao', execucaoRouter);
+app.use('/api/logs', logsRouter);
 app.use('/api/contabilidades', contabilidadesRouter);
 app.use('/api/relatorios', relatoriosRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/nfse', nfseRouter);
+app.use('/api/metrics', metricsRouter);
 
 app.use(errorHandler);
 

@@ -210,6 +210,8 @@ export class LayoutComponent implements OnInit, OnDestroy {
           this.currentRoute = 'execucao';
         } else if (url.includes('/contabilidades')) {
           this.currentRoute = 'contabilidades';
+        } else if (url.includes('/rentabilidade')) {
+          this.currentRoute = 'rentabilidade';
         } else if (url.includes('/configuracoes')) {
           this.currentRoute = 'configuracoes';
         }

@@ -3,13 +3,27 @@
  * Suporta SSE para atualizações em tempo real.
  */
 import { Response } from 'express';
+import PQueue from 'p-queue';
 import { getLogger } from '../infrastructure/logger';
 import * as empresasRepo from '../modules/certificados/empresas/empresas.repo';
 import * as credenciaisRepo from '../repositories/credenciais';
+import * as settingsRepo from '../repositories/settings';
 import { validarCredencialNfse } from '../automation/validar-credencial-nfse';
 import type { EmpresaListagemParams } from '../modules/certificados/empresas/empresas.repo';
 
 const logger = getLogger('validacoes-service');
+
+async function obterLimiteConcorrencia(): Promise<number> {
+  const config = await settingsRepo.obterConfiguracoes();
+  if (config) {
+    let limite = config.defaultConcurrentBrowsers ?? 3;
+    if (config.maxConcurrentBrowsers && limite > config.maxConcurrentBrowsers) {
+      limite = config.maxConcurrentBrowsers;
+    }
+    return limite;
+  }
+  return 3;
+}
 
 function normCnpj(cnpj: string): string {
   return cnpj.replace(/[.\/\-\s]/g, '').trim();
@@ -219,11 +233,12 @@ async function executarValidacao(
   const total = empresaIds.length;
   job.total = total;
 
-  for (let i = 0; i < total; i++) {
-    const j = jobs.get(jobId);
-    if (!j || j.status !== 'RUNNING') break;
+  const concurrency = await obterLimiteConcorrencia();
+  const queue = new PQueue({ concurrency });
 
-    const empresaId = empresaIds[i];
+  const processarEmpresa = async (empresaId: number): Promise<void> => {
+    const j = jobs.get(jobId);
+    if (!j || j.status !== 'RUNNING') return;
 
     try {
       const detalhes = await empresasRepo.obterPorIdComDetalhes(empresaId);
@@ -237,7 +252,8 @@ async function executarValidacao(
         });
         job.processed++;
         job.erros++;
-        continue;
+        job.progress = Math.round((job.processed / total) * 100);
+        return;
       }
 
       const cnpj = normCnpj(detalhes.empresa.cnpj);
@@ -353,7 +369,12 @@ async function executarValidacao(
 
     job.processed++;
     job.progress = Math.round((job.processed / total) * 100);
+  };
+
+  for (const empresaId of empresaIds) {
+    queue.add(() => processarEmpresa(empresaId));
   }
+  await queue.onIdle();
 
   const j = jobs.get(jobId);
   if (j?.status === 'RUNNING') {

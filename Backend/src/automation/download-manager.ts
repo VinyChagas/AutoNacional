@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { Page, Download, APIResponse } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
+import { resolveStoragePath } from '../utils/path-resolve';
 
 const logger = getLogger('download-manager');
 
@@ -21,8 +22,8 @@ let _downloadsBasePath: string | null = null;
  * Define o caminho base para downloads.
  */
 export function setDownloadsBasePath(basePath: string): void {
-  _downloadsBasePath = basePath;
-  logger.info({ path: basePath }, 'Caminho base de downloads configurado');
+  _downloadsBasePath = resolveStoragePath(basePath);
+  logger.info({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
 }
 
 /**
@@ -36,8 +37,26 @@ export function getDownloadBasePath(): string {
   return DOWNLOADS_TESTE_DIR;
 }
 
+/** Mês por extenso em português (índice 1 = janeiro). */
+const MESES_EXTENSO: readonly string[] = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+
+/**
+ * Formata o mês da execução para uso como nome de pasta.
+ * Usa o mês que está sendo executado (não a competência da nota).
+ * Ex: (2026, 1) → "janeiro-2026"
+ */
+export function formatarMesExecucaoParaPasta(ano: number, mes: number): string {
+  const mesIdx = Math.max(0, Math.min(mes - 1, 11));
+  const nomeMes = MESES_EXTENSO[mesIdx];
+  return `${nomeMes}-${ano}`;
+}
+
 /**
  * Formata a competência para uso como nome de pasta.
+ * @deprecated Use formatarMesExecucaoParaPasta para nova estrutura (contabilidade/mês-ano/empresa).
  * Ex: "10/2025" → "10-2025"
  */
 export function formatarCompetenciaParaPasta(competencia: string): string {
@@ -129,11 +148,14 @@ export async function gerarNomeArquivo(
 
 /**
  * Monta o caminho completo seguindo a hierarquia definida.
- * Estrutura: {base_path}/{competencia}/{empresa}/{tipo_nota}/
+ * Estrutura: {base_path}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo_nota}/
+ * - contabilidade: nome da contabilidade em execução
+ * - mes_extenso: mês da execução por extenso (ex: janeiro-2026), NÃO a competência da nota
  */
 export function montarCaminhoCompleto(
   basePath: string,
-  competencia: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
   empresa: string,
   tipoNota: string
 ): string {
@@ -142,27 +164,29 @@ export function montarCaminhoCompleto(
     throw new Error(`tipo_nota deve ser 'Emitidas' ou 'Recebidas'. Recebido: ${tipo}`);
   }
 
-  const compFolder = formatarCompetenciaParaPasta(competencia);
+  const contabFolder = sanitizarNomePasta(nomeContabilidade) || 'Contabilidade';
   const empresaFolder = sanitizarNomePasta(empresa);
-  const caminhoCompleto = path.join(basePath, compFolder, empresaFolder, tipo);
+  const caminhoCompleto = path.join(basePath, contabFolder, mesExecucaoExtenso, empresaFolder, tipo);
 
   return caminhoCompleto;
 }
 
 /**
  * Salva um download já interceptado no diretório correto.
+ * Estrutura: {base}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo}/
  */
 export async function salvarDownloadDireto(
   download: Download,
   basePath: string,
-  competencia: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
   empresa: string,
   tipoNota: string,
   nomeArquivoPrefixo?: string
 ): Promise<string> {
   const extensao = await detectarExtensaoArquivo(download);
   const nomeArquivo = await gerarNomeArquivo(download, extensao, nomeArquivoPrefixo);
-  const dirDestino = montarCaminhoCompleto(basePath, competencia, empresa, tipoNota);
+  const dirDestino = montarCaminhoCompleto(basePath, nomeContabilidade, mesExecucaoExtenso, empresa, tipoNota);
 
   await fs.mkdir(dirDestino, { recursive: true });
 
@@ -181,7 +205,8 @@ export async function baixarArquivoDireto(
   page: Page,
   seletorLink: string,
   basePath: string,
-  competencia: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
   empresa: string,
   tipoNota: string
 ): Promise<string> {
@@ -225,9 +250,9 @@ export async function baixarArquivoDireto(
     extensao = '.bin';
   }
 
-  const compFolder = formatarCompetenciaParaPasta(competencia);
+  const contabFolder = sanitizarNomePasta(nomeContabilidade) || 'Contabilidade';
   const empresaFolder = sanitizarNomePasta(empresa);
-  const pastaFinal = path.join(basePath, compFolder, empresaFolder, tipo);
+  const pastaFinal = path.join(basePath, contabFolder, mesExecucaoExtenso, empresaFolder, tipo);
   await fs.mkdir(pastaFinal, { recursive: true });
 
   const nomeArquivo = sanitizarNomeArquivo(`${nomeChave}${extensao}`);

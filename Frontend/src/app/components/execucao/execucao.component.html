@@ -1,445 +1,277 @@
-<div class="w-full py-8">
-  <div class="container mx-auto px-4 max-w-7xl">
-    <!-- Header -->
-    <div class="mb-10">
-      <h2 class="text-4xl md:text-5xl font-bold mb-4 text-[#0C0D0A]">
-        Execução de Processos
-      </h2>
-      <p class="text-lg md:text-xl text-[#1E2615] font-light">Acompanhe em tempo real a execução das automações NFSe</p>
-      <div class="mt-4 h-0.5 w-24 bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
-    </div>
+<div class="execucao-wrapper">
+  <div class="execucao-container">
+    <!-- 1) Header da página -->
+    <section class="page-header">
+      <h1 class="page-title">Execução de Processos</h1>
+      <p class="page-subtitle">Acompanhe em tempo real a execução das automações NFSe</p>
+    </section>
 
-    <!-- Controles Principais -->
-    <div class="glass-strong rounded-2xl p-8 mb-8 border">
-      <div class="flex flex-wrap gap-4 items-center justify-between">
-        <div class="flex items-center gap-4 flex-wrap">
-          <!-- Seleção de Contabilidade -->
-          <div class="flex items-center gap-2">
-            <label for="contabilidade" class="text-sm font-semibold text-[#1E2615] whitespace-nowrap">
-              Contabilidade:
-            </label>
-            <select
-              id="contabilidade"
-              [(ngModel)]="contabilidadeSelecionada"
-              [disabled]="carregandoContabilidades"
-              class="px-4 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] bg-white min-w-[250px] disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed"
-            >
-              <option [ngValue]="null">Selecione uma contabilidade</option>
-              @for (contabilidade of contabilidades; track contabilidade.id) {
-                <option [ngValue]="contabilidade.id">
-                  {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
-                </option>
-              }
-            </select>
-            @if (!contabilidadeSelecionada) {
-              <span class="text-xs text-[#1E2615]/70" title="Selecione uma contabilidade para carregar as empresas validadas">
-                Selecione uma contabilidade para carregar as empresas validadas
-              </span>
-            }
-          </div>
-
-          <button
-            (click)="carregarEmpresasValidadas()"
-            [disabled]="!podeCarregarEmpresas"
-            class="btn-futuristic px-8 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center relative overflow-hidden group"
+    <!-- 2) Card de Controles (Filtros + Ações) -->
+    <section class="controls-card">
+      <!-- Primeira linha: Contabilidade -->
+      <div class="controls-row controls-row-contab">
+        <div class="field-group">
+          <label for="contabilidade">Contabilidade</label>
+          <select
+            id="contabilidade"
+            [(ngModel)]="contabilidadeSelecionada"
+            (ngModelChange)="onContabilidadeChange($event)"
+            [disabled]="carregandoContabilidades"
+            class="input-select"
           >
-            @if (carregandoCertificados) {
-              <svg class="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Carregando...
-            } @else {
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-              </svg>
-              Carregar Empresas Validadas
+            <option [ngValue]="null">Selecione uma contabilidade</option>
+            @for (contabilidade of contabilidades; track contabilidade.id) {
+              <option [ngValue]="contabilidade.id">
+                {{ contabilidade.nome_contabilidade }} ({{ formatarCNPJ(contabilidade.cnpj) }})
+              </option>
             }
-          </button>
-
-          <button
-            (click)="iniciar()"
-            [disabled]="!podeIniciar"
-            class="btn-futuristic px-8 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
-            [title]="!podeIniciar && execucoes.length === 0 ? 'Carregue empresas validadas primeiro' : ''"
-          >
-            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            Iniciar
-          </button>
-
-          @if (execucoes.length > 0) {
-            <button
-              (click)="gerarResumo()"
-              [disabled]="carregandoResumo"
-              class="btn-futuristic px-6 py-4 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
-            >
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-              </svg>
-              Gerar Resumo
-            </button>
-
-            <button
-              (click)="limparExecucoes()"
-              class="px-6 py-4 glass border border-[#1E2615]/30 text-[#1E2615] rounded-xl hover:bg-[#1E2615]/10 transition-all font-semibold"
-            >
-              Limpar Execuções
-            </button>
-          }
+          </select>
         </div>
-
-        <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2">
-            <label for="dataInicio" class="text-sm font-semibold text-[#1E2615]">
-              Data Início:
-            </label>
-            <input
-              type="text"
-              id="dataInicio"
-              [(ngModel)]="dataInicio"
-              (input)="formatarData($event, 'inicio')"
-              placeholder="DD/MM/YYYY"
-              maxlength="10"
-              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] w-32"
-            />
-          </div>
-          
-          <div class="flex items-center gap-2">
-            <label for="dataFim" class="text-sm font-semibold text-[#1E2615]">
-              Data Fim:
-            </label>
-            <input
-              type="text"
-              id="dataFim"
-              [(ngModel)]="dataFim"
-              (input)="formatarData($event, 'fim')"
-              placeholder="DD/MM/YYYY"
-              maxlength="10"
-              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] w-32"
-            />
-          </div>
-          
-          <div class="flex items-center gap-2">
-            <label for="tipoNotas" class="text-sm font-semibold text-[#1E2615]">
-              Tipo:
-            </label>
-            <select
-              id="tipoNotas"
-              [(ngModel)]="tipoNotas"
-              class="px-3 py-2 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A]"
-            >
-              <option value="ambas">Ambas</option>
-              <option value="emitidas">Emitidas</option>
-              <option value="recebidas">Recebidas</option>
-            </select>
-          </div>
-
-          <div class="flex items-center">
-            <input
-              type="checkbox"
-              id="headless"
-              [(ngModel)]="headlessMode"
-              class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
-            />
-            <label for="headless" class="ml-3 text-sm font-semibold text-[#1E2615]">
-              Modo Headless
-            </label>
-          </div>
-        </div>
+        <span class="field-hint">Selecione uma contabilidade para carregar as empresas validadas</span>
       </div>
-    </div>
 
-    <!-- Barra de Progresso Geral -->
-    @if (execucoes.length > 0) {
-      <div class="mb-8">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-semibold text-[#1E2615]">
-            Execução geral: {{ empresasFinalizadas }} de {{ totalEmpresas }} empresas finalizadas ({{ percentualFinalizado }}%)
-          </span>
-        </div>
-        <div class="w-full bg-[#A9D9D4]/30 rounded-full h-4 overflow-hidden">
-          <div
-            class="h-4 rounded-full transition-all duration-500 bg-[#8BCB70]"
-            [style.width.%]="percentualFinalizado"
-          ></div>
-        </div>
-      </div>
-    }
-
-    <!-- Bloco de 30 CNPJs em Foco -->
-    @if (emFoco.length > 0) {
-      <div class="glass-strong rounded-2xl p-6 mb-8 border">
-        <h3 class="text-lg font-bold text-[#0C0D0A] mb-4">Empresas em Execução</h3>
-        <div class="grid grid-cols-6 gap-3">
-          @for (execucao of emFoco; track execucao.id) {
-            <div
-              class="px-3 py-2 rounded-lg border text-center text-sm font-semibold relative"
-              [ngClass]="{
-                'border-[#7EBFB3]/50 bg-[#A9D9D4]/20': execucao.status === 'fila',
-                'border-[#8BCB70]/50 bg-[#8BCB70]/20': execucao.status === 'executando'
-              }"
-              [title]="(execucao.nomeEmpresa || formatarCNPJ(execucao.cnpj)) + (execucao.tipoAutenticacao ? ' - ' + (execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais') : '')"
-            >
-              {{ formatarCNPJ(execucao.cnpj) }}
-              @if (execucao.tipoAutenticacao) {
-                <span class="absolute top-1 right-1 w-2 h-2 rounded-full"
-                  [ngClass]="{
-                    'bg-blue-500': execucao.tipoAutenticacao === 'certificado',
-                    'bg-green-500': execucao.tipoAutenticacao === 'credenciais'
-                  }"
-                  [title]="execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais'">
-                </span>
-              }
+      <!-- Cards de resumo por grupo (ao selecionar contabilidade) -->
+      @if (contabilidadeSelecionada) {
+        <div class="controls-row summary-cards-row">
+          @if (carregandoSummary) {
+            <div class="summary-cards-skeleton">
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+            </div>
+          } @else if (summary) {
+            <div class="summary-cards">
+              <button type="button" class="summary-card" (click)="abrirModalGrupo('total')">
+                <span class="summary-card-value">{{ summary.total_empresas }}</span>
+                <span class="summary-card-label">Total</span>
+              </button>
+              <button type="button" class="summary-card summary-card-aptas" (click)="abrirModalGrupo('aptas')">
+                <span class="summary-card-value">{{ summary.total_aptas }}</span>
+                <span class="summary-card-label">Aptas para execução</span>
+                @if (summary.total_atencao > 0) {
+                  <span class="summary-card-badge">inclui {{ summary.total_atencao }} em atenção</span>
+                }
+              </button>
+              <button type="button" class="summary-card summary-card-inoperante" (click)="abrirModalGrupo('inoperantes')">
+                <span class="summary-card-value">{{ summary.total_inoperante }}</span>
+                <span class="summary-card-label">Inoperantes</span>
+              </button>
+              <button type="button" class="summary-card summary-card-parcial" (click)="abrirModalGrupo('parciais')">
+                <span class="summary-card-value">{{ summary.total_parcial }}</span>
+                <span class="summary-card-label">Parciais</span>
+              </button>
             </div>
           }
         </div>
-        @if (aguardando > 0) {
-          <p class="text-sm text-[#1E2615] mt-4 text-center">
-            + {{ aguardando }} empresas aguardando na fila
-          </p>
+      }
+
+      <!-- Segunda linha: Ações -->
+      <div class="controls-row controls-row-actions">
+        <button
+          type="button"
+          class="btn-secondary"
+          [disabled]="!podeCarregarEmpresas"
+          (click)="carregarEmpresasValidadas()"
+        >
+          <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          Carregar Empresas Validadas
+        </button>
+        <button
+          type="button"
+          class="btn-primary"
+          [disabled]="!podeIniciar"
+          [title]="!podeIniciar && execucoes.length === 0 ? 'Carregue empresas validadas primeiro' : ''"
+          (click)="iniciar()"
+        >
+          <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          Iniciar
+        </button>
+        <button
+          type="button"
+          class="btn-secondary"
+          [disabled]="!podeSalvarLog"
+          (click)="salvarLog()"
+          [title]="podeSalvarLog ? 'Salvar log do lote no banco' : 'Aguarde o término das execuções'"
+        >
+          @if (isSavingLog) {
+            <svg class="btn-icon animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Salvando...
+          } @else if (logSalvo) {
+            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+            Log salvo
+          } @else {
+            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            Salvar Log
+          }
+        </button>
+        @if (executionRows.length > 0) {
+          <button type="button" class="btn-secondary" (click)="gerarResumo()" [disabled]="carregandoResumo">
+            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            Gerar Resumo
+          </button>
+          <button type="button" class="btn-ghost" (click)="limparExecucoes()">
+            Limpar Execuções
+          </button>
         }
       </div>
-    }
 
-    <!-- Duas Colunas: Fila / Executando -->
-    @if (execucoes.length > 0) {
-      <div class="grid grid-cols-2 gap-6 mb-8">
-        <!-- Coluna 1: Fila -->
-        <div class="glass-strong rounded-xl p-6 border">
-          <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
-            Fila ({{ colunaFila.length }})
-          </h3>
-          <div class="space-y-2 max-h-[400px] overflow-y-auto">
-            @for (execucao of colunaFila; track execucao.id) {
-              <div class="p-3 rounded-lg border border-[#7EBFB3]/30 bg-[#A9D9D4]/10">
-                <div class="flex items-center justify-between">
-                  <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
-                  @if (execucao.tipoAutenticacao) {
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
-                      [ngClass]="{
-                        'bg-blue-100 text-blue-800': execucao.tipoAutenticacao === 'certificado',
-                        'bg-green-100 text-green-800': execucao.tipoAutenticacao === 'credenciais'
-                      }">
-                      {{ execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais' }}
-                    </span>
-                  }
-                </div>
-                @if (execucao.nomeEmpresa) {
-                  <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
-                }
-              </div>
-            }
-            @if (colunaFila.length === 0) {
-              <p class="text-sm text-[#1E2615]/60 text-center py-4">Nenhuma empresa na fila</p>
-            }
-          </div>
+      <!-- Terceira linha: Filtros -->
+      <div class="controls-row controls-row-filters">
+        <div class="field-group">
+          <label for="dataInicio">Data Início</label>
+          <input
+            type="text"
+            id="dataInicio"
+            [(ngModel)]="dataInicio"
+            (input)="formatarData($event, 'inicio')"
+            placeholder="DD/MM/YYYY"
+            maxlength="10"
+            class="input-text"
+          />
         </div>
-
-        <!-- Coluna 2: Executando -->
-        <div class="glass-strong rounded-xl p-6 border">
-          <h3 class="text-xl font-bold text-[#0C0D0A] mb-4">
-            Executando ({{ colunaExecutando.length }})
-          </h3>
-          <div class="space-y-2 max-h-[400px] overflow-y-auto">
-            @for (execucao of colunaExecutando; track execucao.id) {
-              <div class="p-3 rounded-lg border border-[#8BCB70]/50 bg-[#8BCB70]/20">
-                <div class="flex items-center justify-between">
-                  <div class="font-semibold text-[#0C0D0A] text-sm">{{ formatarCNPJ(execucao.cnpj) }}</div>
-                  @if (execucao.tipoAutenticacao) {
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
-                      [ngClass]="{
-                        'bg-blue-100 text-blue-800': execucao.tipoAutenticacao === 'certificado',
-                        'bg-green-100 text-green-800': execucao.tipoAutenticacao === 'credenciais'
-                      }">
-                      {{ execucao.tipoAutenticacao === 'certificado' ? 'Certificado' : 'Credenciais' }}
-                    </span>
-                  }
-                </div>
-                @if (execucao.nomeEmpresa) {
-                  <div class="text-xs text-[#1E2615] mt-1">{{ execucao.nomeEmpresa }}</div>
-                }
-                <div class="text-xs text-[#8BCB70] mt-2 font-semibold">{{ execucao.progresso }}%</div>
-                <div class="w-full bg-[#A9D9D4]/30 rounded-full h-2 mt-2">
-                  <div
-                    class="h-2 rounded-full bg-[#8BCB70] transition-all"
-                    [style.width.%]="execucao.progresso"
-                  ></div>
-                </div>
-              </div>
-            }
-            @if (colunaExecutando.length === 0) {
-              <p class="text-sm text-[#1E2615]/60 text-center py-4">Nenhuma empresa executando</p>
-            }
-          </div>
+        <div class="field-group">
+          <label for="dataFim">Data Fim</label>
+          <input
+            type="text"
+            id="dataFim"
+            [(ngModel)]="dataFim"
+            (input)="formatarData($event, 'fim')"
+            placeholder="DD/MM/YYYY"
+            maxlength="10"
+            class="input-text"
+          />
+        </div>
+        <div class="field-group">
+          <label for="tipoNotas">Tipo</label>
+          <select id="tipoNotas" [(ngModel)]="tipoNotas" class="input-select">
+            <option value="ambas">Ambas</option>
+            <option value="emitidas">Emitidas</option>
+            <option value="recebidas">Recebidas</option>
+          </select>
+        </div>
+        <div class="field-group field-group-checkbox">
+          <label class="checkbox-wrap">
+            <input type="checkbox" id="headless" [(ngModel)]="headlessMode" class="checkbox-input" />
+            <span>Modo Headless</span>
+          </label>
         </div>
       </div>
+    </section>
 
-      <!-- Tabela de Finalizados com Filtros -->
-      @if (colunaFinalizado.length > 0) {
-        <div class="glass-strong rounded-2xl overflow-hidden border mb-6">
-          <!-- Barra de Busca e Filtros -->
-          <div class="glass-strong rounded-2xl p-4 mb-0 border-b">
-            <div class="flex flex-wrap gap-4 items-center">
-              <!-- Dropdown de Coluna -->
-              <div class="flex items-center">
-                <select
-                  [(ngModel)]="searchColumn"
-                  (change)="onSearchColumnChange()"
-                  class="px-3 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 font-semibold"
-                >
-                  @for (col of searchColumns; track col.value) {
-                    <option [value]="col.value">{{ col.label }}</option>
-                  }
-                </select>
+    <!-- Barra de Progresso Geral -->
+    @if (executionRows.length > 0) {
+      <section class="progress-section">
+        <div class="progress-header">
+          <span>Execução geral: {{ empresasFinalizadas }} de {{ totalEmpresas }} empresas finalizadas ({{ percentualFinalizado }}%)</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" [style.width.%]="percentualFinalizado"></div>
+        </div>
+      </section>
+    }
+
+    <!-- 3) Card de Execução/Estado - Lista unificada em linhas -->
+    <section class="execucao-card">
+      @if (executionRows.length === 0) {
+        <div class="empty-state">
+          <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <p class="empty-text">Nenhuma execução iniciada</p>
+          <p class="empty-subtext">Carregue as empresas validadas e inicie as execuções</p>
+        </div>
+      } @else {
+        <!-- Cards de resumo (aparecem acima da tabela após Iniciar) -->
+        @if (executionStarted) {
+          <section class="kpi-section kpi-section-inline">
+            <div class="kpi-grid">
+              <div class="kpi-card">
+                <span class="kpi-label">Empresas Carregadas</span>
+                <span class="kpi-value">{{ totalEmpresas }}</span>
               </div>
-
-              <!-- Campo de Busca -->
-              <div class="flex-1 min-w-[200px]">
-                <input
-                  type="text"
-                  [(ngModel)]="searchValue"
-                  (input)="onSearchChange()"
-                  placeholder="Digite para buscar..."
-                  class="w-full px-4 py-2 glass border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8BCB70] text-sm text-[#0C0D0A] bg-white/50 placeholder-[#1E2615]/50"
-                />
+              <div class="kpi-card">
+                <span class="kpi-label">Em Execução</span>
+                <span class="kpi-value">{{ totalEmExecucao }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Sucesso</span>
+                <span class="kpi-value">{{ empresasFinalizadas }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Erro</span>
+                <span class="kpi-value">{{ totalErro }}</span>
               </div>
             </div>
+          </section>
+        }
+        <div class="execucao-table-wrap">
+          <div class="table-filters execucao-filters">
+            <label class="checkbox-wrap">
+              <input type="checkbox" id="mostrarFalhas" [(ngModel)]="mostrarApenasFalhas" class="checkbox-input" />
+              <span>Mostrar apenas falhas</span>
+            </label>
           </div>
-
-          <!-- Cabeçalho da Tabela -->
-          <div class="p-4 bg-[#A9D9D4]/20 border-b">
-            <h3 class="text-xl font-bold text-[#0C0D0A]">Finalizado ({{ colunaFinalizado.length }})</h3>
-            @if (execucoesFinalizadasFiltradas.length !== colunaFinalizado.length) {
-              <p class="text-sm text-[#1E2615]/70 mt-1">Mostrando {{ execucoesFinalizadasFiltradas.length }} de {{ colunaFinalizado.length }} empresas</p>
-            }
-          </div>
-
-          <!-- Tabela -->
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-[#7EBFB3]/20">
-              <thead class="bg-[#A9D9D4]/20">
+          <div class="table-scroll">
+            <table class="data-table execucao-linhas-table">
+              <thead>
                 <tr>
-                  <th 
-                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                    [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('cnpj'),
-                      'text-[#0C0D0A]': !isColumnSorted('cnpj')
-                    }"
-                    (click)="toggleSort('cnpj')"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span>CNPJ</span>
-                      <span class="text-[10px]" [ngClass]="{
-                        'text-[#8BCB70]': isColumnSorted('cnpj'),
-                        'text-[#1E2615]/40': !isColumnSorted('cnpj')
-                      }">{{ getSortIcon('cnpj') }}</span>
-                    </div>
-                  </th>
-                  <th 
-                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                    [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('nomeEmpresa'),
-                      'text-[#0C0D0A]': !isColumnSorted('nomeEmpresa')
-                    }"
-                    (click)="toggleSort('nomeEmpresa')"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span>Nome da Empresa</span>
-                      <span class="text-[10px]" [ngClass]="{
-                        'text-[#8BCB70]': isColumnSorted('nomeEmpresa'),
-                        'text-[#1E2615]/40': !isColumnSorted('nomeEmpresa')
-                      }">{{ getSortIcon('nomeEmpresa') }}</span>
-                    </div>
-                  </th>
-                  <th 
-                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                    [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('resultadoFinal'),
-                      'text-[#0C0D0A]': !isColumnSorted('resultadoFinal')
-                    }"
-                    (click)="toggleSort('resultadoFinal')"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span>Status</span>
-                      <span class="text-[10px]" [ngClass]="{
-                        'text-[#8BCB70]': isColumnSorted('resultadoFinal'),
-                        'text-[#1E2615]/40': !isColumnSorted('resultadoFinal')
-                      }">{{ getSortIcon('resultadoFinal') }}</span>
-                    </div>
-                  </th>
-                  <th 
-                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                    [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('qtdNotasEmitidas'),
-                      'text-[#0C0D0A]': !isColumnSorted('qtdNotasEmitidas')
-                    }"
-                    (click)="toggleSort('qtdNotasEmitidas')"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span>Emitidas</span>
-                      <span class="text-[10px]" [ngClass]="{
-                        'text-[#8BCB70]': isColumnSorted('qtdNotasEmitidas'),
-                        'text-[#1E2615]/40': !isColumnSorted('qtdNotasEmitidas')
-                      }">{{ getSortIcon('qtdNotasEmitidas') }}</span>
-                    </div>
-                  </th>
-                  <th 
-                    class="px-6 py-4 text-left text-xs font-bold uppercase tracking-wider cursor-pointer hover:bg-[#A9D9D4]/30 transition-colors"
-                    [ngClass]="{
-                      'text-[#8BCB70]': isColumnSorted('qtdNotasRecebidas'),
-                      'text-[#0C0D0A]': !isColumnSorted('qtdNotasRecebidas')
-                    }"
-                    (click)="toggleSort('qtdNotasRecebidas')"
-                  >
-                    <div class="flex items-center gap-2">
-                      <span>Recebidas</span>
-                      <span class="text-[10px]" [ngClass]="{
-                        'text-[#8BCB70]': isColumnSorted('qtdNotasRecebidas'),
-                        'text-[#1E2615]/40': !isColumnSorted('qtdNotasRecebidas')
-                      }">{{ getSortIcon('qtdNotasRecebidas') }}</span>
-                    </div>
-                  </th>
+                  <th>CNPJ</th>
+                  <th>Razão Social</th>
+                  <th>Método</th>
+                  <th class="th-num">NF Emitidas</th>
+                  <th class="th-num">NF Recebidas</th>
+                  <th class="th-num">NF Canceladas</th>
+                  <th>Status</th>
+                  <th>Mensagem</th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-[#7EBFB3]/20">
-                @for (execucao of execucoesFinalizadasFiltradas; track execucao.id) {
-                  <tr class="hover:bg-[#A9D9D4]/10 transition-colors">
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#0C0D0A]">
-                      {{ formatarCNPJ(execucao.cnpj) }}
+              <tbody>
+                @for (row of executionRowsExibidas; track row.empresa_id) {
+                  <tr class="execucao-linha" [class.linha-erro]="row.status === 'ERRO'">
+                    <td class="td-mono">{{ formatarCNPJ(row.cnpj) }}</td>
+                    <td class="td-bold">{{ row.razao_social || '-' }}</td>
+                    <td>
+                      <span
+                        class="login-metodo-badge"
+                        [class.badge-certificado]="row.metodo === 'CERTIFICADO'"
+                        [class.badge-credencial]="row.metodo === 'CREDENCIAL'"
+                      >
+                        {{ row.metodo === 'CERTIFICADO' ? 'Certificado' : 'Credencial' }}
+                      </span>
                     </td>
-                    <td class="px-6 py-4 text-sm text-[#1E2615]">
-                      {{ execucao.nomeEmpresa || '-' }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap">
-                      @if (execucao.resultadoFinal) {
-                        @if (execucao.resultadoFinal === 'NFS_ENCONTRADAS') {
-                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-[#8BCB70]/30 text-[#0C0D0A] font-semibold border border-[#8BCB70]/50">
-                            Com notas (ambas)
-                          </span>
-                        } @else if (execucao.resultadoFinal === 'NOTAS_EMITIDAS') {
-                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-blue-200 text-blue-800 font-semibold border border-blue-300">
-                            Notas Emitidas
-                          </span>
-                        } @else if (execucao.resultadoFinal === 'NOTAS_RECEBIDAS') {
-                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-purple-200 text-purple-800 font-semibold border border-purple-300">
-                            Notas Recebidas
-                          </span>
-                        } @else {
-                          <span class="inline-block px-2 py-1 text-xs rounded-full bg-gray-200 text-gray-700 font-semibold border border-gray-300">
-                            Sem movimento
-                          </span>
-                        }
+                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO') && row.qtd_emitidas === 0 ? '—' : row.qtd_emitidas }}</td>
+                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO') && row.qtd_recebidas === 0 ? '—' : row.qtd_recebidas }}</td>
+                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO') && row.qtd_canceladas === 0 ? '—' : row.qtd_canceladas }}</td>
+                    <td>
+                      @if (row.status === 'EM_EXECUCAO') {
+                        <span class="status-badge status-executando">
+                          <span class="spinner-sm"></span>
+                          Executando
+                        </span>
+                      } @else if (row.status === 'FILA') {
+                        <span class="status-badge status-fila">Fila</span>
+                      } @else if (row.status === 'OK') {
+                        <span class="status-badge status-ok">OK</span>
+                      } @else if (row.status === 'ERRO') {
+                        <span class="status-badge status-erro">ERRO</span>
                       }
                     </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">
-                      {{ execucao.qtdNotasEmitidas !== undefined && execucao.qtdNotasEmitidas > 0 ? execucao.qtdNotasEmitidas : '-' }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-[#1E2615]">
-                      {{ execucao.qtdNotasRecebidas !== undefined && execucao.qtdNotasRecebidas > 0 ? execucao.qtdNotasRecebidas : '-' }}
-                    </td>
+                    <td class="td-mensagem">{{ row.status === 'OK' ? '' : (row.mensagem || '—') }}</td>
                   </tr>
                 }
               </tbody>
@@ -447,166 +279,136 @@
           </div>
         </div>
       }
-    } @else {
-      <div class="glass-strong rounded-2xl p-16 text-center border">
-        <div class="relative inline-block mb-6">
-          <div class="absolute inset-0 bg-[#8BCB70]/20 rounded-full blur-2xl"></div>
-          <svg class="w-20 h-20 mx-auto text-[#8BCB70] relative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-          </svg>
+    </section>
+
+    <!-- Modal de empresas por grupo (ao clicar em card) -->
+    @if (modalGrupoAberto) {
+      <div class="modal-overlay" (click)="fecharModalGrupo()">
+        <div class="modal-content modal-content-wide" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>{{ obterTituloModalGrupo() }}</h3>
+            <button type="button" class="modal-close" (click)="fecharModalGrupo()">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="modal-search" style="margin-bottom: 1rem;">
+              <input
+                type="text"
+                [(ngModel)]="buscaModalGrupo"
+                (input)="filtrarEmpresasModalGrupo()"
+                placeholder="Buscar por CNPJ ou razão social..."
+                class="input-text"
+              />
+            </div>
+            <div class="modal-list modal-list-empresas">
+              @for (emp of empresasGrupoModalFiltradas; track emp.cnpj) {
+                <div class="modal-list-item modal-list-item-readonly">
+                  <span class="modal-list-cnpj">{{ formatarCNPJ(emp.cnpj) }}</span>
+                  <span class="modal-list-nome">{{ emp.razao_social }}</span>
+                  <span
+                    class="status-geral-chip"
+                    [class.status-operacional]="emp.status_geral === 'OPERACIONAL'"
+                    [class.status-atencao]="emp.status_geral === 'ATENCAO'"
+                    [class.status-parcial]="emp.status_geral === 'PARCIAL'"
+                    [class.status-inoperante]="emp.status_geral === 'INOPERANTE'"
+                  >
+                    {{ emp.status_geral }}
+                  </span>
+                  @if (emp.login_metodo) {
+                    <span
+                      class="login-metodo-chip"
+                      [class.login-certificado]="emp.login_metodo === 'CERTIFICADO'"
+                      [class.login-credencial]="emp.login_metodo === 'CREDENCIAL'"
+                    >
+                      {{ emp.login_metodo }}
+                    </span>
+                  }
+                </div>
+              }
+              @if (empresasGrupoModalFiltradas.length === 0) {
+                <p class="modal-empty-text">Nenhuma empresa encontrada</p>
+              }
+            </div>
+          </div>
         </div>
-        <p class="text-[#0C0D0A] text-xl font-semibold mb-2">Nenhuma execução iniciada</p>
-        <p class="text-[#1E2615]/60 text-sm">Carregue as empresas validadas e inicie as execuções</p>
       </div>
     }
 
     <!-- Modal de Seleção de Certificados -->
     @if (modalSelecaoAberto) {
-      <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" (click)="fecharModalSelecao()">
-        <div class="glass-strong rounded-2xl p-8 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
-          <div class="flex items-center justify-between mb-6">
-            <h3 class="text-2xl font-bold text-[#0C0D0A]">Empresas validadas para execução</h3>
-            <button
-              (click)="fecharModalSelecao()"
-              class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors"
-            >
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-              </svg>
-            </button>
+      <div class="modal-overlay" (click)="fecharModalSelecao()">
+        <div class="modal-content" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Empresas validadas para execução</h3>
+            <button type="button" class="modal-close" (click)="fecharModalSelecao()">×</button>
           </div>
 
           @if (carregandoCertificadosDisponiveis) {
-            <div class="text-center py-8">
-              <svg class="animate-spin h-8 w-8 mx-auto text-[#8BCB70]" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              <p class="mt-4 text-[#1E2615]">Carregando empresas validadas...</p>
+            <div class="modal-loading">
+              <div class="spinner"></div>
+              <p>Carregando empresas validadas...</p>
             </div>
           } @else if (empresasUnificadas.length === 0) {
-            <div class="text-center py-8">
-              <svg class="w-16 h-16 mx-auto text-[#1E2615]/40 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-              </svg>
-              <p class="text-[#1E2615] text-lg font-semibold">Nenhuma empresa validada encontrada para esta contabilidade.</p>
+            <div class="modal-empty">
+              <p>Nenhuma empresa validada encontrada para esta contabilidade.</p>
             </div>
           } @else {
-            <div class="space-y-4 mb-6">
-              <!-- Campo de Busca -->
-              <div class="relative">
+            <div class="modal-body">
+              <div class="modal-search">
                 <input
                   type="text"
                   #buscaInput
                   [value]="buscaEmpresa"
                   (input)="buscaEmpresa = buscaInput.value; filtrarCertificados(); atualizarEstadoTodosSelecionados();"
                   placeholder="Buscar por nome da empresa ou CNPJ..."
-                  class="w-full px-4 py-3 pl-10 border border-[#7EBFB3] rounded-lg focus:ring-2 focus:ring-[#8BCB70] focus:border-[#8BCB70] text-[#0C0D0A] bg-white"
+                  class="input-text"
                 />
-                <svg class="absolute left-3 top-3.5 w-5 h-5 text-[#1E2615]/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                </svg>
-                @if (buscaEmpresa && buscaEmpresa.trim() !== '') {
-                  <button
-                    (click)="buscaEmpresa = ''; filtrarCertificados(); atualizarEstadoTodosSelecionados();"
-                    class="absolute right-3 top-3.5 text-[#1E2615]/50 hover:text-[#0C0D0A] transition-colors"
-                    title="Limpar busca"
-                  >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                  </button>
-                }
               </div>
-
-              <!-- Informação de resultados filtrados -->
               @if (buscaEmpresa && buscaEmpresa.trim() !== '' && empresasUnificadasFiltradas.length !== empresasUnificadas.length) {
-                <div class="text-sm text-[#1E2615]/70 px-2">
-                  Mostrando {{ empresasUnificadasFiltradas.length }} de {{ empresasUnificadas.length }} empresas
-                </div>
+                <p class="modal-hint">Mostrando {{ empresasUnificadasFiltradas.length }} de {{ empresasUnificadas.length }} empresas</p>
               }
-
-              <!-- Checkbox Selecionar Todos -->
-              <div class="flex items-center gap-3 p-3 rounded-lg border border-[#7EBFB3]/30 bg-[#A9D9D4]/10">
-                <input
-                  type="checkbox"
-                  id="selecionarTodos"
-                  [checked]="todosSelecionados"
-                  (change)="toggleSelecionarTodos()"
-                  class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
-                />
-                <label for="selecionarTodos" class="text-sm font-semibold text-[#0C0D0A] cursor-pointer">
-                  Selecionar todos os filtrados ({{ empresasSelecionadas.size }} de {{ empresasUnificadas.length }} selecionados no total)
+              <div class="modal-select-all">
+                <label class="checkbox-wrap">
+                  <input
+                    type="checkbox"
+                    [checked]="todosSelecionados"
+                    (change)="toggleSelecionarTodos()"
+                    class="checkbox-input"
+                  />
+                  <span>Selecionar todos os filtrados</span>
                 </label>
               </div>
-
-              <!-- Lista de Empresas Unificadas -->
-              <div class="max-h-[400px] overflow-y-auto space-y-2">
-                @if (empresasUnificadasFiltradas.length === 0) {
-                  <div class="text-center py-8 text-[#1E2615]/60">
-                    <p>Nenhuma empresa encontrada com o termo "{{ buscaEmpresa }}"</p>
+              <div class="modal-list">
+                @for (empresa of empresasUnificadasFiltradas; track empresa.id) {
+                  <div class="modal-list-item">
+                    <label class="checkbox-wrap">
+                      <input
+                        type="checkbox"
+                        [checked]="estaSelecionado(empresa.id)"
+                        (change)="toggleSelecionarEmpresa(empresa.id)"
+                        class="checkbox-input"
+                      />
+                      <span class="modal-list-cnpj">{{ formatarCNPJ(empresa.cnpj) }}</span>
+                      <span class="modal-list-nome">{{ empresa.nomeEmpresa }}</span>
+                      <span
+                        class="modal-list-tipo"
+                        [class.tipo-certificado]="empresa.tipo === 'certificado'"
+                        [class.tipo-credenciais]="empresa.tipo === 'empresa'"
+                      >
+                        {{ empresa.tipo === 'certificado' ? 'Certificado' : 'Credencial' }}
+                      </span>
+                    </label>
                   </div>
-                } @else {
-                  @for (empresa of empresasUnificadasFiltradas; track empresa.id) {
-                  <div class="flex items-center gap-3 p-3 rounded-lg border border-[#7EBFB3]/30 bg-white/50 hover:bg-[#A9D9D4]/20 transition-colors">
-                    <input
-                      type="checkbox"
-                      [id]="'emp-' + empresa.id"
-                      [checked]="estaSelecionado(empresa.id)"
-                      (change)="toggleSelecionarEmpresa(empresa.id)"
-                      class="w-5 h-5 text-[#8BCB70] bg-white border-[#7EBFB3] rounded focus:ring-[#8BCB70] focus:ring-2"
-                    />
-                    <div class="flex-1 grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span class="font-semibold text-[#0C0D0A]">CNPJ:</span>
-                        <span class="ml-2 text-[#1E2615]">{{ formatarCNPJ(empresa.cnpj) }}</span>
-                      </div>
-                      <div>
-                        <span class="font-semibold text-[#0C0D0A]">Empresa:</span>
-                        <span class="ml-2 text-[#1E2615]">{{ empresa.nomeEmpresa }}</span>
-                      </div>
-                      <div>
-                        <span class="font-semibold text-[#0C0D0A]">Tipo:</span>
-                        <span class="ml-2 text-[#1E2615]">
-                          @if (empresa.tipo === 'certificado') {
-                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
-                              Certificado
-                            </span>
-                            @if (empresa.dataVencimento) {
-                              <span class="ml-2 text-xs text-[#1E2615]">
-                                ({{ formatarDataVencimento(empresa.dataVencimento) }} - {{ calcularDiasAteVencimento(empresa.dataVencimento) }} dias)
-                              </span>
-                            }
-                          } @else {
-                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
-                              Credenciais
-                            </span>
-                          }
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  }
                 }
               </div>
             </div>
-
-            <!-- Rodapé do Modal -->
-            <div class="flex justify-end gap-4 pt-4 border-t border-[#7EBFB3]/30">
+            <div class="modal-footer">
+              <button type="button" class="btn-ghost" (click)="fecharModalSelecao()">Cancelar</button>
               <button
-                (click)="fecharModalSelecao()"
-                class="px-6 py-3 glass border border-[#1E2615]/30 text-[#1E2615] rounded-xl hover:bg-[#1E2615]/10 transition-all font-semibold"
-              >
-                Cancelar
-              </button>
-              <button
-                (click)="confirmarSelecaoCertificados()"
+                type="button"
+                class="btn-primary"
                 [disabled]="empresasSelecionadas.size === 0"
-                class="btn-futuristic px-6 py-3 rounded-xl disabled:bg-[#1E2615]/30 disabled:cursor-not-allowed flex items-center font-bold"
+                (click)="confirmarSelecaoCertificados()"
               >
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                </svg>
                 Carregar para execução ({{ empresasSelecionadas.size }})
               </button>
             </div>
@@ -617,52 +419,34 @@
 
     <!-- Modal de Resumo -->
     @if (mostrandoResumo) {
-      <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" (click)="fecharResumo()">
-        <div class="glass-strong rounded-2xl p-8 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto" (click)="$event.stopPropagation()">
-          <div class="flex items-center justify-between mb-6">
-            <h3 class="text-2xl font-bold text-[#0C0D0A]">Resumo das Execuções</h3>
-            <button
-              (click)="fecharResumo()"
-              class="text-[#1E2615] hover:text-[#0C0D0A] transition-colors"
-            >
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-              </svg>
-            </button>
+      <div class="modal-overlay" (click)="fecharResumo()">
+        <div class="modal-content" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Resumo das Execuções</h3>
+            <button type="button" class="modal-close" (click)="fecharResumo()">×</button>
           </div>
-
           @if (carregandoResumo) {
-            <div class="text-center py-8">
-              <svg class="animate-spin h-8 w-8 mx-auto text-[#8BCB70]" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
+            <div class="modal-loading">
+              <div class="spinner"></div>
             </div>
           } @else if (resumo) {
-            <div class="space-y-6">
-              <div class="grid grid-cols-3 gap-4">
-                <div class="glass rounded-xl p-4 border text-center">
-                  <div class="text-sm text-[#1E2615] font-semibold mb-1">Total</div>
-                  <div class="text-3xl font-bold text-[#8BCB70]">{{ resumo.total_empresas }}</div>
+            <div class="modal-body">
+              <div class="resumo-grid">
+                <div class="resumo-item">
+                  <span class="resumo-label">Total</span>
+                  <span class="resumo-value">{{ resumo.total_empresas }}</span>
                 </div>
-                <div class="glass rounded-xl p-4 border text-center">
-                  <div class="text-sm text-[#1E2615] font-semibold mb-1">Com Movimento</div>
-                  <div class="text-3xl font-bold text-[#8BCB70]">{{ resumo.com_movimento }}</div>
+                <div class="resumo-item">
+                  <span class="resumo-label">Com Movimento</span>
+                  <span class="resumo-value">{{ resumo.com_movimento }}</span>
                 </div>
-                <div class="glass rounded-xl p-4 border text-center">
-                  <div class="text-sm text-[#1E2615] font-semibold mb-1">Sem Movimento</div>
-                  <div class="text-3xl font-bold text-gray-600">{{ resumo.sem_movimento }}</div>
+                <div class="resumo-item">
+                  <span class="resumo-label">Sem Movimento</span>
+                  <span class="resumo-value">{{ resumo.sem_movimento }}</span>
                 </div>
               </div>
-
-              <div class="flex justify-end gap-4">
-                <button
-                  (click)="baixarResumoCSV()"
-                  class="btn-futuristic px-6 py-3 rounded-xl flex items-center font-bold"
-                >
-                  <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                  </svg>
+              <div class="modal-footer">
+                <button type="button" class="btn-primary" (click)="baixarResumoCSV()">
                   Baixar CSV
                 </button>
               </div>

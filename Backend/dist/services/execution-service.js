@@ -54,7 +54,39 @@ const settingsRepo = __importStar(require("../repositories/settings"));
 const playwright_nfse_1 = require("../automation/playwright-nfse");
 const processar_notas_competencia_1 = require("../automation/processar-notas-competencia");
 const processar_notas_competencia_2 = require("../automation/processar-notas-competencia");
+const download_manager_1 = require("../automation/download-manager");
+const login_credencial_nfse_1 = require("../automation/login-credencial-nfse");
+const credenciaisRepo = __importStar(require("../repositories/credenciais"));
+const execution_events_service_1 = require("./execution-events.service");
+const automation_metrics_service_1 = require("./automation-metrics.service");
 const logger = (0, logger_1.getLogger)('execution-service');
+/** DD/MM/YYYY -> YYYY-MM */
+function competenciaFromDataInicio(dataInicio) {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dataInicio);
+    if (m)
+        return `${m[3]}-${m[2]}`;
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+/** Resolve viewport a partir das settings */
+function resolveViewport(config) {
+    if (config?.viewportPreset === 'CUSTOM' &&
+        config?.viewportWidth &&
+        config?.viewportHeight) {
+        return { width: config.viewportWidth, height: config.viewportHeight };
+    }
+    switch (config?.viewportPreset) {
+        case 'DESKTOP_1366x768':
+            return { width: 1366, height: 768 };
+        case 'HD':
+            return { width: 1280, height: 720 };
+        case 'QHD':
+            return { width: 2560, height: 1440 };
+        case 'FULLHD':
+        default:
+            return { width: 1920, height: 1080 };
+    }
+}
 const RESULTADOS = [
     'SEM_MOVIMENTO',
     'NOTAS_EMITIDAS',
@@ -104,8 +136,10 @@ async function obterNomeEmpresa(cnpj) {
 }
 /**
  * Adiciona uma execução à fila.
+ * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
+ * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
-async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, headless, certificado) {
+async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, headless, certificado, batchId, tipoAutenticacao) {
     const config = await settingsRepo.obterConfiguracoes();
     const headlessFinal = headless ?? config?.headless ?? config_1.PLAYWRIGHT_HEADLESS;
     const exec = await execucoesRepo.criar({
@@ -115,6 +149,7 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
         periodoFim: dataFim,
         tipo: tipo || 'ambas',
     });
+    const tipoAuth = tipoAutenticacao === 'credenciais' ? 'credenciais' : 'certificado';
     execucoesAtivas.set(String(empresaId), {
         empresaId,
         cnpj,
@@ -123,6 +158,7 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
         tipo: tipo || 'ambas',
         headless: headlessFinal,
         execucaoDbId: exec.id,
+        batchId,
         status: 'pendente',
         etapaAtual: 'inicio',
         progresso: 0,
@@ -130,10 +166,15 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
         mensagem: 'Aguardando execução...',
         qtdNotasEmitidas: 0,
         qtdNotasRecebidas: 0,
+        qtdNotasCanceladas: 0,
         resultadoFinal: null,
+        tipoAutenticacao: tipoAuth,
     });
+    // Atualiza concorrência da fila com valor das configurações (Máx. e Padrão de navegadores)
+    const limite = await obterLimiteConcorrencia();
+    fila.concurrency = limite;
     fila.add(async () => {
-        await executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo || 'ambas', headlessFinal, exec.id, certificado);
+        await executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo || 'ambas', headlessFinal, exec.id, certificado, tipoAuth);
     });
     return exec.id;
 }
@@ -147,6 +188,7 @@ function obterStatus(empresaId) {
     return {
         empresa_id: String(info.empresaId),
         cnpj: info.cnpj,
+        batch_id: info.batchId,
         status: info.status,
         etapa_atual: info.etapaAtual,
         progresso: info.progresso,
@@ -154,7 +196,9 @@ function obterStatus(empresaId) {
         mensagem: info.mensagem,
         qtd_notas_emitidas: info.qtdNotasEmitidas,
         qtd_notas_recebidas: info.qtdNotasRecebidas,
+        qtd_notas_canceladas: info.qtdNotasCanceladas,
         resultado_final: info.resultadoFinal,
+        tipo_autenticacao: info.tipoAutenticacao,
     };
 }
 const execucoesAtivas = new Map();
@@ -162,58 +206,156 @@ const fila = new p_queue_1.default({
     concurrency: 3,
     autoStart: true,
 });
-async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo, headless, execucaoDbId, certificadoFornecido) {
+async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo, headless, execucaoDbId, certificadoFornecido, tipoAutenticacao = 'certificado') {
     const key = String(empresaId);
     const info = execucoesAtivas.get(key);
     if (!info)
         return;
+    const startedAt = new Date();
+    info.startedAt = startedAt;
+    const competencia = competenciaFromDataInicio(dataInicio);
+    const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
+    const contabilidadeId = empresaComContab?.contabilidadeId ?? null;
     const adicionarLog = (msg) => {
         info.logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
         logger.info(`Empresa ${empresaId}: ${msg}`);
     };
+    const batchId = info.batchId;
+    const razaoSocial = await obterNomeEmpresa(cnpj);
+    const metodo = tipoAutenticacao === 'credenciais' ? 'CREDENCIAL' : 'CERTIFICADO';
+    const persistirMetrica = (status, erroResumo) => {
+        if (!batchId)
+            return;
+        const finishedAt = new Date();
+        const tempoSeg = Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000);
+        (0, automation_metrics_service_1.persistirExecution)({
+            batchId,
+            empresaId,
+            empresaCnpj: cnpj,
+            contabilidadeId,
+            competencia,
+            status,
+            loginMetodo: metodo,
+            qtdEmitidas: info.qtdNotasEmitidas || 0,
+            qtdRecebidas: info.qtdNotasRecebidas || 0,
+            qtdCanceladas: info.qtdNotasCanceladas || 0,
+            tempoExecucaoSegundos: tempoSeg,
+            erroResumo: erroResumo || null,
+            startedAt,
+            finishedAt,
+        }).catch(() => { });
+    };
+    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+        type: 'execution:started',
+        empresa_id: key,
+        cnpj,
+        razao_social: razaoSocial,
+        metodo,
+    });
+    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+        type: 'execution:stage',
+        empresa_id: key,
+        stage: 'abrir_navegador',
+        message: 'Abrindo navegador…',
+    });
     info.status = 'em_execucao';
     info.etapaAtual = 'autenticacao';
     info.progresso = 10;
-    info.mensagem = 'Iniciando autenticação...';
+    info.mensagem = 'Abrindo navegador…';
     await execucoesRepo.atualizar(execucaoDbId, {
         status: 'em_execucao',
         etapaAtual: 'autenticacao',
         dataInicio: new Date(),
     });
-    let certificado;
-    if (certificadoFornecido) {
-        certificado = certificadoFornecido;
-    }
-    else if (certificateLoader) {
-        certificado = await certificateLoader(cnpj);
-    }
-    else {
-        const err = 'CertificateService não configurado. Execute a Etapa 5.2 da migração.';
-        adicionarLog(`ERRO: ${err}`);
-        info.status = 'falhou';
-        info.mensagem = err;
-        await execucoesRepo.atualizar(execucaoDbId, {
-            status: 'falhou',
-            mensagemErro: err,
-            dataFim: new Date(),
+    let resultadoAuth;
+    if (tipoAutenticacao === 'credenciais') {
+        const credencial = await credenciaisRepo.obterPrimeiraPorEmpresa(empresaId);
+        if (!credencial) {
+            const err = `Nenhuma credencial encontrada para a empresa (CNPJ ${cnpj})`;
+            adicionarLog(`ERRO: ${err}`);
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:finished',
+                empresa_id: key,
+                status: 'ERRO',
+                message: err,
+            });
+            info.status = 'falhou';
+            info.mensagem = err;
+            await execucoesRepo.atualizar(execucaoDbId, {
+                status: 'falhou',
+                mensagemErro: err,
+                dataFim: new Date(),
+            });
+            persistirMetrica('ERRO', err.length > 200 ? err.slice(0, 197) + '...' : err);
+            execucoesAtivas.delete(key);
+            return;
+        }
+        const senha = credenciaisRepo.descriptografarSenha(credencial);
+        const documento = credencial.usuario || cnpj;
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:stage',
+            empresa_id: key,
+            stage: 'login',
+            message: 'Fazendo login…',
         });
-        execucoesAtivas.delete(key);
-        return;
-    }
-    try {
+        info.mensagem = 'Fazendo login…';
+        adicionarLog('Chamando autenticação via credencial...');
         const config = await settingsRepo.obterConfiguracoes();
         const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-        const viewport = config?.viewportPreset === 'CUSTOM' && config?.viewportWidth && config?.viewportHeight
-            ? { width: config.viewportWidth, height: config.viewportHeight }
-            : config?.viewportPreset === 'HD'
-                ? { width: 1280, height: 720 }
-                : { width: 1920, height: 1080 };
-        adicionarLog('Chamando autenticação via certificado...');
-        const resultadoAuth = await (0, playwright_nfse_1.abrirDashboardNfse)(certificado, {
+        const viewport = resolveViewport(config);
+        resultadoAuth = await (0, login_credencial_nfse_1.abrirDashboardNfseComCredencial)(documento, senha, {
             headless,
             timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
             viewport,
         });
+    }
+    else {
+        let certificado;
+        if (certificadoFornecido) {
+            certificado = certificadoFornecido;
+        }
+        else if (certificateLoader) {
+            certificado = await certificateLoader(cnpj);
+        }
+        else {
+            const err = 'CertificateService não configurado. Execute a Etapa 5.2 da migração.';
+            adicionarLog(`ERRO: ${err}`);
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:finished',
+                empresa_id: key,
+                status: 'ERRO',
+                message: err,
+            });
+            info.status = 'falhou';
+            info.mensagem = err;
+            await execucoesRepo.atualizar(execucaoDbId, {
+                status: 'falhou',
+                mensagemErro: err,
+                dataFim: new Date(),
+            });
+            persistirMetrica('ERRO', err.length > 200 ? err.slice(0, 197) + '...' : err);
+            execucoesAtivas.delete(key);
+            return;
+        }
+        const config = await settingsRepo.obterConfiguracoes();
+        const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
+        const viewport = resolveViewport(config);
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:stage',
+            empresa_id: key,
+            stage: 'login',
+            message: 'Fazendo login…',
+        });
+        info.mensagem = 'Fazendo login…';
+        adicionarLog('Chamando autenticação via certificado...');
+        resultadoAuth = await (0, playwright_nfse_1.abrirDashboardNfse)(certificado, {
+            headless,
+            timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
+            viewport,
+        });
+    }
+    try {
+        const config = await settingsRepo.obterConfiguracoes();
         if (!resultadoAuth.sucesso) {
             throw new playwright_nfse_1.NFSeAutenticacaoError(resultadoAuth.mensagem || 'Falha na autenticação');
         }
@@ -225,7 +367,13 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
         for (const logMsg of resultadoAuth.logs)
             adicionarLog(logMsg);
         info.progresso = 30;
-        info.mensagem = 'Autenticação concluída';
+        info.mensagem = 'Autenticação concluída.';
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:stage',
+            empresa_id: key,
+            stage: 'auth_ok',
+            message: 'Autenticação concluída.',
+        });
         if (config?.downloadsBasePath) {
             (0, processar_notas_competencia_1.setDownloadsBasePath)(config.downloadsBasePath);
         }
@@ -233,29 +381,108 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
             (0, processar_notas_competencia_1.setMinActionDelayMs)(config.minActionDelayMs);
         }
         const nomeEmpresa = await obterNomeEmpresa(cnpj);
-        const competencia = `${dataInicio.slice(3, 5)}/${dataInicio.slice(6, 10)}`;
+        const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
+        const nomeContabilidade = empresaComContab?.contabilidade?.nomeContabilidade?.trim() ?? 'Sem contabilidade';
+        const agora = new Date();
+        const mesExecucaoExtenso = (0, download_manager_1.formatarMesExecucaoParaPasta)(agora.getFullYear(), agora.getMonth() + 1);
         info.etapaAtual = 'processamento_emitidas';
         info.progresso = 40;
         adicionarLog(`Processando notas (${tipo})...`);
         if (tipo === 'ambas' || tipo === 'emitidas') {
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'acessar_emitidas',
+                message: 'Acessando notas emitidas…',
+            });
+            info.mensagem = 'Acessando notas emitidas…';
             const menuEmitidas = resultadoAuth.page.locator('li:nth-of-type(3) img').nth(0);
             await menuEmitidas.click();
             await resultadoAuth.page.waitForURL('**/Notas/Emitidas', { timeout: 15000 });
             await resultadoAuth.page.waitForLoadState('networkidle', { timeout: 15000 });
             await resultadoAuth.page.waitForTimeout(1000);
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'pesquisar_emitidas',
+                message: 'Pesquisando notas emitidas…',
+            });
+            info.mensagem = 'Pesquisando notas emitidas…';
             await (0, processar_notas_competencia_2.preencherDatasEFiltrar)(resultadoAuth.page, dataInicio, dataFim);
-            const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(resultadoAuth.page, competencia, nomeEmpresa);
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'baixar_emitidas',
+                message: 'Baixando notas emitidas…',
+            });
+            info.mensagem = 'Baixando notas emitidas…';
+            const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(resultadoAuth.page, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
             info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
+            info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
+            if (resEmitidas.sem_registros) {
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'nenhuma_emitida',
+                    message: 'Nenhuma nota emitida encontrada — avançando…',
+                });
+                info.mensagem = 'Nenhuma nota emitida encontrada — avançando…';
+            }
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:counts',
+                empresa_id: key,
+                qtd_emitidas: info.qtdNotasEmitidas,
+                qtd_recebidas: info.qtdNotasRecebidas,
+                qtd_canceladas: info.qtdNotasCanceladas,
+            });
         }
         if (tipo === 'ambas' || tipo === 'recebidas') {
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'acessar_recebidas',
+                message: 'Acessando notas recebidas…',
+            });
+            info.mensagem = 'Acessando notas recebidas…';
             const menuRecebidas = resultadoAuth.page.locator('li:nth-of-type(4) img').nth(0);
             await menuRecebidas.click();
             await resultadoAuth.page.waitForURL('**/Notas/Recebidas', { timeout: 15000 });
             await resultadoAuth.page.waitForLoadState('networkidle', { timeout: 15000 });
             await resultadoAuth.page.waitForTimeout(1000);
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'pesquisar_recebidas',
+                message: 'Pesquisando notas recebidas…',
+            });
+            info.mensagem = 'Pesquisando notas recebidas…';
             await (0, processar_notas_competencia_2.preencherDatasEFiltrar)(resultadoAuth.page, dataInicio, dataFim);
-            const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(resultadoAuth.page, competencia, nomeEmpresa);
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'baixar_recebidas',
+                message: 'Baixando notas recebidas…',
+            });
+            info.mensagem = 'Baixando notas recebidas…';
+            const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(resultadoAuth.page, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
             info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
+            info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
+            if (resRecebidas.sem_registros) {
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'nenhuma_recebida',
+                    message: 'Nenhuma nota recebida encontrada…',
+                });
+                info.mensagem = 'Nenhuma nota recebida encontrada…';
+            }
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:counts',
+                empresa_id: key,
+                qtd_emitidas: info.qtdNotasEmitidas,
+                qtd_recebidas: info.qtdNotasRecebidas,
+                qtd_canceladas: info.qtdNotasCanceladas,
+            });
         }
         let resultadoFinal = 'SEM_MOVIMENTO';
         if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
@@ -267,11 +494,26 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
         else if (info.qtdNotasRecebidas > 0) {
             resultadoFinal = 'NOTAS_RECEBIDAS';
         }
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:stage',
+            empresa_id: key,
+            stage: 'finalizando',
+            message: 'Finalizando…',
+        });
+        info.mensagem = 'Finalizando…';
         info.status = 'concluido';
         info.progresso = 100;
         info.mensagem = 'Execução concluída com sucesso';
         info.resultadoFinal = resultadoFinal;
         adicionarLog('Execução concluída com sucesso');
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:finished',
+            empresa_id: key,
+            status: 'OK',
+            qtd_emitidas: info.qtdNotasEmitidas,
+            qtd_recebidas: info.qtdNotasRecebidas,
+            qtd_canceladas: info.qtdNotasCanceladas,
+        });
         await execucoesRepo.atualizar(execucaoDbId, {
             status: 'concluido',
             etapaAtual: 'finalizacao',
@@ -287,6 +529,13 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
         const err = e;
         const msg = err.message || 'Erro desconhecido';
         adicionarLog(`ERRO: ${msg}`);
+        const msgResumo = msg.length > 80 ? msg.slice(0, 77) + '...' : msg;
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:finished',
+            empresa_id: key,
+            status: 'ERRO',
+            message: msgResumo,
+        });
         info.status = 'falhou';
         info.mensagem = msg;
         await execucoesRepo.atualizar(execucaoDbId, {
@@ -305,6 +554,8 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
         catch {
             /* ignore */
         }
+        const statusFinal = info.status === 'concluido' ? 'OK' : 'ERRO';
+        persistirMetrica(statusFinal, statusFinal === 'ERRO' ? (info.mensagem?.slice(0, 200) ?? undefined) : undefined);
         execucoesAtivas.delete(key);
     }
 }

@@ -4,6 +4,7 @@
  * Gerencia fila de execuções e coordena: playwright_nfse → processar_notas → salvamento.
  */
 import type { CertificadoEmMemoria } from '../automation/playwright-nfse';
+type TipoAutenticacao = 'certificado' | 'credenciais';
 type CertificateLoader = (cnpj: string) => Promise<CertificadoEmMemoria>;
 /**
  * Define a função para carregar certificado (será usada quando CertificateService estiver pronto - Fase 5).
@@ -16,8 +17,10 @@ export declare function setCertificateLoader(loader: CertificateLoader): void;
 export declare function obterCertificadoPorCnpj(cnpj: string): Promise<CertificadoEmMemoria>;
 /**
  * Adiciona uma execução à fila.
+ * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
+ * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
-export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria): Promise<number>;
+export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria, batchId?: string, tipoAutenticacao?: TipoAutenticacao): Promise<number>;
 /**
  * Obtém o status de uma execução em andamento.
  */

@@ -41,6 +41,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setDownloadsBasePath = setDownloadsBasePath;
 exports.getDownloadBasePath = getDownloadBasePath;
+exports.formatarMesExecucaoParaPasta = formatarMesExecucaoParaPasta;
 exports.formatarCompetenciaParaPasta = formatarCompetenciaParaPasta;
 exports.sanitizarNomeArquivo = sanitizarNomeArquivo;
 exports.sanitizarNomePasta = sanitizarNomePasta;
@@ -52,6 +53,7 @@ exports.baixarArquivoDireto = baixarArquivoDireto;
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs/promises"));
 const logger_1 = require("../infrastructure/logger");
+const path_resolve_1 = require("../utils/path-resolve");
 const logger = (0, logger_1.getLogger)('download-manager');
 const BACKEND_DIR = path.resolve(__dirname, '../..');
 const DOWNLOADS_TESTE_DIR = path.join(BACKEND_DIR, 'downloads_teste');
@@ -60,8 +62,8 @@ let _downloadsBasePath = null;
  * Define o caminho base para downloads.
  */
 function setDownloadsBasePath(basePath) {
-    _downloadsBasePath = basePath;
-    logger.info({ path: basePath }, 'Caminho base de downloads configurado');
+    _downloadsBasePath = (0, path_resolve_1.resolveStoragePath)(basePath);
+    logger.info({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
 }
 /**
  * Obtém o caminho base para downloads.
@@ -73,8 +75,24 @@ function getDownloadBasePath() {
     }
     return DOWNLOADS_TESTE_DIR;
 }
+/** Mês por extenso em português (índice 1 = janeiro). */
+const MESES_EXTENSO = [
+    'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+/**
+ * Formata o mês da execução para uso como nome de pasta.
+ * Usa o mês que está sendo executado (não a competência da nota).
+ * Ex: (2026, 1) → "janeiro-2026"
+ */
+function formatarMesExecucaoParaPasta(ano, mes) {
+    const mesIdx = Math.max(0, Math.min(mes - 1, 11));
+    const nomeMes = MESES_EXTENSO[mesIdx];
+    return `${nomeMes}-${ano}`;
+}
 /**
  * Formata a competência para uso como nome de pasta.
+ * @deprecated Use formatarMesExecucaoParaPasta para nova estrutura (contabilidade/mês-ano/empresa).
  * Ex: "10/2025" → "10-2025"
  */
 function formatarCompetenciaParaPasta(competencia) {
@@ -154,25 +172,28 @@ async function gerarNomeArquivo(download, extensao, prefixo) {
 }
 /**
  * Monta o caminho completo seguindo a hierarquia definida.
- * Estrutura: {base_path}/{competencia}/{empresa}/{tipo_nota}/
+ * Estrutura: {base_path}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo_nota}/
+ * - contabilidade: nome da contabilidade em execução
+ * - mes_extenso: mês da execução por extenso (ex: janeiro-2026), NÃO a competência da nota
  */
-function montarCaminhoCompleto(basePath, competencia, empresa, tipoNota) {
+function montarCaminhoCompleto(basePath, nomeContabilidade, mesExecucaoExtenso, empresa, tipoNota) {
     const tipo = tipoNota.trim();
     if (tipo !== 'Emitidas' && tipo !== 'Recebidas') {
         throw new Error(`tipo_nota deve ser 'Emitidas' ou 'Recebidas'. Recebido: ${tipo}`);
     }
-    const compFolder = formatarCompetenciaParaPasta(competencia);
+    const contabFolder = sanitizarNomePasta(nomeContabilidade) || 'Contabilidade';
     const empresaFolder = sanitizarNomePasta(empresa);
-    const caminhoCompleto = path.join(basePath, compFolder, empresaFolder, tipo);
+    const caminhoCompleto = path.join(basePath, contabFolder, mesExecucaoExtenso, empresaFolder, tipo);
     return caminhoCompleto;
 }
 /**
  * Salva um download já interceptado no diretório correto.
+ * Estrutura: {base}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo}/
  */
-async function salvarDownloadDireto(download, basePath, competencia, empresa, tipoNota, nomeArquivoPrefixo) {
+async function salvarDownloadDireto(download, basePath, nomeContabilidade, mesExecucaoExtenso, empresa, tipoNota, nomeArquivoPrefixo) {
     const extensao = await detectarExtensaoArquivo(download);
     const nomeArquivo = await gerarNomeArquivo(download, extensao, nomeArquivoPrefixo);
-    const dirDestino = montarCaminhoCompleto(basePath, competencia, empresa, tipoNota);
+    const dirDestino = montarCaminhoCompleto(basePath, nomeContabilidade, mesExecucaoExtenso, empresa, tipoNota);
     await fs.mkdir(dirDestino, { recursive: true });
     const caminhoFinal = path.join(dirDestino, nomeArquivo);
     await download.saveAs(caminhoFinal);
@@ -183,7 +204,7 @@ async function salvarDownloadDireto(download, basePath, competencia, empresa, ti
  * Baixa um arquivo diretamente via requisição HTTP usando a sessão autenticada.
  * Estratégia RECOMENDADA para downloads.
  */
-async function baixarArquivoDireto(page, seletorLink, basePath, competencia, empresa, tipoNota) {
+async function baixarArquivoDireto(page, seletorLink, basePath, nomeContabilidade, mesExecucaoExtenso, empresa, tipoNota) {
     const tipo = tipoNota.trim();
     if (tipo !== 'Emitidas' && tipo !== 'Recebidas') {
         throw new Error(`tipo_nota deve ser 'Emitidas' ou 'Recebidas'. Recebido: ${tipo}`);
@@ -221,9 +242,9 @@ async function baixarArquivoDireto(page, seletorLink, basePath, competencia, emp
     else {
         extensao = '.bin';
     }
-    const compFolder = formatarCompetenciaParaPasta(competencia);
+    const contabFolder = sanitizarNomePasta(nomeContabilidade) || 'Contabilidade';
     const empresaFolder = sanitizarNomePasta(empresa);
-    const pastaFinal = path.join(basePath, compFolder, empresaFolder, tipo);
+    const pastaFinal = path.join(basePath, contabFolder, mesExecucaoExtenso, empresaFolder, tipo);
     await fs.mkdir(pastaFinal, { recursive: true });
     const nomeArquivo = sanitizarNomeArquivo(`${nomeChave}${extensao}`);
     const caminhoFinal = path.join(pastaFinal, nomeArquivo);

@@ -32,17 +32,33 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registrarClienteSSE = registrarClienteSSE;
 exports.iniciarValidacao = iniciarValidacao;
 exports.obterJob = obterJob;
 exports.cancelarJob = cancelarJob;
 exports.iniciarValidacaoLegacy = iniciarValidacaoLegacy;
+const p_queue_1 = __importDefault(require("p-queue"));
 const logger_1 = require("../infrastructure/logger");
 const empresasRepo = __importStar(require("../modules/certificados/empresas/empresas.repo"));
 const credenciaisRepo = __importStar(require("../repositories/credenciais"));
+const settingsRepo = __importStar(require("../repositories/settings"));
 const validar_credencial_nfse_1 = require("../automation/validar-credencial-nfse");
 const logger = (0, logger_1.getLogger)('validacoes-service');
+async function obterLimiteConcorrencia() {
+    const config = await settingsRepo.obterConfiguracoes();
+    if (config) {
+        let limite = config.defaultConcurrentBrowsers ?? 3;
+        if (config.maxConcurrentBrowsers && limite > config.maxConcurrentBrowsers) {
+            limite = config.maxConcurrentBrowsers;
+        }
+        return limite;
+    }
+    return 3;
+}
 function normCnpj(cnpj) {
     return cnpj.replace(/[.\/\-\s]/g, '').trim();
 }
@@ -200,11 +216,12 @@ async function executarValidacao(jobId, empresaIds, opts) {
         return;
     const total = empresaIds.length;
     job.total = total;
-    for (let i = 0; i < total; i++) {
+    const concurrency = await obterLimiteConcorrencia();
+    const queue = new p_queue_1.default({ concurrency });
+    const processarEmpresa = async (empresaId) => {
         const j = jobs.get(jobId);
         if (!j || j.status !== 'RUNNING')
-            break;
-        const empresaId = empresaIds[i];
+            return;
         try {
             const detalhes = await empresasRepo.obterPorIdComDetalhes(empresaId);
             if (!detalhes) {
@@ -217,7 +234,8 @@ async function executarValidacao(jobId, empresaIds, opts) {
                 });
                 job.processed++;
                 job.erros++;
-                continue;
+                job.progress = Math.round((job.processed / total) * 100);
+                return;
             }
             const cnpj = normCnpj(detalhes.empresa.cnpj);
             const razaoSocial = detalhes.empresa.razao_social;
@@ -326,7 +344,11 @@ async function executarValidacao(jobId, empresaIds, opts) {
         }
         job.processed++;
         job.progress = Math.round((job.processed / total) * 100);
+    };
+    for (const empresaId of empresaIds) {
+        queue.add(() => processarEmpresa(empresaId));
     }
+    await queue.onIdle();
     const j = jobs.get(jobId);
     if (j?.status === 'RUNNING') {
         j.status = 'DONE';
