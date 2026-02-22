@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.listarEmpresas = listarEmpresas;
 exports.listarEmpresasPorContabilidade = listarEmpresasPorContabilidade;
 exports.obterEmpresaPorId = obterEmpresaPorId;
+exports.obterEmpresaComContabilidade = obterEmpresaComContabilidade;
 exports.obterEmpresaPorCnpj = obterEmpresaPorCnpj;
 exports.criarEmpresa = criarEmpresa;
 exports.atualizarEmpresa = atualizarEmpresa;
@@ -33,6 +34,13 @@ async function listarEmpresasPorContabilidade(contabilidadeId, skip = 0, limit =
 async function obterEmpresaPorId(empresaId) {
     return client_1.prisma.empresa.findUnique({
         where: { id: empresaId },
+    });
+}
+/** Empresa com relação contabilidade (para nome da pasta de downloads). */
+async function obterEmpresaComContabilidade(empresaId) {
+    return client_1.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        include: { contabilidade: true },
     });
 }
 async function obterEmpresaPorCnpj(cnpj) {

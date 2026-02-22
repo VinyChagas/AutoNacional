@@ -70,16 +70,21 @@ async function previewCertificados(files, senha) {
         try {
             const parsed = (0, certificado_parser_1.parseCertificado)(validFiles[i].buffer, senha);
             const cnpjLimpo = normCnpj(parsed.cnpj);
-            const existeEmpresa = !!(await client_1.prisma.empresa.findUnique({
-                where: { cnpj: cnpjLimpo },
-            }));
+            const [existeEmpresa, existingCert] = await Promise.all([
+                client_1.prisma.empresa.findUnique({ where: { cnpj: cnpjLimpo } }),
+                certRepo.obterPorCnpj(cnpjLimpo),
+            ]);
+            const existeCertificado = !!existingCert;
+            const acao = existeCertificado ? 'DUPLICADO' : 'IMPORTAR';
             items.push({
                 indice: i,
                 cnpj: parsed.cnpj,
                 razao_social: parsed.razao_social,
                 data_validade: parsed.data_validade,
-                existe_empresa: existeEmpresa,
-                acao: 'IMPORTAR',
+                existe_empresa: !!existeEmpresa,
+                existe_certificado: existeCertificado,
+                acao,
+                ...(existeCertificado && { erro: 'CNPJ já possui certificado cadastrado' }),
             });
         }
         catch (e) {
@@ -89,6 +94,7 @@ async function previewCertificados(files, senha) {
                 razao_social: '',
                 data_validade: null,
                 existe_empresa: false,
+                existe_certificado: false,
                 acao: 'ERRO',
                 erro: e.message,
             });

@@ -1,6 +1,8 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule, RouterOutlet, NavigationEnd, Router } from '@angular/router';
+import { ToastContainerComponent } from '../shared/toast-container/toast-container.component';
+import { AppHeaderComponent } from '../shared/app-header/app-header.component';
 import { filter } from 'rxjs/operators';
 import { trigger, transition, style, query, animateChild, group, animate } from '@angular/animations';
 import { SidebarService } from '../../services/sidebar.service';
@@ -9,7 +11,7 @@ import { Subscription } from 'rxjs';
 @Component({
   selector: 'app-layout',
   standalone: true,
-  imports: [CommonModule, RouterModule, RouterOutlet],
+  imports: [CommonModule, RouterModule, RouterOutlet, ToastContainerComponent, AppHeaderComponent],
   templateUrl: './layout.component.html',
   styleUrls: ['./layout.component.scss'],
   animations: [
@@ -208,6 +210,8 @@ export class LayoutComponent implements OnInit, OnDestroy {
           this.currentRoute = 'execucao';
         } else if (url.includes('/contabilidades')) {
           this.currentRoute = 'contabilidades';
+        } else if (url.includes('/rentabilidade')) {
+          this.currentRoute = 'rentabilidade';
         } else if (url.includes('/configuracoes')) {
           this.currentRoute = 'configuracoes';
         }

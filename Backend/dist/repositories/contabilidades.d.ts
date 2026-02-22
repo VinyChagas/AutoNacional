@@ -29,6 +29,10 @@ export declare function contarEmpresas(contabilidadeId: number): Promise<number>
  */
 export declare function obterTotalVinculados(contabilidadeId: number): Promise<number>;
 /**
+ * Total de empresas vinculadas por contabilidade (em batch).
+ */
+export declare function obterEmpresasVinculadasPorIds(contabilidadeIds: number[]): Promise<Record<number, number>>;
+/**
  * Total de vinculados para múltiplas contabilidades (em batch).
  */
 export declare function obterTotalVinculadosPorIds(contabilidadeIds: number[]): Promise<Record<number, number>>;

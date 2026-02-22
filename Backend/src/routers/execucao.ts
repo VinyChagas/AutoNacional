@@ -2,14 +2,55 @@
  * Router de execução orquestrada (playwright + processar_notas).
  * Rotas de execução de automação.
  */
+import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { getLogger } from '../infrastructure/logger';
 import * as empresasRepo from '../repositories/empresas';
 import * as certificadosRepo from '../repositories/certificados';
 import { adicionarExecucao, obterStatus } from '../services/execution-service';
+import { registrarClienteSSE } from '../services/execution-events.service';
+import { criarBatch } from '../services/automation-metrics.service';
+import {
+  obterSummaryExecucao,
+  listarEmpresasAptas,
+} from '../services/execution-summary.service';
 
 const logger = getLogger('execucao');
 const router = Router({ mergeParams: true });
+
+// GET /companies/summary?contabilidade_id=XXX - Antes de /:empresa_id
+router.get('/companies/summary', async (req: Request, res: Response) => {
+  try {
+    const raw = req.query.contabilidade_id ?? req.query.contabilidadeId;
+    const contabilidadeId = parseInt(String(raw ?? ''), 10);
+    if (isNaN(contabilidadeId) || contabilidadeId < 1) {
+      res.status(400).json({ detail: 'contabilidade_id é obrigatório e deve ser um número positivo' });
+      return;
+    }
+    const summary = await obterSummaryExecucao(contabilidadeId);
+    res.json(summary);
+  } catch (error) {
+    logger.error({ err: error }, 'Erro ao obter summary de execução');
+    res.status(500).json({ detail: 'Erro ao obter resumo de empresas para execução' });
+  }
+});
+
+// GET /companies?contabilidade_id=XXX - Apenas empresas aptas (OPERACIONAL + ATENCAO)
+router.get('/companies', async (req: Request, res: Response) => {
+  try {
+    const raw = req.query.contabilidade_id ?? req.query.contabilidadeId;
+    const contabilidadeId = parseInt(String(raw ?? ''), 10);
+    if (isNaN(contabilidadeId) || contabilidadeId < 1) {
+      res.status(400).json({ detail: 'contabilidade_id é obrigatório e deve ser um número positivo' });
+      return;
+    }
+    const aptas = await listarEmpresasAptas(contabilidadeId);
+    res.json({ empresas: aptas });
+  } catch (error) {
+    logger.error({ err: error }, 'Erro ao listar empresas aptas');
+    res.status(500).json({ detail: 'Erro ao listar empresas aptas para execução' });
+  }
+});
 
 function limparCnpj(v: string): string {
   return v.replace(/[.\/\-\s]/g, '').trim();
@@ -17,21 +58,33 @@ function limparCnpj(v: string): string {
 
 const DATA_REGEX = /^\d{2}\/\d{2}\/\d{4}$/;
 
+/**
+ * POST /api/execucao/multiplas
+ * Inicia execuções para múltiplas empresas.
+ * Retorna batch_id (uuid) criado no início para rastreio.
+ * batch_id é associado internamente a cada execução iniciada.
+ *
+ * Exemplo de resposta:
+ * { success: true, batch_id: "uuid", started: 5, erros: 0, execucoes: [...], detalhes_erros: [] }
+ */
 // POST /api/execucao/multiplas - DEVE vir antes de /:empresa_id
 router.post('/multiplas', async (req: Request, res: Response) => {
   try {
+    const batchId = randomUUID();
     const body = req.body as {
       empresas?: Array<{ empresa_id: string; cnpj: string; tipo_autenticacao?: string }>;
       dataInicio?: string;
       dataFim?: string;
       tipo?: string;
       headless?: boolean;
+      contabilidade_id?: number | null;
     };
     const empresas = body.empresas || [];
     const dataInicio = body.dataInicio;
     const dataFim = body.dataFim;
     const tipo = body.tipo || 'ambas';
     const headless = body.headless ?? false;
+    const contabilidadeId = body.contabilidade_id != null && body.contabilidade_id > 0 ? body.contabilidade_id : null;
 
     if (empresas.length === 0) {
       res.status(400).json({ detail: 'Lista de empresas não pode estar vazia' });
@@ -93,13 +146,19 @@ router.post('/multiplas', async (req: Request, res: Response) => {
             continue;
           }
         }
+        const tipoAuth =
+          emp.tipo_autenticacao === 'credenciais' ? 'credenciais' : 'certificado';
+
         await adicionarExecucao(
           empresaId,
           cnpjLimpo,
           dataInicio,
           dataFim,
           tipo,
-          headless
+          headless,
+          undefined,
+          batchId,
+          tipoAuth
         );
         const status = obterStatus(String(empresaId));
         resultados.push({
@@ -119,8 +178,21 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       }
     }
 
+    const started = resultados.length;
+    if (started > 0 && dataInicio && DATA_REGEX.test(dataInicio)) {
+      const comp = `${dataInicio.slice(6, 10)}-${dataInicio.slice(3, 5)}`;
+      await criarBatch({
+        batchId,
+        competencia: comp,
+        contabilidadeId,
+        totalEmpresas: started,
+      });
+    }
+
     res.status(202).json({
-      sucesso: resultados.length,
+      success: true,
+      batch_id: batchId,
+      started,
       erros: erros.length,
       execucoes: resultados,
       detalhes_erros: erros,
@@ -129,6 +201,17 @@ router.post('/multiplas', async (req: Request, res: Response) => {
     logger.error({ err: error }, 'Erro ao adicionar múltiplas execuções');
     res.status(500).json({ detail: 'Erro ao adicionar múltiplas execuções' });
   }
+});
+
+// GET /api/execucao/stream/:batch_id - SSE para atualizações em tempo real
+// DEVE vir antes de /:empresa_id para que "stream" não seja capturado
+router.get('/stream/:batch_id', (req: Request, res: Response) => {
+  const batchId = String(req.params.batch_id ?? '');
+  if (!batchId) {
+    res.status(400).json({ detail: 'batch_id é obrigatório' });
+    return;
+  }
+  registrarClienteSSE(batchId, res);
 });
 
 // POST /api/execucao/:empresa_id - Iniciar execução

@@ -46,9 +46,7 @@ const repoLegacy = __importStar(require("../../../repositories/empresas"));
 const cadastroCertificadoService = __importStar(require("./cadastro-certificado.service"));
 const cadastroCredencialService = __importStar(require("./cadastro-credencial.service"));
 const response_1 = require("../../../middleware/response");
-function limparCnpj(cnpj) {
-    return cnpj.replace(/[.\/\-\s]/g, '').trim();
-}
+const cnpj_1 = require("../../../utils/cnpj");
 function toListagemItem(row) {
     return {
         id: String(row.id),
@@ -64,6 +62,8 @@ function toListagemItem(row) {
         cert_validade: row.cert_validade ?? null,
         has_credenciais: Boolean(row.has_credenciais),
         cred_status: row.cred_status ?? null,
+        cred_ultimo_teste_em: row.cred_ultimo_teste_em ?? null,
+        cred_ultima_mensagem: row.cred_ultima_mensagem ?? null,
         status_geral: row.status_geral ?? null,
         status_geral_motivo: row.status_geral_motivo ?? null,
     };
@@ -112,7 +112,7 @@ async function listarPorContabilidade(req, res) {
     });
 }
 async function obterPorCnpj(req, res) {
-    const cnpj = limparCnpj(String(req.params.cnpj ?? ''));
+    const cnpj = (0, cnpj_1.normalizeCnpj)(String(req.params.cnpj ?? ''));
     const empresa = await repoLegacy.obterEmpresaPorCnpj(cnpj);
     if (!empresa) {
         (0, response_1.jsonError)(res, `Empresa com CNPJ ${cnpj} não encontrada`, 404);
@@ -124,8 +124,9 @@ async function obterPorCnpj(req, res) {
 async function cadastroCertificado(req, res) {
     const file = req.file;
     const senha = (req.body?.senha ?? '').trim();
-    const contabilidadeId = req.body?.contabilidade_id
-        ? parseInt(String(req.body.contabilidade_id), 10)
+    const contabilidadeIdRaw = req.body?.contabilidade_id;
+    const contabilidadeId = contabilidadeIdRaw != null && contabilidadeIdRaw !== ''
+        ? parseInt(String(contabilidadeIdRaw), 10)
         : undefined;
     if (!file?.buffer?.length) {
         (0, response_1.jsonError)(res, 'Arquivo do certificado (.pfx ou .p12) é obrigatório', 400);
@@ -133,6 +134,10 @@ async function cadastroCertificado(req, res) {
     }
     if (!senha) {
         (0, response_1.jsonError)(res, 'Senha do certificado é obrigatória', 400);
+        return;
+    }
+    if (contabilidadeId == null || isNaN(contabilidadeId) || contabilidadeId < 1) {
+        (0, response_1.jsonError)(res, 'contabilidade_id é obrigatório e deve ser um número positivo', 400);
         return;
     }
     const ext = (file.originalname || '').toLowerCase();
@@ -144,7 +149,7 @@ async function cadastroCertificado(req, res) {
         const result = await cadastroCertificadoService.cadastrarPorCertificado({
             buffer: file.buffer,
             senha,
-            contabilidade_id: !isNaN(contabilidadeId) && contabilidadeId > 0 ? contabilidadeId : undefined,
+            contabilidade_id: contabilidadeId,
         });
         (0, response_1.jsonCreated)(res, result, 'Certificado cadastrado com sucesso');
     }
@@ -171,22 +176,21 @@ async function excluirEmMassa(req, res) {
         (0, response_1.jsonError)(res, 'ids deve ser um array não vazio de IDs válidos', 400);
         return;
     }
-    try {
-        const deleted = await repo.deletarEmMassa(ids);
-        (0, response_1.jsonSuccess)(res, { success: true, deleted });
-    }
-    catch (err) {
-        throw err;
-    }
+    const deleted = await repo.deletarEmMassa(ids);
+    (0, response_1.jsonSuccess)(res, { deleted });
 }
 async function cadastroCredencial(req, res) {
     const body = req.body;
     const cnpj = typeof body.cnpj === 'string' ? body.cnpj.trim() : '';
     const razao_social = typeof body.razao_social === 'string' ? body.razao_social : undefined;
     const senha = typeof body.senha === 'string' ? body.senha : '';
-    const tipo = typeof body.tipo === 'string' && (body.tipo === 'CNPJ_SENHA' || body.tipo === 'CPF_SENHA')
+    let tipo = typeof body.tipo === 'string' && (body.tipo === 'CNPJ_SENHA' || body.tipo === 'CPF_SENHA')
         ? body.tipo
         : 'CNPJ_SENHA';
+    const docDigitos = cnpj.replace(/\D/g, '').length;
+    if (docDigitos === 11 && tipo === 'CNPJ_SENHA') {
+        tipo = 'CPF_SENHA';
+    }
     const usuario = typeof body.usuario === 'string' ? body.usuario : undefined;
     const contabilidade_idRaw = body.contabilidade_id;
     if (!cnpj) {

@@ -21,8 +21,9 @@ model Contabilidade {
   responsavel       String?
   dataCadastro      DateTime @default(now()) @map("data_cadastro")
 
-  empresas     Empresa[]
-  certificados Certificado[]
+  empresas          Empresa[]
+  certificados      Certificado[]
+  execucaoBatchLogs ExecucaoBatchLog[]
 
   @@map("contabilidades")
 }
@@ -56,8 +57,9 @@ model Credencial {
   tipo               String // CNPJ_SENHA ou CPF_SENHA
   usuario            String // CNPJ ou CPF (sem formatação)
   senhaCriptografada String    @map("senha_criptografada")
-  status             String    @default("NAO_TESTADO") // NAO_TESTADO, OK, INVALIDA, BLOQUEADA
+  status             String    @default("NAO_TESTADO") // NAO_TESTADO, OK, INVALIDA, ERRO_VALIDACAO, BLOQUEADA
   ultimoTesteEm      DateTime? @map("ultimo_teste_em")
+  ultimaMensagem     String?   @map("ultima_mensagem") // Ex: "Senha incorreta", "Falha ao validar"
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
@@ -111,6 +113,32 @@ model Settings {
   maxErrorsInPanel          Int     @default(100) @map("max_errors_in_panel")
 
   @@map("settings")
+}
+
+// ============================================================================
+// Log de Lote de Execução (persistência de logs por batch)
+// ============================================================================
+model ExecucaoBatchLog {
+  id                Int      @id @default(autoincrement())
+  batchId           String   @unique @map("batch_id")
+  contabilidadeId   Int?     @map("contabilidade_id")
+  competencia       String   @map("competencia")
+  dataInicio        String   @map("data_inicio")
+  dataFim           String   @map("data_fim")
+  tipo              String   @default("ambas")
+  headless          Boolean  @default(false)
+  totalEmpresas     Int      @default(0) @map("total_empresas")
+  totalSucesso      Int      @default(0) @map("total_sucesso")
+  totalFalha        Int      @default(0) @map("total_falha")
+  totalEmitidas     Int      @default(0) @map("total_emitidas")
+  totalRecebidas    Int      @default(0) @map("total_recebidas")
+  totaisPorResultado Json?   @map("totais_por_resultado")
+  itens             Json     @default("[]")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  contabilidade Contabilidade? @relation(fields: [contabilidadeId], references: [id], onDelete: SetNull)
+
+  @@map("execucao_batch_log")
 }
 
 // ============================================================================

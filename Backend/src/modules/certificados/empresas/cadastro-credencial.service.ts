@@ -36,26 +36,35 @@ export interface CadastroCredencialResult {
 export async function cadastrarPorCredencial(
   input: CadastroCredencialInput
 ): Promise<CadastroCredencialResult> {
-  const cnpjLimpo = normCnpj(input.cnpj);
-  if (cnpjLimpo.length !== 14) {
-    throw new Error('CNPJ deve conter 14 dígitos');
+  const docLimpo = normCnpj(input.cnpj);
+  const tipo: TipoCredencial = input.tipo || 'CNPJ_SENHA';
+  const usuario = (input.usuario && normCnpj(input.usuario)) || docLimpo;
+
+  if (tipo === 'CPF_SENHA') {
+    if (docLimpo.length !== 11) {
+      throw new Error('CPF deve conter 11 dígitos');
+    }
+    if (usuario.length !== 11) {
+      throw new Error('Usuário (CPF) deve conter 11 dígitos');
+    }
+  } else {
+    if (docLimpo.length !== 14) {
+      throw new Error('CNPJ deve conter 14 dígitos');
+    }
+    if (usuario.length !== 14) {
+      throw new Error('Usuário (CNPJ) deve conter 14 dígitos');
+    }
   }
+
   if (!input.senha || !input.senha.trim()) {
     throw new Error('Senha é obrigatória');
   }
 
-  const tipo: TipoCredencial = input.tipo || 'CNPJ_SENHA';
-  const usuario = (input.usuario && normCnpj(input.usuario)) || cnpjLimpo;
-
-  if (tipo === 'CNPJ_SENHA' && usuario.length !== 14) {
-    throw new Error('Usuário (CNPJ) deve conter 14 dígitos');
-  }
-  if (tipo === 'CPF_SENHA' && usuario.length !== 11) {
-    throw new Error('Usuário (CPF) deve conter 11 dígitos');
-  }
+  // Para CPF: armazena empresa.cnpj como 000+CPF (14 dígitos) para manter unique
+  const cnpjEmpresa = tipo === 'CPF_SENHA' ? usuario.padStart(14, '0') : usuario;
 
   let empresa = await prisma.empresa.findUnique({
-    where: { cnpj: cnpjLimpo },
+    where: { cnpj: cnpjEmpresa },
   });
 
   if (!empresa) {
@@ -65,7 +74,7 @@ export async function cadastrarPorCredencial(
     }
     empresa = await prisma.empresa.create({
       data: {
-        cnpj: cnpjLimpo,
+        cnpj: cnpjEmpresa,
         razaoSocial: razao,
         contabilidadeId: input.contabilidade_id ?? undefined,
       },

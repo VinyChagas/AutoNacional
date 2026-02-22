@@ -1,0 +1,108 @@
+<div class="drawer" [class.drawer-open]="isOpen">
+  <div class="drawer-inner">
+    <!-- Header -->
+    <div class="drawer-header">
+      <h2 class="drawer-title">{{ titulo }}</h2>
+      <button
+        type="button"
+        class="drawer-close"
+        (click)="fechar()"
+        aria-label="Fechar"
+      >
+        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Form -->
+    <form [formGroup]="form" (ngSubmit)="salvar()" class="drawer-form">
+      <div *ngIf="error" class="drawer-error">{{ error }}</div>
+
+      <div class="form-group">
+        <label class="form-label">Nome da Contabilidade <span class="required">*</span></label>
+        <input
+          type="text"
+          formControlName="nome_contabilidade"
+          class="form-input"
+          [class.input-invalid]="form.get('nome_contabilidade')?.invalid && form.get('nome_contabilidade')?.touched"
+          placeholder="Nome fantasia ou razão social"
+        />
+        <div *ngIf="form.get('nome_contabilidade')?.invalid && form.get('nome_contabilidade')?.touched" class="form-error">
+          <span *ngIf="form.get('nome_contabilidade')?.errors?.['required']">Campo obrigatório</span>
+          <span *ngIf="form.get('nome_contabilidade')?.errors?.['minlength']">Mínimo de 3 caracteres</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">CNPJ <span class="required">*</span></label>
+        <input
+          type="text"
+          formControlName="cnpj"
+          class="form-input"
+          [class.input-invalid]="form.get('cnpj')?.invalid && form.get('cnpj')?.touched"
+          placeholder="00.000.000/0000-00"
+          [readonly]="mode === 'edit'"
+          (input)="onCnpjInput($event)"
+        />
+        <div *ngIf="form.get('cnpj')?.invalid && form.get('cnpj')?.touched" class="form-error">
+          <span *ngIf="form.get('cnpj')?.errors?.['required']">Campo obrigatório</span>
+          <span *ngIf="form.get('cnpj')?.errors?.['cnpjInvalido']">CNPJ inválido (14 dígitos)</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Responsável</label>
+        <input
+          type="text"
+          formControlName="responsavel"
+          class="form-input"
+          placeholder="Nome do responsável"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Telefone</label>
+        <input
+          type="text"
+          formControlName="telefone"
+          class="form-input"
+          placeholder="(00) 00000-0000"
+          (input)="onTelefoneInput($event)"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">E-mail</label>
+        <input
+          type="email"
+          formControlName="email"
+          class="form-input"
+          [class.input-invalid]="form.get('email')?.invalid && form.get('email')?.touched"
+          placeholder="email&#64;exemplo.com"
+        />
+        <div *ngIf="form.get('email')?.invalid && form.get('email')?.touched" class="form-error">
+          E-mail inválido
+        </div>
+      </div>
+
+      <!-- Footer fixo -->
+      <div class="drawer-footer">
+        <button
+          type="button"
+          class="btn-cancelar"
+          (click)="fechar()"
+        >
+          Cancelar
+        </button>
+        <button
+          type="submit"
+          class="btn-salvar"
+          [disabled]="saving || form.invalid"
+        >
+          {{ saving ? 'Salvando...' : botaoSalvar }}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

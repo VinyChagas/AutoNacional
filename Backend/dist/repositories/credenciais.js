@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listarPorEmpresa = listarPorEmpresa;
+exports.obterPrimeiraPorEmpresa = obterPrimeiraPorEmpresa;
 exports.obterPorId = obterPorId;
 exports.criarOuAtualizar = criarOuAtualizar;
 exports.atualizarStatus = atualizarStatus;
@@ -19,6 +20,17 @@ async function listarPorEmpresa(empresaId) {
         where: { empresaId },
         orderBy: { createdAt: 'desc' },
     });
+}
+/**
+ * Obtém a primeira credencial da empresa (para uso em automação).
+ */
+async function obterPrimeiraPorEmpresa(empresaId) {
+    const creds = await client_1.prisma.credencial.findMany({
+        where: { empresaId },
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
+    });
+    return creds[0] ?? null;
 }
 async function obterPorId(credencialId) {
     return client_1.prisma.credencial.findUnique({
@@ -46,11 +58,18 @@ async function criarOuAtualizar(empresaId, tipo, usuario, senha) {
         },
     });
 }
-async function atualizarStatus(credencialId, status) {
+async function atualizarStatus(credencialId, status, ultimaMensagem) {
     try {
+        const data = {
+            status,
+            ultimoTesteEm: new Date(),
+        };
+        if (ultimaMensagem !== undefined) {
+            data.ultimaMensagem = ultimaMensagem;
+        }
         return await client_1.prisma.credencial.update({
             where: { id: credencialId },
-            data: { status, ultimoTesteEm: new Date() },
+            data,
         });
     }
     catch {

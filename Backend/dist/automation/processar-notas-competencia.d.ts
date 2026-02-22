@@ -19,17 +19,21 @@ export declare function normalizarCompetencia(valor: string): string;
 export declare function verificarSemRegistros(page: Page): Promise<boolean>;
 /**
  * Processa a tabela de notas emitidas.
+ * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
-export declare function processarTabelaEmitidas(page: Page, competenciaAlvo: string, nomeEmpresa: string): Promise<{
+export declare function processarTabelaEmitidas(page: Page, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string): Promise<{
     qtd_baixadas: number;
+    qtd_canceladas: number;
     sem_registros: boolean;
     encontrou_notas: boolean;
 }>;
 /**
  * Processa a tabela de notas recebidas.
+ * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
-export declare function processarTabelaRecebidas(page: Page, competenciaAlvo: string, nomeEmpresa: string): Promise<{
+export declare function processarTabelaRecebidas(page: Page, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string): Promise<{
     qtd_baixadas: number;
+    qtd_canceladas: number;
     sem_registros: boolean;
     encontrou_notas: boolean;
 }>;

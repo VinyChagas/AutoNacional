@@ -1,0 +1,219 @@
+@if (isOpen) {
+  <div class="import-modal-overlay">
+    <div class="import-modal">
+      <div class="import-modal-header">
+        <h2 class="import-modal-title">Importar Credenciais por Planilha</h2>
+        <button
+          type="button"
+          class="import-modal-close"
+          (click)="fechar()"
+          aria-label="Fechar"
+        >
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="import-modal-body">
+        <!-- Upload -->
+        <div class="import-select-wrap">
+          <input
+            #fileInput
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            (change)="onFileSelected($event)"
+            class="import-file-hidden"
+          />
+          <button
+            type="button"
+            class="import-btn-select"
+            (click)="acionarFileInput(fileInput)"
+            [disabled]="loadingPreview"
+          >
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Selecionar arquivo (.xlsx / .csv)
+          </button>
+          <p class="import-hint-inline">
+            Modelo: Razão Social | Tipo de Login (CNPJ/CPF) | CNPJ/CPF | Senha | (Opcional) Regime
+          </p>
+        </div>
+
+        @if (loadingPreview) {
+          <div class="import-loading">
+            <div class="import-spinner"></div>
+            <span>Processando planilha...</span>
+          </div>
+        }
+
+        @if (rows.length > 0 && !loadingPreview) {
+          <!-- Topbar de configurações -->
+          <div class="import-topbar">
+            <div class="import-topbar-item">
+              <label class="import-label">Contabilidade padrão</label>
+              <select
+                [(ngModel)]="contabilidadePadraoId"
+                (ngModelChange)="onContabilidadePadraoChange()"
+                class="import-select import-select-contab"
+                [disabled]="loadingContabilidades || importing"
+              >
+                <option [ngValue]="null">Selecione...</option>
+                @for (c of contabilidades; track c.id) {
+                  <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
+                }
+              </select>
+            </div>
+            <label class="import-toggle-wrap">
+              <input
+                type="checkbox"
+                [(ngModel)]="updateExisting"
+                class="import-checkbox"
+                [disabled]="importing"
+              />
+              <span>Atualizar credenciais existentes (quando CNPJ já cadastrado)</span>
+            </label>
+            <button
+              type="button"
+              class="import-btn-reprocessar"
+              (click)="reprocessarArquivo()"
+              [disabled]="importing"
+            >
+              Reprocessar arquivo
+            </button>
+          </div>
+
+          @if (fileName) {
+            <p class="import-file-name">Arquivo: {{ fileName }}</p>
+          }
+
+          <!-- Tabela de pré-visualização -->
+          <div class="import-table-wrap">
+            <table class="import-table">
+              <thead>
+                <tr>
+                  <th class="th-checkbox">
+                    <label class="checkbox-wrap">
+                      <input
+                        type="checkbox"
+                        [checked]="isTodosValidasSelecionados"
+                        [indeterminate]="isIndeterminadoValidas"
+                        (change)="selecionarTodasValidas()"
+                        class="checkbox-input"
+                      />
+                    </label>
+                  </th>
+                  <th>Razão Social</th>
+                  <th>Tipo</th>
+                  <th>CNPJ/CPF</th>
+                  <th>Senha</th>
+                  <th>Contabilidade</th>
+                  <th>Status</th>
+                  <th>Mensagem</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of rows; track row.rowIndex) {
+                  <tr
+                    class="import-row"
+                    [class.import-row-invalida]="!row.valid"
+                  >
+                    <td class="td-checkbox">
+                      <label class="checkbox-wrap">
+                        <input
+                          type="checkbox"
+                          [checked]="row.selected"
+                          (change)="toggleSelecionar(row)"
+                          [disabled]="!podeSelecionar(row)"
+                          class="checkbox-input"
+                        />
+                      </label>
+                    </td>
+                    <td class="td-bold">{{ row.razao_social }}</td>
+                    <td>{{ row.tipo_login }}</td>
+                    <td class="td-mono">{{ row.documento_formatado }}</td>
+                    <td>
+                      <span class="senha-mask">••••••</span>
+                      <span class="senha-reveal-hint" title="Senha não enviada ao navegador por segurança">ℹ</span>
+                    </td>
+                    <td>
+                      <select
+                        [(ngModel)]="row.contabilidade_id"
+                        class="import-select"
+                        [disabled]="!row.valid || importing"
+                      >
+                        <option [ngValue]="null">Padrão</option>
+                        @for (c of contabilidades; track c.id) {
+                          <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
+                        }
+                      </select>
+                    </td>
+                    <td>
+                      <span
+                        class="import-badge"
+                        [ngClass]="getStatusBadgeClass(row)"
+                      >
+                        {{ getStatusRow(row) }}
+                      </span>
+                    </td>
+                    <td class="td-message">
+                      {{ row.importMessage || (row.errors && row.errors.length ? row.errors[0] : '-') }}
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+
+          @if (importacaoFinalizada) {
+            <div class="import-resumo">
+              <h4>Resumo da importação</h4>
+              <p><strong>{{ resumo.importadas }}</strong> importadas/atualizadas</p>
+              <p><strong>{{ resumo.jaExistentes }}</strong> já existiam (ignoradas)</p>
+              <p><strong>{{ resumo.erros }}</strong> com erro</p>
+            </div>
+          }
+        } @else if (!loadingPreview && rows.length === 0) {
+          <p class="import-hint">Selecione um arquivo .xlsx ou .csv acima.</p>
+        }
+      </div>
+
+      <div class="import-modal-footer">
+        <button
+          type="button"
+          class="import-btn import-btn-secondary"
+          (click)="fechar()"
+        >
+          {{ importacaoFinalizada ? 'Fechar' : 'Cancelar' }}
+        </button>
+        @if (importacaoFinalizada) {
+          <button
+            type="button"
+            class="import-btn import-btn-primary"
+            (click)="onConcluir()"
+          >
+            Concluir
+          </button>
+        } @else {
+          <button
+            type="button"
+            class="import-btn import-btn-secondary"
+            (click)="importarTodasValidas()"
+            [disabled]="!canImportar()"
+          >
+            Importar todas válidas
+          </button>
+          <button
+            type="button"
+            class="import-btn import-btn-primary"
+            (click)="importarSelecionadas()"
+            [disabled]="!canImportar()"
+          >
+            {{ importing ? 'Importando...' : 'Importar selecionadas' }}
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+}

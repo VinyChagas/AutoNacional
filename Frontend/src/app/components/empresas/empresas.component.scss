@@ -1,2 +1,990 @@
-// Empresas - cadastro unificado
-// Reaproveita estilo do projeto
+// Empresas - Hierarquia visual: KPIs / Filtros / Ações / Tabela
+// ============================================================================
+
+$radius-lg: 24px;
+$radius-md: 18px;
+$radius-sm: 14px;
+$radius-xs: 12px;
+$radius-pill: 9999px;
+
+// Border padrão chips inativos (equivalente #E5E7EB)
+$chip-border-inactive: rgba(15, 23, 42, 0.12);
+
+.empresas-wrapper {
+  min-height: 100vh;
+  padding: 1.5rem 1.5rem 2rem;
+  background: var(--bg-page);
+  transition: background 0.4s var(--ease-out-expo);
+}
+
+.empresas-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.alert {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: $radius-sm;
+  font-size: 0.875rem;
+
+  &.alert-error {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #dc2626;
+  }
+}
+
+.loading-state,
+.empty-state {
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 1rem;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-state p,
+.empty-state .empty-text {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+}
+
+.empty-subtext {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 1rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+  backdrop-filter: blur(2px);
+}
+
+.modal-confirm {
+  background: var(--bg-card);
+  border-radius: $radius-md;
+  padding: 1.5rem 1.75rem;
+  max-width: 400px;
+  width: 100%;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--border-color);
+}
+
+.modal-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.modal-text {
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.btn-cancel {
+  padding: 0.6rem 1.25rem;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.btn-danger {
+  padding: 0.6rem 1.25rem;
+  border-radius: $radius-sm;
+  border: none;
+  background: #ef4444;
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+// ============================================================================
+// 1) Header da página
+// ============================================================================
+.page-header {
+  margin-bottom: 1.5rem;
+}
+
+.page-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 0.25rem 0;
+}
+
+.page-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+// ============================================================================
+// 2) Painel operacional - Cards de métricas (estilo em empresas-summary-cards)
+// ============================================================================
+.summary-cards-section {
+  margin-bottom: 0; // o grid interno já tem margin
+}
+
+// Legado - mantido para referência (cards agora em componente separado)
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem; // 24-32px spacing abaixo dos KPIs
+}
+
+@media (max-width: 1024px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+    margin-bottom: 1.75rem;
+  }
+}
+
+.kpi-card {
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 1.25rem 1.35rem;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.4s var(--ease-out-expo);
+  position: relative;
+
+  // Faixa superior reduzida (3px) e accent suave
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, rgba(79, 70, 229, 0.4) 0%, rgba(124, 58, 237, 0.35) 100%);
+    border-radius: 16px 16px 0 0;
+  }
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+  }
+
+  &.kpi-card-active {
+    border-color: rgba(79, 70, 229, 0.4);
+    box-shadow: 0 4px 20px rgba(79, 70, 229, 0.12);
+  }
+
+  .dark &:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .kpi-label {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .kpi-value {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .kpi-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: $radius-xs;
+    font-weight: 600;
+    width: fit-content;
+
+    &.kpi-badge-success {
+      background: rgba(52, 211, 153, 0.18);
+      color: #059669;
+    }
+
+    &.kpi-badge-danger {
+      background: rgba(248, 113, 113, 0.18);
+      color: #dc2626;
+    }
+  }
+
+  .kpi-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+}
+
+// ============================================================================
+// 3) Filtros (Refinar dados)
+// ============================================================================
+.filters {
+  margin-bottom: 1.5rem;
+}
+
+.filters-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.875rem;
+}
+
+.search-wrap {
+  width: 100%;
+  max-width: 420px;
+  min-width: 280px;
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  .search-icon {
+    position: absolute;
+    left: 1rem;
+    width: 18px;
+    height: 18px;
+    color: var(--text-muted);
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 0.6rem 1rem 0.6rem 2.5rem;
+    border-radius: $radius-sm;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+    &::placeholder {
+      color: var(--text-muted);
+      opacity: 0.8;
+    }
+
+    &:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+    }
+  }
+}
+
+.count-text {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+// Dropdown Contabilidades (na linha de filtros)
+.contab-dropdown-wrap {
+  position: relative;
+}
+
+.btn-dropdown-contab {
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.dropdown-loading {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.dropdown-menu-contab {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.dropdown-empty {
+  display: block;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.chips-row {
+  display: flex;
+  align-items: center;
+}
+
+.chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+// Chips com peso visual menor (não parecem botão primário)
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 0.7rem;
+  border-radius: $radius-pill;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &.chip-inactive {
+    border: 1px solid $chip-border-inactive;
+    background: transparent;
+    color: var(--text-muted);
+
+    &:hover {
+      background: rgba(15, 23, 42, 0.04);
+      color: var(--text-primary);
+    }
+  }
+
+  &.chip-active {
+    border: 1px solid rgba(79, 70, 229, 0.35);
+    background: rgba(79, 70, 229, 0.08);
+    color: var(--primary);
+  }
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.4rem;
+  padding: 0.1rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0.75;
+
+  &:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .chip-active & {
+    &:hover {
+      background: rgba(79, 70, 229, 0.15);
+    }
+  }
+}
+
+.chip-clear-all {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.35rem 0.5rem;
+  font-weight: 500;
+  text-decoration: none;
+
+  &:hover {
+    color: var(--primary);
+  }
+}
+
+// ============================================================================
+// 4) Ações (Interagir com dados)
+// ============================================================================
+.actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.actions-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.actions-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: var(--surface-2);
+    border-color: rgba(79, 70, 229, 0.3);
+  }
+
+  .btn-icon {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.dropdown-wrap {
+  position: relative;
+}
+
+.btn-dropdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: rgba(79, 70, 229, 0.35);
+  }
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 160px;
+  padding: 0.35rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+
+  button {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    background: none;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: var(--surface-2);
+    }
+  }
+}
+
+// Botão primário: apenas Cadastrar
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.25rem;
+  border-radius: $radius-sm;
+  border: none;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s var(--ease-out-expo);
+
+  &:hover {
+    box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
+    transform: translateY(-2px);
+  }
+
+  .btn-icon {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+// Botões secundários: aparência neutra
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: rgba(79, 70, 229, 0.35);
+    background: rgba(79, 70, 229, 0.04);
+  }
+}
+
+// Validar: destaque moderado (outline verde)
+.btn-validar {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #059669;
+  background: transparent;
+  border: 1px solid rgba(5, 150, 105, 0.4);
+  border-radius: $radius-sm;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(5, 150, 105, 0.08);
+    border-color: rgba(5, 150, 105, 0.5);
+  }
+}
+
+// ============================================================================
+// 5) Tabela
+// ============================================================================
+.table-section {
+  margin-bottom: 2rem;
+}
+
+.table-card {
+  background: var(--bg-card);
+  border-radius: $radius-lg;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  transition: all 0.4s var(--ease-out-expo);
+
+  &:hover {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  }
+
+  .dark &:hover {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+
+  thead {
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-color);
+
+    th {
+      padding: 0.875rem 1.25rem;
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-primary);
+
+      &.th-checkbox {
+        width: 48px;
+        text-align: center;
+      }
+
+      &.th-actions {
+        text-align: right;
+        width: 100px;
+      }
+    }
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.2s ease;
+
+    &:hover {
+      background: rgba(79, 70, 229, 0.04);
+    }
+
+    .dark &:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+  }
+
+  td {
+    padding: 0.875rem 1.25rem;
+    color: var(--text-primary);
+
+    &.td-checkbox {
+      width: 48px;
+      text-align: center;
+    }
+
+    &.td-mono {
+      font-family: ui-monospace, monospace;
+      font-size: 0.85rem;
+    }
+
+    &.td-bold {
+      font-weight: 600;
+    }
+
+    &.td-actions {
+      text-align: right;
+    }
+  }
+}
+
+.checkbox-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.checkbox-input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.cell-cert-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.cell-cert-date {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cell-cert-dias {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.cell-cert-dias.cell-cert-vencido {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.cell-cert-dias.cell-cert-vencendo {
+  color: #d97706;
+  font-weight: 600;
+}
+
+.cell-cert,
+.cell-cred {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cell-cred-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.cred-badge {
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  width: fit-content;
+
+  &.cred-ok {
+    background: rgba(34, 197, 94, 0.15);
+    color: #16a34a;
+  }
+
+  &.cred-invalida {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+  }
+
+  &.cred-nao-testado {
+    background: rgba(100, 116, 139, 0.15);
+    color: var(--text-muted);
+  }
+
+  &.cred-testando {
+    background: rgba(59, 130, 246, 0.15);
+    color: #2563eb;
+  }
+
+  &.cred-inativa {
+    background: rgba(100, 116, 139, 0.12);
+    color: var(--text-muted);
+  }
+}
+
+.cell-cred-msg {
+  font-size: 0.72rem;
+  color: #dc2626;
+}
+
+.cell-muted {
+  color: var(--text-muted);
+}
+
+.cell-meta {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.65rem;
+  border-radius: $radius-pill;
+  font-size: 0.75rem;
+  font-weight: 600;
+
+  &.status-operacional {
+    background: rgba(34, 197, 94, 0.15);
+    color: #16a34a;
+  }
+
+  &.status-atencao {
+    background: rgba(245, 158, 11, 0.15);
+    color: #d97706;
+  }
+
+  &.status-parcial {
+    background: rgba(234, 179, 8, 0.15);
+    color: #ca8a04;
+  }
+
+  &.status-inoperante {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+  }
+}
+
+.td-actions .btn-icon-action {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.25rem;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(79, 70, 229, 0.12);
+  }
+
+  &.btn-icon-danger {
+    color: #ef4444;
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.12);
+    }
+  }
+}
+
+// ============================================================================
+// Responsividade
+// ============================================================================
+@media (max-width: 1024px) {
+  .actions {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+
+    .actions-left {
+      order: 1;
+    }
+
+    .actions-right {
+      order: 2;
+      justify-content: flex-start;
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .filters-row {
+    flex-wrap: wrap;
+  }
+
+  .search-wrap {
+    max-width: 100%;
+  }
+
+  .actions-right {
+    flex-direction: column;
+    align-items: stretch;
+
+    .btn-primary,
+    .btn-secondary,
+    .btn-validar {
+      justify-content: center;
+    }
+  }
+}
+
+@media (max-width: 480px) {
+  .chips-wrap {
+    width: 100%;
+  }
+}
+
+// Linha expandida
+.row-expanded {
+  background: rgba(79, 70, 229, 0.06);
+}
+
+.btn-icon-active {
+  background: rgba(79, 70, 229, 0.15) !important;
+}
+
+.expandable-row {
+  background: var(--surface-2);
+  transition: all 0.3s ease;
+
+  td {
+    padding: 0 !important;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+    width: 100%;
+  }
+}
+
+.expandable-cell {
+  padding: 0 !important;
+  width: 100%;
+}
+
+.expandable-content {
+  width: 100%;
+  padding: 0.75rem 1.25rem;
+  animation: expandIn 0.25s ease;
+  box-sizing: border-box;
+}
+
+@keyframes expandIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.expandable-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+}
+
+.expandable-spinner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.spinner-small {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}

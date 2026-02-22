@@ -10,23 +10,32 @@ function normCnpj(cnpj) {
     return cnpj.replace(/[.\/\-\s]/g, '').trim();
 }
 async function cadastrarPorCredencial(input) {
-    const cnpjLimpo = normCnpj(input.cnpj);
-    if (cnpjLimpo.length !== 14) {
-        throw new Error('CNPJ deve conter 14 dígitos');
+    const docLimpo = normCnpj(input.cnpj);
+    const tipo = input.tipo || 'CNPJ_SENHA';
+    const usuario = (input.usuario && normCnpj(input.usuario)) || docLimpo;
+    if (tipo === 'CPF_SENHA') {
+        if (docLimpo.length !== 11) {
+            throw new Error('CPF deve conter 11 dígitos');
+        }
+        if (usuario.length !== 11) {
+            throw new Error('Usuário (CPF) deve conter 11 dígitos');
+        }
+    }
+    else {
+        if (docLimpo.length !== 14) {
+            throw new Error('CNPJ deve conter 14 dígitos');
+        }
+        if (usuario.length !== 14) {
+            throw new Error('Usuário (CNPJ) deve conter 14 dígitos');
+        }
     }
     if (!input.senha || !input.senha.trim()) {
         throw new Error('Senha é obrigatória');
     }
-    const tipo = input.tipo || 'CNPJ_SENHA';
-    const usuario = (input.usuario && normCnpj(input.usuario)) || cnpjLimpo;
-    if (tipo === 'CNPJ_SENHA' && usuario.length !== 14) {
-        throw new Error('Usuário (CNPJ) deve conter 14 dígitos');
-    }
-    if (tipo === 'CPF_SENHA' && usuario.length !== 11) {
-        throw new Error('Usuário (CPF) deve conter 11 dígitos');
-    }
+    // Para CPF: armazena empresa.cnpj como 000+CPF (14 dígitos) para manter unique
+    const cnpjEmpresa = tipo === 'CPF_SENHA' ? usuario.padStart(14, '0') : usuario;
     let empresa = await client_1.prisma.empresa.findUnique({
-        where: { cnpj: cnpjLimpo },
+        where: { cnpj: cnpjEmpresa },
     });
     if (!empresa) {
         const razao = (input.razao_social ?? '').trim();
@@ -35,7 +44,7 @@ async function cadastrarPorCredencial(input) {
         }
         empresa = await client_1.prisma.empresa.create({
             data: {
-                cnpj: cnpjLimpo,
+                cnpj: cnpjEmpresa,
                 razaoSocial: razao,
                 contabilidadeId: input.contabilidade_id ?? undefined,
             },

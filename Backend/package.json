@@ -1,24 +1,36 @@
 {
   "name": "autonacional-backend",
   "version": "1.0.0",
-  "description": "Backend AutoNacional - API para automação NFSe (Node.js)",
+  "description": "Backend AutoNacional - API para automação NFSe (Node.js/Express/TypeScript)",
   "main": "dist/main.js",
   "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
-    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "clean": "rm -rf dist",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:reset": "prisma migrate reset",
+    "playwright:install": "playwright install chromium",
+    "setup": "npm run prisma:generate && npm run prisma:push && npm run playwright:install",
     "test:playwright": "npx ts-node src/automation/scripts/test-playwright.ts"
   },
   "keywords": [
     "autonacional",
     "nfse",
-    "automação"
+    "automação",
+    "playwright",
+    "express",
+    "prisma"
   ],
   "author": "Equipe AutoNacional",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

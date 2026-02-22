@@ -2,15 +2,17 @@ import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CertificadoService, Certificado, CertificadoResponse } from '../../services/certificado.service';
-import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest } from '../../services/execucao.service';
+import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest, ExecutionSummaryResponse, EmpresaExecucaoItem, ExecutionStreamEvent } from '../../services/execucao.service';
+import { ExecucaoLogsService } from '../../services/execucao-logs.service';
+import { ToastService } from '../../services/toast.service';
 import { ContabilidadeService } from '../../services/contabilidade.service';
 import { EmpresasService } from '../../services/empresas.service';
 import { Empresa } from '../../models/empresas.model';
 import { Contabilidade } from '../../models/contabilidade.model';
+import type { ExecutionBatchLogPayload, ExecutionBatchLogItem } from '../../models/execucao-batch-log.model';
+import type { ExecutionRow, ExecutionRowStatus } from '../../models/execution-row.model';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
-import jsPDF from 'jspdf';
-// @ts-ignore - jspdf-autotable não tem tipos TypeScript completos
-import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 @Component({
   selector: 'app-execucao',
@@ -23,11 +25,25 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   certificadosValidos: Certificado[] = [];
   certificadosCarregados: Certificado[] = [];
   execucoes: ExecucaoEmpresa[] = [];
+  /** Lista unificada em linhas (modelo novo) */
+  executionRows: ExecutionRow[] = [];
+  /** Toggle "Mostrar apenas falhas" */
+  mostrarApenasFalhas = false;
+  /** True após clicar Iniciar - controla exibição dos cards de resumo */
+  executionStarted = false;
   
   // Contabilidade
   contabilidades: Contabilidade[] = [];
   contabilidadeSelecionada: number | null = null;
   carregandoContabilidades = false;
+
+  // Summary de empresas (cards ao selecionar contabilidade)
+  summary: ExecutionSummaryResponse | null = null;
+  carregandoSummary = false;
+  modalGrupoAberto = false;
+  grupoModal: 'total' | 'aptas' | 'inoperantes' | 'parciais' = 'total';
+  empresasGrupoModal: EmpresaExecucaoItem[] = [];
+  buscaModalGrupo = '';
   
   // Modal de seleção de certificados e empresas
   modalSelecaoAberto = false;
@@ -40,6 +56,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     nomeEmpresa: string;
     tipo: 'certificado' | 'empresa';
     dataVencimento?: string;
+    empresa_id?: number;
   }> = [];
   
   // Mapa para armazenar tipo de autenticação de cada empresa
@@ -98,10 +115,18 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   
   private intervalosStatus: Map<string, any> = new Map();
   private destroy$ = new Subject<void>();
+  private streamSubscription: { unsubscribe: () => void } | null = null;
+
+  // Salvar Log
+  batchId: string | null = null;
+  logSalvo = false;
+  isSavingLog = false;
 
   constructor(
     private certificadoService: CertificadoService,
     private execucaoService: ExecucaoService,
+    private execucaoLogsService: ExecucaoLogsService,
+    private toastService: ToastService,
     private contabilidadeService: ContabilidadeService,
     private empresasService: EmpresasService,
     private cdr: ChangeDetectorRef
@@ -137,13 +162,121 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     }
   }
 
+  onContabilidadeChange(value: number | null) {
+    this.contabilidadeSelecionada = value;
+    this.summary = null;
+    if (value) {
+      this.carregarSummary();
+    }
+  }
+
+  async carregarSummary() {
+    if (!this.contabilidadeSelecionada) return;
+    this.carregandoSummary = true;
+    try {
+      this.summary = await firstValueFrom(
+        this.execucaoService.obterSummaryExecucao(this.contabilidadeSelecionada!)
+      );
+    } catch (error) {
+      console.error('Erro ao carregar summary:', error);
+      this.toastService.error('Erro ao carregar resumo de empresas');
+      this.summary = null;
+    } finally {
+      this.carregandoSummary = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  abrirModalGrupo(grupo: 'total' | 'aptas' | 'inoperantes' | 'parciais') {
+    if (!this.summary) return;
+    this.grupoModal = grupo;
+    switch (grupo) {
+      case 'total':
+        this.empresasGrupoModal = [
+          ...this.summary.aptas,
+          ...this.summary.inoperantes,
+          ...this.summary.parciais,
+        ];
+        break;
+      case 'aptas':
+        this.empresasGrupoModal = [...this.summary.aptas];
+        break;
+      case 'inoperantes':
+        this.empresasGrupoModal = [...this.summary.inoperantes];
+        break;
+      case 'parciais':
+        this.empresasGrupoModal = [...this.summary.parciais];
+        break;
+    }
+    this.buscaModalGrupo = '';
+    this.modalGrupoAberto = true;
+    this.cdr.markForCheck();
+  }
+
+  fecharModalGrupo() {
+    this.modalGrupoAberto = false;
+    this.empresasGrupoModal = [];
+    this.buscaModalGrupo = '';
+    this.cdr.markForCheck();
+  }
+
+  filtrarEmpresasModalGrupo() {
+    this.cdr.markForCheck();
+  }
+
+  get empresasGrupoModalFiltradas(): EmpresaExecucaoItem[] {
+    if (!this.buscaModalGrupo?.trim()) return this.empresasGrupoModal;
+    const termo = this.buscaModalGrupo.toLowerCase().trim();
+    const termoNum = termo.replace(/\D/g, '');
+    return this.empresasGrupoModal.filter((e) => {
+      const nome = (e.razao_social || '').toLowerCase();
+      const cnpj = (e.cnpj || '').replace(/\D/g, '');
+      return nome.includes(termo) || (termoNum.length >= 4 && cnpj.includes(termoNum));
+    });
+  }
+
+  obterTituloModalGrupo(): string {
+    switch (this.grupoModal) {
+      case 'total':
+        return `Todas as empresas (${this.empresasGrupoModal.length})`;
+      case 'aptas':
+        return `Empresas aptas para execução (${this.empresasGrupoModal.length})`;
+      case 'inoperantes':
+        return `Empresas inoperantes (${this.empresasGrupoModal.length})`;
+      case 'parciais':
+        return `Empresas parciais (${this.empresasGrupoModal.length})`;
+      default:
+        return 'Empresas';
+    }
+  }
+
   ngOnDestroy() {
-    // Limpa todos os intervalos de polling
+    this.streamSubscription?.unsubscribe();
+    this.streamSubscription = null;
     this.intervalosStatus.forEach(intervalo => clearInterval(intervalo));
     this.intervalosStatus.clear();
-    
     this.destroy$.next();
     this.destroy$.complete();
+  }
+
+  /** Ordenação: EM_EXECUCAO primeiro, depois FILA, OK, ERRO */
+  private ordemStatus(a: ExecutionRowStatus): number {
+    const ord: Record<ExecutionRowStatus, number> = {
+      EM_EXECUCAO: 0,
+      FILA: 1,
+      OK: 2,
+      ERRO: 3,
+    };
+    return ord[a] ?? 4;
+  }
+
+  /** Linhas filtradas e ordenadas para exibição */
+  get executionRowsExibidas(): ExecutionRow[] {
+    let rows = [...this.executionRows];
+    if (this.mostrarApenasFalhas) {
+      rows = rows.filter((r) => r.status === 'ERRO');
+    }
+    return rows.sort((a, b) => this.ordemStatus(a.status) - this.ordemStatus(b.status));
   }
 
   // Getters para colunas (filtros derivados do array principal)
@@ -247,7 +380,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   // Getter para verificar se há execuções em andamento
   get temExecucoesEmAndamento(): boolean {
-    return this.execucoes.some(e => e.status === 'executando' || (e.status === 'fila' && e.mensagem !== 'Aguardando início...'));
+    return this.executionRows.some((r) => r.status === 'EM_EXECUCAO' || (r.status === 'FILA' && r.mensagem !== 'Aguardando início...')) ||
+      this.execucoes.some((e) => e.status === 'executando' || (e.status === 'fila' && e.mensagem !== 'Aguardando início...'));
   }
 
   // Getter para verificar se pode habilitar botão "Carregar Empresas Validadas"
@@ -257,10 +391,18 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   // Getter para verificar se pode habilitar botão "Iniciar"
   get podeIniciar(): boolean {
-    return this.execucoes.length > 0 && 
-           this.execucoes.some(e => e.status === 'fila' && e.mensagem === 'Aguardando início...') &&
-           !this.carregandoCertificados &&
-           !this.temExecucoesEmAndamento;
+    const temPendentes = this.executionRows.some((r) => r.status === 'FILA' && r.mensagem === 'Aguardando início...') ||
+      this.execucoes.some((e) => e.status === 'fila' && e.mensagem === 'Aguardando início...');
+    return this.execucoes.length > 0 && temPendentes && !this.carregandoCertificados && !this.temExecucoesEmAndamento;
+  }
+
+  // Getter para habilitar botão "Salvar Log"
+  get podeSalvarLog(): boolean {
+    return !!this.batchId &&
+           !this.temExecucoesEmAndamento &&
+           !this.logSalvo &&
+           !this.isSavingLog &&
+           this.execucoes.length > 0;
   }
 
   // Formata data de vencimento
@@ -296,11 +438,21 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   // Barra de progresso geral
   get totalEmpresas(): number {
-    return this.execucoes.length;
+    return this.executionRows.length || this.execucoes.length;
   }
 
   get empresasFinalizadas(): number {
-    return this.execucoes.filter(e => e.status === 'finalizado').length;
+    return (this.executionRows.length ? this.executionRows.filter((r) => r.status === 'OK').length : 0) ||
+      this.execucoes.filter((e) => e.status === 'finalizado').length;
+  }
+
+  get totalErro(): number {
+    return (this.executionRows.length ? this.executionRows.filter((r) => r.status === 'ERRO').length : 0) ||
+      this.execucoes.filter((e) => e.status === 'falhou').length;
+  }
+
+  get totalEmExecucao(): number {
+    return this.executionRows.filter((r) => r.status === 'EM_EXECUCAO' || r.status === 'FILA').length;
   }
 
   get percentualFinalizado(): number {
@@ -326,75 +478,42 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
     this.carregandoCertificadosDisponiveis = true;
     this.modalSelecaoAberto = true;
-    // Não limpa seleções ao abrir o modal - mantém seleções anteriores se houver
-    // this.empresasSelecionadas.clear();
-    this.buscaEmpresa = ''; // Limpa apenas a busca
+    this.buscaEmpresa = '';
+    this.tiposAutenticacao.clear();
 
     try {
-      // Busca certificados e empresas em paralelo
-      // Certificados: empresas que usam autenticação por certificado
-      // Empresas com has_cred: empresas que usam credenciais (login/senha)
-      const [certificadosResponse, empresas] = await Promise.all([
-        firstValueFrom(
-          this.certificadoService.listarCertificadosPorContabilidade(this.contabilidadeSelecionada!)
-        ),
-        firstValueFrom(
-          this.empresasService.listarPorContabilidade(this.contabilidadeSelecionada!, 0, 1000, true)
-        )
-      ]);
-      
-      // Filtra certificados: inclui todos; só exclui os que têm data_vencimento E estão vencidos
-      const hoje = new Date();
-      hoje.setHours(0, 0, 0, 0);
-      
-      this.certificadosDisponiveis = certificadosResponse.certificados.filter(cert => {
-        if (!cert.data_vencimento) return true; // Sem data = considera válido
-        const dataVencimento = new Date(cert.data_vencimento);
-        if (isNaN(dataVencimento.getTime())) return true; // Data inválida = considera válido
-        dataVencimento.setHours(0, 0, 0, 0);
-        return dataVencimento >= hoje;
+      let aptas: EmpresaExecucaoItem[];
+      if (this.summary?.aptas?.length !== undefined && this.summary.aptas.length > 0) {
+        aptas = this.summary.aptas;
+      } else {
+        const response = await firstValueFrom(
+          this.execucaoService.listarEmpresasAptas(this.contabilidadeSelecionada!)
+        );
+        aptas = response;
+      }
+
+      this.empresasUnificadas = aptas.map((emp) => {
+        const id = emp.empresa_id > 0 ? `emp-${emp.empresa_id}` : `cnpj-${emp.cnpj}`;
+        const tipoAuth = emp.login_metodo === 'CERTIFICADO' ? 'certificado' : 'credenciais';
+        this.tiposAutenticacao.set(id, tipoAuth);
+        return {
+          id,
+          cnpj: emp.cnpj,
+          nomeEmpresa: emp.razao_social,
+          tipo: (emp.login_metodo === 'CERTIFICADO' ? 'certificado' : 'empresa') as 'certificado' | 'empresa',
+          empresa_id: emp.empresa_id,
+        };
       });
-      
-      this.empresasDisponiveis = empresas;
-      
-      // Combina certificados e empresas em uma lista unificada
-      this.empresasUnificadas = [
-        ...this.certificadosDisponiveis.map(cert => {
-          const id = `cert-${cert.id}`;
-          // Armazena tipo de autenticação para certificados
-          this.tiposAutenticacao.set(id, 'certificado');
-          return {
-            id: id,
-            cnpj: cert.cnpj,
-            nomeEmpresa: cert.empresa,
-            tipo: 'certificado' as const,
-            dataVencimento: cert.data_vencimento
-          };
-        }),
-        ...this.empresasDisponiveis.map(emp => {
-          const id = `emp-${emp.id}`;
-          // Armazena tipo de autenticação para empresas (credenciais)
-          this.tiposAutenticacao.set(id, 'credenciais');
-          return {
-            id: id,
-            cnpj: emp.cnpj,
-            nomeEmpresa: emp.razao_social,
-            tipo: 'empresa' as const
-          };
-        })
-      ];
-      
-      // Inicializa lista filtrada com todas as empresas unificadas
+
       this.filtrarCertificados();
-      
-      // Atualiza estado de "todos selecionados" após carregar
       this.atualizarEstadoTodosSelecionados();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Erro ao carregar empresas validadas:', error);
-      alert('Erro ao carregar empresas validadas. Verifique se o backend está rodando.');
+      this.toastService.error('Erro ao carregar empresas validadas. Verifique se o backend está rodando.');
       this.modalSelecaoAberto = false;
     } finally {
       this.carregandoCertificadosDisponiveis = false;
+      this.cdr.markForCheck();
     }
   }
 
@@ -501,14 +620,20 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.empresasSelecionadas.has(emp.id)
     );
 
-    // Cria execuções pendentes (sem iniciar ainda)
+    // Reseta batch e log ao carregar novas empresas
+    this.batchId = null;
+    this.logSalvo = false;
+
+    // Cria execuções pendentes e linhas de exibição
+    const cnpjLimpo = (c: string) => c.replace(/[^\d]/g, '');
     this.execucoes = empresasSelecionadas.map(emp => {
-      const cnpjLimpo = emp.cnpj.replace(/[^\d]/g, '');
+      const c = cnpjLimpo(emp.cnpj);
       const tipoAuth = this.tiposAutenticacao.get(emp.id) || (emp.tipo === 'certificado' ? 'certificado' : 'credenciais');
+      const empresaIdParam = emp.empresa_id && emp.empresa_id > 0 ? String(emp.empresa_id) : c;
       return {
-        id: `pendente-${emp.id}-${cnpjLimpo}`,
-        empresa_id: cnpjLimpo, // Usa CNPJ como ID temporário
-        cnpj: cnpjLimpo,
+        id: `pendente-${emp.id}-${c}`,
+        empresa_id: empresaIdParam,
+        cnpj: c,
         nomeEmpresa: emp.nomeEmpresa,
         status: 'fila' as StatusExecucao,
         progresso: 0,
@@ -520,12 +645,30 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       };
     });
 
+    this.executionRows = empresasSelecionadas.map(emp => {
+      const c = cnpjLimpo(emp.cnpj);
+      const empresaIdParam = emp.empresa_id && emp.empresa_id > 0 ? String(emp.empresa_id) : c;
+      const metodo = (this.tiposAutenticacao.get(emp.id) || (emp.tipo === 'certificado' ? 'certificado' : 'credenciais')) === 'certificado' ? 'CERTIFICADO' : 'CREDENCIAL';
+      return {
+        empresa_id: empresaIdParam,
+        cnpj: c,
+        razao_social: emp.nomeEmpresa || c,
+        metodo,
+        qtd_emitidas: 0,
+        qtd_recebidas: 0,
+        qtd_canceladas: 0,
+        status: 'FILA' as ExecutionRowStatus,
+        mensagem: 'Aguardando início...',
+      };
+    });
+
     // Limpa seleções
     this.empresasSelecionadas.clear();
     this.todosSelecionados = false;
   }
 
   async iniciar() {
+    this.executionStarted = true;
     console.log('[Iniciar] Iniciando execução das empresas carregadas...');
     console.log('[Iniciar] Execuções carregadas:', this.execucoes.length);
 
@@ -595,7 +738,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         dataInicio: this.dataInicio,
         dataFim: this.dataFim,
         tipo: this.tipoNotas,
-        headless: this.headlessMode
+        headless: this.headlessMode,
+        contabilidade_id: this.contabilidadeSelecionada ?? undefined,
       };
 
       console.log('[Iniciar] Enviando requisição ao backend:', JSON.stringify(request, null, 2));
@@ -607,6 +751,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
       console.log('[Iniciar] Resposta recebida do backend:', response);
 
+      // Armazena batch_id e conecta ao stream SSE
+      if (response.batch_id) {
+        this.batchId = response.batch_id;
+        this.streamSubscription?.unsubscribe();
+        this.streamSubscription = this.execucaoService
+          .streamExecucoes(response.batch_id)
+          .pipe(takeUntil(this.destroy$))
+          .subscribe((ev) => this.handleStreamEvent(ev));
+      }
+
       // Cria um mapa de CNPJ para execução existente
       const execMap = new Map<string, ExecucaoEmpresa>();
       this.execucoes.forEach(exec => {
@@ -617,7 +771,6 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.execucoes = response.execucoes.map((exec) => {
         const cnpjLimpo = exec.cnpj || '';
         const execExistente = execMap.get(cnpjLimpo);
-        
         return {
           id: execExistente?.id || `${Date.now()}-${exec.empresa_id}-${cnpjLimpo}`,
           empresa_id: exec.empresa_id,
@@ -629,27 +782,39 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           mensagem: exec.mensagem || 'Aguardando execução...',
           dataInicio: exec.data_inicio ? new Date(exec.data_inicio) : new Date(),
           mostrarLogs: false,
-          tipoAutenticacao: execExistente?.tipoAutenticacao || 'certificado' // Preserva tipo de autenticação
+          tipoAutenticacao: execExistente?.tipoAutenticacao || 'certificado',
         };
       });
-      
-      // Atualiza lista filtrada após carregar execuções
+
+      // Sincroniza executionRows com status iniciais (EM_EXECUCAO/FILA conforme backend)
+      this.executionRows = this.executionRows.map((row) => {
+        const exec = this.execucoes.find((e) => String(e.empresa_id) === String(row.empresa_id) || e.cnpj === row.cnpj);
+        if (exec) {
+          const statusRow: ExecutionRowStatus = exec.status === 'executando' ? 'EM_EXECUCAO' : exec.status === 'fila' ? 'FILA' : exec.status === 'finalizado' ? 'OK' : exec.status === 'falhou' ? 'ERRO' : 'FILA';
+          return {
+            ...row,
+            status: statusRow,
+            mensagem: exec.mensagem || row.mensagem,
+          };
+        }
+        return row;
+      });
+
       this.atualizarExecucoesFinalizadasFiltradas();
 
-      // Inicia polling para todas as execuções simultaneamente
-      console.log('[Iniciar] Iniciando polling para', this.execucoes.length, 'execuções');
+      // Polling como fallback (SSE é primário)
       this.execucoes.forEach((execucao) => {
         const empresaId = execucao.empresa_id || execucao.cnpj;
-        console.log('[Iniciar] Iniciando polling para empresa:', empresaId, 'execução ID:', execucao.id);
         this.iniciarPollingStatus(execucao, empresaId);
       });
 
       // Mostra mensagem de sucesso/erro
+      const started = response.started ?? response.sucesso ?? 0;
       if (response.erros > 0) {
         console.warn(`${response.erros} empresas falharam ao serem adicionadas à fila:`, response.detalhes_erros);
-        alert(`${response.sucesso} empresas adicionadas à fila. ${response.erros} empresas falharam.`);
+        alert(`${started} empresas adicionadas à fila. ${response.erros} empresas falharam.`);
       } else {
-        console.log(`${response.sucesso} empresas adicionadas à fila com sucesso`);
+        console.log(`${started} empresas adicionadas à fila com sucesso`);
       }
 
     } catch (error: any) {
@@ -730,6 +895,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           erro: status.erro,
           qtdNotasEmitidas: status.qtd_notas_emitidas || 0,
           qtdNotasRecebidas: status.qtd_notas_recebidas || 0,
+          qtdNotasCanceladas: status.qtd_notas_canceladas || 0,
           resultadoFinal: status.resultado_final as ResultadoFinal | undefined,
           dataInicio: status.data_inicio ? new Date(status.data_inicio) : execucao.dataInicio,
           dataFim: status.data_fim ? new Date(status.data_fim) : execucao.dataFim
@@ -765,16 +931,24 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         }
       } catch (error: any) {
         console.error(`Erro ao obter status para empresa ${empresaId}:`, error);
-        
-        // Se for erro 404 (execução não encontrada), incrementa contador
+
+        // 404 = execução foi removida do backend (normal quando termina com OK ou ERRO)
+        // NÃO sobrescrever se já temos status final (SSE pode ter atualizado antes)
         if (error.status === 404 || error.statusCode === 404) {
-          tentativasErro404++;
-          
-          if (tentativasErro404 >= maxTentativas404) {
-            // Para o polling após várias tentativas de 404
+          const rowAtual = this.executionRows.find(
+            (r) => String(r.empresa_id) === String(empresaId) || r.cnpj === execucao.cnpj
+          );
+          if (rowAtual && (rowAtual.status === 'OK' || rowAtual.status === 'ERRO')) {
+            // Execução já finalizada via SSE - 404 é esperado, só para o polling
             clearInterval(intervalo);
             this.intervalosStatus.delete(execucao.id);
-            
+            return;
+          }
+
+          tentativasErro404++;
+          if (tentativasErro404 >= maxTentativas404) {
+            clearInterval(intervalo);
+            this.intervalosStatus.delete(execucao.id);
             this.atualizarStatusExecucao(execucao.id, {
               status: 'falhou',
               mensagem: 'Execução não encontrada no servidor. Verifique se foi iniciada corretamente.',
@@ -789,7 +963,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.intervalosStatus.set(execucao.id, intervalo);
   }
 
-  // Atualiza uma execução no array sem removê-la
+  // Atualiza uma execução no array sem removê-la e sincroniza executionRows
   private atualizarStatusExecucao(id: string, atualizacoes: Partial<ExecucaoEmpresa>) {
     const idx = this.execucoes.findIndex(e => e.id === id);
     if (idx >= 0) {
@@ -802,12 +976,90 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         atualizada,
         ...this.execucoes.slice(idx + 1),
       ];
+
+      const statusRow: ExecutionRowStatus = atualizada.status === 'executando' ? 'EM_EXECUCAO' : atualizada.status === 'fila' ? 'FILA' : atualizada.status === 'finalizado' ? 'OK' : atualizada.status === 'falhou' ? 'ERRO' : 'FILA';
+      const rowIdx = this.executionRows.findIndex((r) => String(r.empresa_id) === String(atualizada.empresa_id) || r.cnpj === atualizada.cnpj);
+      if (rowIdx >= 0) {
+        this.executionRows = [
+          ...this.executionRows.slice(0, rowIdx),
+          {
+            ...this.executionRows[rowIdx],
+            status: statusRow,
+            mensagem: statusRow === 'OK' || statusRow === 'ERRO' ? (statusRow === 'ERRO' ? (atualizada.erro || atualizada.mensagem || '') : '') : (atualizada.mensagem || this.executionRows[rowIdx].mensagem),
+            qtd_emitidas: atualizada.qtdNotasEmitidas ?? this.executionRows[rowIdx].qtd_emitidas,
+            qtd_recebidas: atualizada.qtdNotasRecebidas ?? this.executionRows[rowIdx].qtd_recebidas,
+            qtd_canceladas: atualizada.qtdNotasCanceladas ?? this.executionRows[rowIdx].qtd_canceladas ?? 0,
+          },
+          ...this.executionRows.slice(rowIdx + 1),
+        ];
+      }
       
-      // Atualiza lista filtrada se necessário
       if (atualizada.status === 'finalizado') {
         this.atualizarExecucoesFinalizadasFiltradas();
       }
+      this.cdr.markForCheck();
     }
+  }
+
+  private handleStreamEvent(ev: ExecutionStreamEvent): void {
+    const empresaId = ev.empresa_id;
+    const idx = this.executionRows.findIndex((r) => String(r.empresa_id) === String(empresaId));
+    if (idx < 0) return;
+
+    const row = this.executionRows[idx];
+    let next: Partial<ExecutionRow> = {};
+
+    if (ev.type === 'execution:started') {
+      next = { status: 'EM_EXECUCAO', mensagem: 'Abrindo navegador…', razao_social: ev.razao_social || row.razao_social, metodo: ev.metodo };
+    } else if (ev.type === 'execution:stage') {
+      next = { status: 'EM_EXECUCAO', mensagem: ev.message };
+    } else if (ev.type === 'execution:counts') {
+      next = {
+        qtd_emitidas: ev.qtd_emitidas,
+        qtd_recebidas: ev.qtd_recebidas,
+        qtd_canceladas: ev.qtd_canceladas ?? row.qtd_canceladas ?? 0,
+      };
+    } else if (ev.type === 'execution:finished') {
+      next = {
+        status: ev.status as ExecutionRowStatus,
+        mensagem: ev.status === 'OK' ? '' : (ev.message || ''),
+        qtd_emitidas: ev.qtd_emitidas ?? row.qtd_emitidas,
+        qtd_recebidas: ev.qtd_recebidas ?? row.qtd_recebidas,
+        qtd_canceladas: ev.qtd_canceladas ?? row.qtd_canceladas ?? 0,
+      };
+      const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === String(empresaId) || e.cnpj === row.cnpj);
+      if (execIdx >= 0) {
+        const statusExec = ev.status === 'OK' ? 'finalizado' : 'falhou';
+        const qtdE = ev.qtd_emitidas ?? row.qtd_emitidas ?? 0;
+        const qtdR = ev.qtd_recebidas ?? row.qtd_recebidas ?? 0;
+        let resultadoFinal: ResultadoFinal = 'SEM_MOVIMENTO';
+        if (qtdE > 0 && qtdR > 0) resultadoFinal = 'NFS_ENCONTRADAS';
+        else if (qtdE > 0) resultadoFinal = 'NOTAS_EMITIDAS';
+        else if (qtdR > 0) resultadoFinal = 'NOTAS_RECEBIDAS';
+        this.execucoes = [
+          ...this.execucoes.slice(0, execIdx),
+          {
+            ...this.execucoes[execIdx],
+            status: statusExec as StatusExecucao,
+            mensagem: ev.message || '',
+            erro: ev.status === 'ERRO' ? ev.message : undefined,
+            qtdNotasEmitidas: qtdE,
+            qtdNotasRecebidas: qtdR,
+            resultadoFinal: statusExec === 'finalizado' ? resultadoFinal : undefined,
+            dataFim: new Date(),
+          },
+          ...this.execucoes.slice(execIdx + 1),
+        ];
+        this.atualizarExecucoesFinalizadasFiltradas();
+      }
+    }
+
+    this.executionRows = [
+      ...this.executionRows.slice(0, idx),
+      { ...row, ...next },
+      ...this.executionRows.slice(idx + 1),
+    ];
+    this.cdr.markForCheck();
   }
 
   // Mapeia status do backend para frontend
@@ -890,11 +1142,121 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   limparExecucoes() {
     if (confirm('Tem certeza que deseja limpar todas as execuções?')) {
+      this.streamSubscription?.unsubscribe();
+      this.streamSubscription = null;
+      this.executionStarted = false;
       this.execucoes = [];
+      this.executionRows = [];
       this.execucoesFinalizadasFiltradas = [];
       this.searchValue = '';
       this.sortState = { column: null, direction: null };
+      this.batchId = null;
+      this.logSalvo = false;
     }
+  }
+
+  async salvarLog() {
+    if (!this.podeSalvarLog || !this.batchId) return;
+
+    this.isSavingLog = true;
+    try {
+      const competencia = this.obterCompetencia();
+      const totais = this.obterTotaisParaLog();
+      const itens = this.obterItensParaLog();
+
+      const payload: ExecutionBatchLogPayload = {
+        batch_id: this.batchId,
+        contabilidade_id: String(this.contabilidadeSelecionada ?? ''),
+        competencia,
+        dataInicio: this.converterDataParaYYYYMMDD(this.dataInicio),
+        dataFim: this.converterDataParaYYYYMMDD(this.dataFim),
+        tipo: this.tipoNotas,
+        headless: this.headlessMode,
+        totais: {
+          total_empresas: totais.total_empresas,
+          total_sucesso: totais.total_sucesso,
+          total_falha: totais.total_falha,
+          total_emitidas: totais.total_emitidas,
+          total_recebidas: totais.total_recebidas,
+          totais_por_resultado: totais.totais_por_resultado,
+        },
+        itens,
+      };
+
+      await firstValueFrom(this.execucaoLogsService.saveExecutionLog(payload));
+      this.logSalvo = true;
+      this.toastService.success('Log salvo com sucesso');
+      this.cdr.markForCheck();
+    } catch (error: unknown) {
+      const err = error as { status?: number; error?: { detail?: string } };
+      if (err.status === 409) {
+        this.toastService.error('Log já existe');
+        this.logSalvo = true;
+      } else {
+        this.toastService.error('Erro ao salvar log. Tente novamente.');
+      }
+      this.cdr.markForCheck();
+    } finally {
+      this.isSavingLog = false;
+    }
+  }
+
+  private obterCompetencia(): string {
+    if (this.dataInicio && this.dataInicio.length === 10) {
+      const [dia, mes, ano] = this.dataInicio.split('/');
+      return `${ano}-${mes}`;
+    }
+    const now = new Date();
+    const mes = String(now.getMonth() + 1).padStart(2, '0');
+    return `${now.getFullYear()}-${mes}`;
+  }
+
+  private converterDataParaYYYYMMDD(ddmmyyyy: string): string | null {
+    if (!ddmmyyyy || ddmmyyyy.length !== 10) return null;
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(ddmmyyyy);
+    if (!match) return null;
+    return `${match[3]}-${match[2]}-${match[1]}`;
+  }
+
+  private obterTotaisParaLog(): {
+    total_empresas: number;
+    total_sucesso: number;
+    total_falha: number;
+    total_emitidas: number;
+    total_recebidas: number;
+    totais_por_resultado: Record<string, number>;
+  } {
+    const total_empresas = this.execucoes.length;
+    const total_sucesso = this.execucoes.filter(e => e.status === 'finalizado').length;
+    const total_falha = this.execucoes.filter(e => e.status === 'falhou').length;
+    const total_emitidas = this.execucoes.reduce((s, e) => s + (e.qtdNotasEmitidas ?? 0), 0);
+    const total_recebidas = this.execucoes.reduce((s, e) => s + (e.qtdNotasRecebidas ?? 0), 0);
+
+    const totais_por_resultado: Record<string, number> = {};
+    for (const e of this.execucoes) {
+      if (e.status === 'finalizado' && e.resultadoFinal) {
+        totais_por_resultado[e.resultadoFinal] = (totais_por_resultado[e.resultadoFinal] ?? 0) + 1;
+      }
+    }
+    return { total_empresas, total_sucesso, total_falha, total_emitidas, total_recebidas, totais_por_resultado };
+  }
+
+  private obterItensParaLog(): ExecutionBatchLogItem[] {
+    return this.execucoes
+      .filter(e => e.status === 'finalizado' || e.status === 'falhou')
+      .map(e => ({
+        empresa_id: e.empresa_id ?? e.cnpj ?? '',
+        cnpj: e.cnpj ?? '',
+        nome_empresa: e.nomeEmpresa ?? '',
+        tipo_autenticacao: (e.tipoAutenticacao ?? 'certificado') as 'certificado' | 'credenciais',
+        status_final: e.status as 'finalizado' | 'falhou',
+        qtd_emitidas: e.qtdNotasEmitidas ?? 0,
+        qtd_recebidas: e.qtdNotasRecebidas ?? 0,
+        resultado_final: e.resultadoFinal,
+        started_at: e.dataInicio?.toISOString(),
+        finished_at: e.dataFim?.toISOString(),
+        erro_msg: e.erro,
+      }));
   }
 
   formatarCNPJ(cnpj: string): string {
@@ -946,317 +1308,57 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Relatório
+  // Relatório Excel (colunas conforme print: CNPJ, Razão Social, Método, NF Emitidas, NF Recebidas, NF Canceladas)
   async gerarResumo() {
-    // Usa as execuções finalizadas filtradas (ou todas se não houver filtro aplicado)
-    const execucoesParaPDF = this.execucoesFinalizadasFiltradas.length > 0 
-      ? this.execucoesFinalizadasFiltradas 
-      : this.colunaFinalizado;
-    
-    if (execucoesParaPDF.length === 0) {
+    const linhasParaExportar = this.executionRows.filter((r) => r.status === 'OK' || r.status === 'ERRO');
+
+    if (linhasParaExportar.length === 0) {
       alert('Não há execuções finalizadas para gerar o resumo.');
       return;
     }
 
     try {
       this.carregandoResumo = true;
-      this.gerarPDFResumo(execucoesParaPDF);
+      this.gerarExcelResumo(linhasParaExportar);
     } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido ao gerar PDF';
-      alert(`Erro ao gerar PDF do resumo: ${errorMessage}`);
+      console.error('Erro ao gerar Excel:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido ao gerar Excel';
+      alert(`Erro ao gerar resumo: ${errorMessage}`);
     } finally {
       this.carregandoResumo = false;
     }
   }
 
-  gerarPDFResumo(execucoes: ExecucaoEmpresa[]) {
-    const doc = new jsPDF();
-    
-    try {
-      
-      // Título
-      doc.setFontSize(18);
-      doc.setTextColor(12, 13, 10); // #0C0D0A
-      doc.setFont('helvetica', 'bold');
-      doc.text('Resumo de Execuções - Automação NFSe', 14, 20);
-      
-      // Subtítulo com data/hora e período
-      doc.setFontSize(10);
-      doc.setTextColor(30, 38, 21); // #1E2615
-      doc.setFont('helvetica', 'normal');
-      const dataHora = new Date().toLocaleString('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      doc.text(`Gerado em: ${dataHora}`, 14, 28);
-      
-      // Adiciona período se disponível
-      if (this.dataInicio && this.dataFim) {
-        doc.text(`Período: ${this.dataInicio} até ${this.dataFim}`, 14, 34);
-      }
-      
-      // Estatísticas gerais
-      const totalEmpresas = execucoes.length;
-      const comMovimento = execucoes.filter(e => 
-        e.resultadoFinal && e.resultadoFinal !== 'SEM_MOVIMENTO'
-      ).length;
-      const semMovimento = execucoes.filter(e => 
-        e.resultadoFinal === 'SEM_MOVIMENTO'
-      ).length;
-      
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`Total de empresas: ${totalEmpresas}`, 14, 42);
-      doc.text(`Com movimento: ${comMovimento}`, 14, 48);
-      doc.text(`Sem movimento: ${semMovimento}`, 14, 54);
-      
-      // Separar execuções por grupos de status
-      const grupos = {
-        ambas: execucoes.filter(e => e.resultadoFinal === 'NFS_ENCONTRADAS'),
-        emitidas: execucoes.filter(e => e.resultadoFinal === 'NOTAS_EMITIDAS'),
-        recebidas: execucoes.filter(e => e.resultadoFinal === 'NOTAS_RECEBIDAS'),
-        semMovimento: execucoes.filter(e => e.resultadoFinal === 'SEM_MOVIMENTO')
-      };
-      
-      // Função auxiliar para preparar dados da tabela (mesma estrutura da tela)
-      const prepararDadosTabela = (execucoesGrupo: ExecucaoEmpresa[]) => {
-        return execucoesGrupo.map(exec => {
-          const nomeEmpresa = exec.nomeEmpresa || exec.cnpj || '-';
-          const cnpjFormatado = exec.cnpj ? this.formatarCNPJ(exec.cnpj) : '-';
-          const status = this.obterTextoResultadoFinal(exec.resultadoFinal);
-          const emitidas = exec.qtdNotasEmitidas !== undefined && exec.qtdNotasEmitidas > 0 
-            ? exec.qtdNotasEmitidas.toString() 
-            : '-';
-          const recebidas = exec.qtdNotasRecebidas !== undefined && exec.qtdNotasRecebidas > 0 
-            ? exec.qtdNotasRecebidas.toString() 
-            : '-';
-          
-          return {
-            cnpj: cnpjFormatado,
-            nome: nomeEmpresa,
-            status: status,
-            resultadoFinal: exec.resultadoFinal,
-            emitidas: emitidas,
-            recebidas: recebidas
-          };
-        });
-      };
-      
-      // Função auxiliar para criar tabela com tratamento de paginação
-      const criarTabela = (tableData: any[], tituloGrupo: string, startY: number, isUltimaPagina: boolean = false) => {
-        if (tableData.length === 0) return startY;
-        
-        // Se for a última página, força nova página antes
-        if (isUltimaPagina) {
-          doc.addPage();
-          startY = 20; // Reset para o topo da nova página
-        }
-        
-        // Verifica se há espaço suficiente na página atual
-        const pageHeight = doc.internal.pageSize.height;
-        const espacoNecessario = 30 + (tableData.length * 8); // Título + linhas
-        const espacoDisponivel = pageHeight - startY - 25; // Margem inferior
-        
-        // Se não houver espaço suficiente e não for a primeira tabela, cria nova página
-        if (espacoDisponivel < espacoNecessario && startY > 60) {
-          doc.addPage();
-          startY = 20;
-        }
-        
-        // Adiciona título do grupo
-        doc.setFontSize(14);
-        doc.setTextColor(12, 13, 10);
-        doc.setFont('helvetica', 'bold');
-        doc.text(tituloGrupo, 14, startY);
-        
-        const yPosAposTitulo = startY + 8;
-        
-        // Converte dados para formato de array para autoTable
-        const bodyData = tableData.map(row => [
-          row.cnpj,
-          row.nome,
-          row.status,
-          row.emitidas,
-          row.recebidas
-        ]);
-        
-        // Criar tabela com mesma estrutura da tela
-        autoTable(doc, {
-          startY: yPosAposTitulo,
-          head: [['CNPJ', 'Nome da Empresa', 'Status', 'Emitidas', 'Recebidas']],
-          body: bodyData,
-          theme: 'striped',
-          headStyles: {
-            fillColor: [139, 203, 112], // #8BCB70
-            textColor: [12, 13, 10], // #0C0D0A
-            fontStyle: 'bold',
-            fontSize: 10,
-            halign: 'left',
-            cellPadding: { top: 5, bottom: 5, left: 4, right: 4 }
-          },
-          bodyStyles: {
-            textColor: [30, 38, 21], // #1E2615
-            fontSize: 9,
-            halign: 'left',
-            valign: 'middle',
-            cellPadding: { top: 4, bottom: 4, left: 4, right: 4 }
-          },
-          alternateRowStyles: {
-            fillColor: [240, 248, 247] // Cor clara alternativa (#A9D9D4 em RGB claro)
-          },
-          columnStyles: {
-            0: { cellWidth: 45, overflow: 'linebreak' }, // CNPJ
-            1: { cellWidth: 70, overflow: 'linebreak' }, // Nome da Empresa
-            2: { cellWidth: 35, overflow: 'linebreak' }, // Status
-            3: { cellWidth: 25, halign: 'center' }, // Emitidas
-            4: { cellWidth: 25, halign: 'center' }  // Recebidas
-          },
-          margin: { top: yPosAposTitulo, left: 14, right: 14, bottom: 25 },
-          styles: {
-            overflow: 'linebreak',
-            cellWidth: 'wrap',
-            cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
-            lineWidth: 0.1
-          },
-          pageBreak: 'auto',
-          rowPageBreak: 'avoid',
-          showHead: 'everyPage',
-          didDrawPage: (data: any) => {
-            // Adiciona número da página no rodapé
-            const pageHeight = doc.internal.pageSize.height;
-            const pageWidth = doc.internal.pageSize.width;
-            
-            doc.setFontSize(8);
-            doc.setTextColor(150, 150, 150);
-            doc.setFont('helvetica', 'normal');
-            doc.text(
-              `Página ${data.pageNumber}`,
-              pageWidth / 2,
-              pageHeight - 10,
-              { align: 'center' }
-            );
-          },
-          // Aplica cores diferentes para células de status baseado no resultadoFinal
-          didParseCell: (data: any) => {
-            try {
-              // Aplica estilo na coluna de Status (índice 2)
-              if (data.column && data.column.index === 2 && data.row && data.row.index >= 0) {
-                const rowIndex = data.row.index;
-                if (rowIndex < tableData.length) {
-                  const resultadoFinal = tableData[rowIndex]?.resultadoFinal;
-                  
-                  if (resultadoFinal === 'NFS_ENCONTRADAS') {
-                    // Verde claro para "Com notas (ambas)"
-                    data.cell.styles.fillColor = [139, 203, 112]; // #8BCB70
-                    data.cell.styles.textColor = [12, 13, 10]; // #0C0D0A
-                  } else if (resultadoFinal === 'NOTAS_EMITIDAS') {
-                    // Azul para "Notas Emitidas"
-                    data.cell.styles.fillColor = [191, 219, 254]; // Azul claro
-                    data.cell.styles.textColor = [30, 64, 175]; // Azul escuro
-                  } else if (resultadoFinal === 'NOTAS_RECEBIDAS') {
-                    // Roxo para "Notas Recebidas"
-                    data.cell.styles.fillColor = [221, 214, 254]; // Roxo claro
-                    data.cell.styles.textColor = [107, 33, 168]; // Roxo escuro
-                  } else if (resultadoFinal === 'SEM_MOVIMENTO') {
-                    // Cinza para "Sem movimento"
-                    data.cell.styles.fillColor = [229, 231, 235]; // Cinza claro
-                    data.cell.styles.textColor = [55, 65, 81]; // Cinza escuro
-                  }
-                }
-              }
-            } catch (e) {
-              // Ignora erros no didParseCell para não quebrar a geração do PDF
-              console.warn('Erro ao aplicar estilo na célula:', e);
-            }
-          }
-        });
-        
-        // Obtém a posição Y final após a tabela de forma segura
-        let finalY = yPosAposTitulo;
-        try {
-          const lastTable = (doc as any).lastAutoTable;
-          if (lastTable && lastTable.finalY !== undefined) {
-            finalY = lastTable.finalY;
-          } else {
-            // Fallback: usa a altura da página menos margem
-            finalY = pageHeight - 25;
-          }
-        } catch (e) {
-          // Se houver erro, usa altura da página menos margem
-          finalY = pageHeight - 25;
-        }
-        
-        // Garante que não ultrapasse o limite da página
-        if (finalY > pageHeight - 25) {
-          finalY = pageHeight - 25;
-        }
-        
-        return finalY + 10; // Adiciona espaçamento após a tabela
-      };
-      
-      // Função auxiliar para obter Y atual de forma segura
-      const obterYAtual = () => {
-        try {
-          const lastTable = (doc as any).lastAutoTable;
-          if (lastTable && lastTable.finalY !== undefined) {
-            const pageHeight = doc.internal.pageSize.height;
-            // Se o finalY está muito próximo do fim da página, retorna início da próxima página
-            if (lastTable.finalY > pageHeight - 30) {
-              return 20; // Próxima página
-            }
-            return lastTable.finalY + 10;
-          }
-        } catch (e) {
-          // Ignora erro
-        }
-        return 60; // Fallback para primeira página
-      };
-      
-      let currentY = 60;
-      
-      // 1. Grupo: Com notas (ambas)
-      if (grupos.ambas.length > 0) {
-        const dadosAmbas = prepararDadosTabela(grupos.ambas);
-        currentY = criarTabela(dadosAmbas, `Com Notas (Ambas) - ${grupos.ambas.length} empresa(s)`, currentY);
-        currentY = obterYAtual();
-      }
-      
-      // 2. Grupo: Notas Emitidas
-      if (grupos.emitidas.length > 0) {
-        const dadosEmitidas = prepararDadosTabela(grupos.emitidas);
-        currentY = criarTabela(dadosEmitidas, `Notas Emitidas - ${grupos.emitidas.length} empresa(s)`, currentY);
-        currentY = obterYAtual();
-      }
-      
-      // 3. Grupo: Notas Recebidas
-      if (grupos.recebidas.length > 0) {
-        const dadosRecebidas = prepararDadosTabela(grupos.recebidas);
-        currentY = criarTabela(dadosRecebidas, `Notas Recebidas - ${grupos.recebidas.length} empresa(s)`, currentY);
-        currentY = obterYAtual();
-      }
-      
-      // 4. Grupo: Sem Movimento (SEMPRE NA ÚLTIMA PÁGINA)
-      if (grupos.semMovimento.length > 0) {
-        const dadosSemMovimento = prepararDadosTabela(grupos.semMovimento);
-        criarTabela(dadosSemMovimento, `Sem Movimento - ${grupos.semMovimento.length} empresa(s)`, currentY, true);
-      }
+  gerarExcelResumo(linhas: ExecutionRow[]) {
+    const dadosPlanilha = linhas.map((row) => ({
+      'CNPJ': this.formatarCNPJ(row.cnpj),
+      'Razão Social': row.razao_social || '-',
+      'Método': row.metodo === 'CERTIFICADO' ? 'Certificado' : 'Credencial',
+      'NF Emitidas': row.qtd_emitidas ?? 0,
+      'NF Recebidas': row.qtd_recebidas ?? 0,
+      'NF Canceladas': row.qtd_canceladas ?? 0,
+    }));
 
-      // Nome do arquivo
-      const nomeArquivo = this.dataInicio && this.dataFim
-        ? `resumo_execucoes_${this.dataInicio.replace(/\//g, '-')}_${this.dataFim.replace(/\//g, '-')}_${new Date().getTime()}.pdf`
-        : `resumo_execucoes_${new Date().getTime()}.pdf`;
+    const ws = XLSX.utils.json_to_sheet(dadosPlanilha);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Execuções');
 
-      // Salva o PDF
-      doc.save(nomeArquivo);
-    } catch (error) {
-      console.error('Erro detalhado ao gerar PDF:', error);
-      console.error('Stack trace:', error instanceof Error ? error.stack : 'N/A');
-      throw error;
-    }
+    const colWidths = [
+      { wch: 18 }, // CNPJ
+      { wch: 35 }, // Razão Social
+      { wch: 14 }, // Método
+      { wch: 12 }, // NF Emitidas
+      { wch: 14 }, // NF Recebidas
+      { wch: 14 }, // NF Canceladas
+    ];
+    ws['!cols'] = colWidths;
+
+    const dataFormatada = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const nomeArquivo = this.dataInicio && this.dataFim
+      ? `resumo_execucoes_${this.dataInicio.replace(/\//g, '-')}_${this.dataFim.replace(/\//g, '-')}_${dataFormatada}.xlsx`
+      : `resumo_execucoes_${dataFormatada}.xlsx`;
+
+    XLSX.writeFile(wb, nomeArquivo);
   }
 
   obterTextoResultadoFinal(resultado?: ResultadoFinal): string {

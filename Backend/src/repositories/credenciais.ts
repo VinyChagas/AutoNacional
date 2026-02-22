@@ -16,6 +16,18 @@ export async function listarPorEmpresa(empresaId: number): Promise<Credencial[]>
   });
 }
 
+/**
+ * Obtém a primeira credencial da empresa (para uso em automação).
+ */
+export async function obterPrimeiraPorEmpresa(empresaId: number): Promise<Credencial | null> {
+  const creds = await prisma.credencial.findMany({
+    where: { empresaId },
+    orderBy: { updatedAt: 'desc' },
+    take: 1,
+  });
+  return creds[0] ?? null;
+}
+
 export async function obterPorId(credencialId: number): Promise<Credencial | null> {
   return prisma.credencial.findUnique({
     where: { id: credencialId },
@@ -54,12 +66,20 @@ export async function criarOuAtualizar(
 
 export async function atualizarStatus(
   credencialId: number,
-  status: string
+  status: string,
+  ultimaMensagem?: string | null
 ): Promise<Credencial | null> {
   try {
+    const data: { status: string; ultimoTesteEm: Date; ultimaMensagem?: string | null } = {
+      status,
+      ultimoTesteEm: new Date(),
+    };
+    if (ultimaMensagem !== undefined) {
+      data.ultimaMensagem = ultimaMensagem;
+    }
     return await prisma.credencial.update({
       where: { id: credencialId },
-      data: { status, ultimoTesteEm: new Date() },
+      data,
     });
   } catch {
     return null;

@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 /**
  * Router de validações (certificados e credenciais).
- * Jobs em memória com suporte a polling.
+ * Suporta SSE para progresso em tempo real.
  */
 const express_1 = require("express");
 const zod_1 = require("zod");
@@ -45,41 +45,53 @@ const response_1 = require("../middleware/response");
 const validacoesService = __importStar(require("../services/validacoes-service"));
 const logger = (0, logger_1.getLogger)('validacoes');
 const router = (0, express_1.Router)();
-const StartSchema = zod_1.z.object({
-    targets: zod_1.z.array(zod_1.z.enum(['CERTIFICADO', 'CREDENCIAL'])).min(1),
-    scope: zod_1.z.object({
-        mode: zod_1.z.enum(['SELECTED', 'FILTERED', 'ALL']),
-        empresa_ids: zod_1.z.array(zod_1.z.number().int().positive()).optional(),
-    }),
-    filters: zod_1.z
-        .object({
-        search: zod_1.z.string().optional(),
-        contabilidade_id: zod_1.z.number().optional(),
-        has_cert: zod_1.z.boolean().optional(),
-        has_cred: zod_1.z.boolean().optional(),
-        sem_cert: zod_1.z.boolean().optional(),
-        sem_cred: zod_1.z.boolean().optional(),
-        sem_metodo: zod_1.z.boolean().optional(),
-        sort: zod_1.z.string().optional(),
-        order: zod_1.z.enum(['asc', 'desc']).optional(),
-    })
-        .optional(),
-    options: zod_1.z
-        .object({
-        concurrency: zod_1.z.number().int().min(1).max(8).optional(),
-        timeoutSeconds: zod_1.z.number().int().min(10).max(300).optional(),
-        stopOnConsecutiveErrors: zod_1.z.number().int().min(1).max(20).optional(),
-    })
-        .optional(),
+const IniciarSchema = zod_1.z.object({
+    empresa_ids: zod_1.z.array(zod_1.z.number().int().positive()).min(1),
+    validar_certificados: zod_1.z.boolean(),
+    validar_credenciais: zod_1.z.boolean(),
+    headless: zod_1.z.boolean().optional().default(true),
 });
+router.post('/iniciar', (0, error_handler_1.asyncHandler)(async (req, res) => {
+    logger.info({ body: req.body }, 'POST /validacoes/iniciar recebido');
+    const parsed = IniciarSchema.safeParse(req.body);
+    if (!parsed.success) {
+        logger.warn({ issues: parsed.error.issues }, 'Payload inválido');
+        (0, response_1.jsonError)(res, parsed.error.issues?.[0]?.message ?? 'Payload inválido', 400);
+        return;
+    }
+    const jobId = await validacoesService.iniciarValidacao(parsed.data);
+    logger.info({ jobId, empresaIds: parsed.data.empresa_ids.length, validarCred: parsed.data.validar_credenciais }, 'Validação iniciada');
+    (0, response_1.jsonCreated)(res, { job_id: jobId }, 'Validação iniciada');
+}));
+router.get('/stream/:job_id', (0, error_handler_1.asyncHandler)(async (req, res) => {
+    const jobId = String(req.params.job_id ?? '').trim();
+    if (!jobId) {
+        (0, response_1.jsonError)(res, 'job_id é obrigatório', 400);
+        return;
+    }
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    validacoesService.registrarClienteSSE(jobId, res);
+}));
 router.post('/start', (0, error_handler_1.asyncHandler)(async (req, res) => {
+    const StartSchema = zod_1.z.object({
+        targets: zod_1.z.array(zod_1.z.enum(['CERTIFICADO', 'CREDENCIAL'])).min(1),
+        scope: zod_1.z.object({
+            mode: zod_1.z.enum(['SELECTED', 'FILTERED', 'ALL']),
+            empresa_ids: zod_1.z.array(zod_1.z.number().int().positive()).optional(),
+        }),
+        filters: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()).optional(),
+    });
     const parsed = StartSchema.safeParse(req.body);
     if (!parsed.success) {
         (0, response_1.jsonError)(res, parsed.error.issues?.[0]?.message ?? 'Payload inválido', 400);
         return;
     }
-    const jobId = await validacoesService.iniciarValidacao(parsed.data);
-    logger.info({ jobId }, 'Validação iniciada');
+    const jobId = await validacoesService.iniciarValidacaoLegacy(parsed.data);
+    logger.info({ jobId }, 'Validação iniciada (legacy)');
     (0, response_1.jsonCreated)(res, { job_id: jobId }, 'Validação iniciada');
 }));
 router.get('/:job_id', (0, error_handler_1.asyncHandler)(async (req, res) => {
@@ -98,9 +110,12 @@ router.get('/:job_id', (0, error_handler_1.asyncHandler)(async (req, res) => {
         status: job.status,
         progress: job.progress,
         total: job.total,
+        done: job.processed,
         ok: job.ok,
-        errors: job.errors,
+        invalidas: job.invalidas,
+        errors: job.erros,
         processed: job.processed,
+        items: job.items ?? [],
     });
 }));
 router.post('/:job_id/cancel', (0, error_handler_1.asyncHandler)(async (req, res) => {

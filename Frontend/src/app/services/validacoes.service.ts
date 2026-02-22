@@ -1,37 +1,35 @@
+/**
+ * Serviço de validação de empresas (certificados e credenciais).
+ * Suporta SSE para progresso em tempo real.
+ */
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError } from 'rxjs';
-import { map, catchError } from 'rxjs/operators';
+import { HttpClient } from '@angular/common/http';
+import { Observable, Subject, catchError, map, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 
-export interface StartValidacaoPayload {
-  targets: ('CERTIFICADO' | 'CREDENCIAL')[];
-  scope: {
-    mode: 'SELECTED' | 'FILTERED' | 'ALL';
-    empresa_ids?: number[];
-  };
-  filters?: Record<string, unknown>;
-  options?: {
-    concurrency?: number;
-    timeoutSeconds?: number;
-    stopOnConsecutiveErrors?: number;
-  };
+export interface IniciarPayload {
+  empresa_ids: number[];
+  validar_certificados: boolean;
+  validar_credenciais: boolean;
+  headless?: boolean;
 }
 
-export interface JobStatus {
-  job_id: string;
-  status: 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELED';
-  progress: number;
-  total: number;
-  ok: number;
-  errors: number;
-  processed: number;
-}
-
-interface ApiSuccess<T> {
-  success: true;
-  data?: T;
+export interface ProgressEvent {
+  empresa_id: number;
+  cnpj?: string;
+  razao_social?: string;
+  step: 'cert' | 'cred';
+  status: string;
   message?: string;
+  updated_at?: string;
+  cred_status?: string;
+  cert_status?: string;
+  status_geral?: string;
+}
+
+export interface DoneEvent {
+  job_id: string;
+  totals: { ok: number; invalidas: number; erros: number };
 }
 
 @Injectable({
@@ -42,44 +40,61 @@ export class ValidacoesService {
 
   constructor(private http: HttpClient) {}
 
-  start(payload: StartValidacaoPayload): Observable<{ job_id: string }> {
+  iniciar(payload: IniciarPayload): Observable<{ job_id: string }> {
     return this.http
-      .post<ApiSuccess<{ job_id: string }>>(`${this.baseUrl}/validacoes/start`, payload)
+      .post<{ success?: boolean; data?: { job_id: string } }>(
+        `${this.baseUrl}/validacoes/iniciar`,
+        {
+          empresa_ids: payload.empresa_ids,
+          validar_certificados: payload.validar_certificados,
+          validar_credenciais: payload.validar_credenciais,
+          headless: payload.headless ?? true,
+        }
+      )
       .pipe(
-        map((r) => {
-          const d = r?.data;
-          if (!d?.job_id) throw new Error('Resposta inválida');
-          return d;
+        map((r: { data?: { job_id: string }; job_id?: string }) => {
+          const id = r?.data?.job_id ?? r?.job_id;
+          if (!id) throw new Error('Resposta inválida: job_id não retornado');
+          return { job_id: id };
         }),
-        catchError(this.handleError)
+        catchError((err) => throwError(() => err))
       );
   }
 
-  getStatus(jobId: string): Observable<JobStatus> {
-    return this.http
-      .get<ApiSuccess<JobStatus>>(`${this.baseUrl}/validacoes/${jobId}`)
-      .pipe(
-        map((r) => {
-          const d = r?.data;
-          if (!d) throw new Error('Resposta inválida');
-          return { ...d, job_id: d.job_id ?? jobId };
-        }),
-        catchError(this.handleError)
-      );
-  }
+  /**
+   * Abre stream SSE e retorna Observable que emite eventos de progresso e done.
+   */
+  stream(jobId: string): Observable<ProgressEvent | DoneEvent> {
+    const subject = new Subject<ProgressEvent | DoneEvent>();
+    const url = `${this.baseUrl}/validacoes/stream/${jobId}`;
 
-  cancel(jobId: string): Observable<unknown> {
-    return this.http
-      .post<ApiSuccess<unknown>>(`${this.baseUrl}/validacoes/${jobId}/cancel`, {})
-      .pipe(catchError(this.handleError));
-  }
+    const eventSource = new EventSource(url);
 
-  private handleError = (error: HttpErrorResponse): Observable<never> => {
-    const msg =
-      error.error?.detail ||
-      error.error?.message ||
-      error.message ||
-      `Erro ${error.status}`;
-    return throwError(() => Object.assign(new Error(msg), { data: error.error?.data }));
-  };
+    eventSource.addEventListener('progress', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data || '{}') as ProgressEvent;
+        subject.next(data);
+      } catch {
+        /* ignore parse error */
+      }
+    });
+
+    eventSource.addEventListener('done', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data || '{}') as DoneEvent;
+        subject.next(data);
+      } catch {
+        /* ignore */
+      }
+      eventSource.close();
+      subject.complete();
+    });
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      subject.complete();
+    };
+
+    return subject.asObservable();
+  }
 }

@@ -1,0 +1,30 @@
+export type StatusGeral = 'OPERACIONAL' | 'ATENCAO' | 'PARCIAL' | 'INOPERANTE';
+export type LoginMetodo = 'CERTIFICADO' | 'CREDENCIAL' | null;
+export interface EmpresaExecucaoItem {
+    empresa_id: number;
+    cnpj: string;
+    razao_social: string;
+    status_geral: StatusGeral;
+    login_metodo: LoginMetodo;
+}
+export interface ExecutionSummaryResponse {
+    total_empresas: number;
+    total_aptas: number;
+    total_operacional: number;
+    total_atencao: number;
+    total_inoperante: number;
+    total_parcial: number;
+    aptas: EmpresaExecucaoItem[];
+    inoperantes: EmpresaExecucaoItem[];
+    parciais: EmpresaExecucaoItem[];
+}
+/**
+ * Obtém o resumo de empresas para execução por contabilidade.
+ * Inclui contagens e listas por grupo (aptas, inoperantes, parciais).
+ */
+export declare function obterSummaryExecucao(contabilidadeId: number): Promise<ExecutionSummaryResponse>;
+/**
+ * Lista apenas empresas aptas (OPERACIONAL ou ATENCAO) para carregar na fila de execução.
+ */
+export declare function listarEmpresasAptas(contabilidadeId: number): Promise<EmpresaExecucaoItem[]>;
+//# sourceMappingURL=execution-summary.service.d.ts.map

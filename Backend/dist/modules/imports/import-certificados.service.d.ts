@@ -1,10 +1,11 @@
-export type AcaoCert = 'IMPORTAR' | 'ERRO';
+export type AcaoCert = 'IMPORTAR' | 'ERRO' | 'DUPLICADO';
 export interface PreviewItemCert {
     indice: number;
     cnpj: string;
     razao_social: string;
     data_validade: string | null;
     existe_empresa: boolean;
+    existe_certificado: boolean;
     acao: AcaoCert;
     erro?: string;
 }

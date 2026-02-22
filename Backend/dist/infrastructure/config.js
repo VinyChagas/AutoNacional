@@ -87,5 +87,5 @@ exports.QUEUE_TIMEOUT = parseInt(process.env.QUEUE_TIMEOUT || '60', 10);
 // ============================================================================
 // Servidor
 // ============================================================================
-exports.PORT = parseInt(process.env.PORT || '3000', 10);
+exports.PORT = parseInt(process.env.PORT || '4321', 10);
 //# sourceMappingURL=config.js.map

@@ -13,7 +13,12 @@ function limparCnpj(cnpj: string): string {
   return cnpj.replace(/[.\/\-\s]/g, '').trim();
 }
 
-function toResponse(item: Awaited<ReturnType<typeof repo.obterPorId>> & { certificados_vinculados?: number }) {
+function toResponse(
+  item: Awaited<ReturnType<typeof repo.obterPorId>> & {
+    certificados_vinculados?: number;
+    empresas_vinculadas_count?: number;
+  }
+) {
   if (!item) return null;
   return {
     id: item.id,
@@ -24,6 +29,7 @@ function toResponse(item: Awaited<ReturnType<typeof repo.obterPorId>> & { certif
     responsavel: item.responsavel,
     data_cadastro: item.dataCadastro?.toISOString?.() ?? null,
     certificados_vinculados: item.certificados_vinculados ?? 0,
+    empresas_vinculadas_count: item.empresas_vinculadas_count ?? 0,
   };
 }
 
@@ -55,8 +61,11 @@ router.post('/', async (req: Request, res: Response) => {
       responsavel: req.body.responsavel,
     });
 
-    const vinculados = await repo.obterTotalVinculados(cont.id);
-    res.status(201).json(toResponse({ ...cont, certificados_vinculados: vinculados }));
+    const [vinculados, empresasCount] = await Promise.all([
+      repo.obterTotalVinculados(cont.id),
+      repo.contarEmpresas(cont.id),
+    ]);
+    res.status(201).json(toResponse({ ...cont, certificados_vinculados: vinculados, empresas_vinculadas_count: empresasCount }));
   } catch (error) {
     logger.error({ err: error }, 'Erro ao criar contabilidade');
     res.status(500).json({ detail: 'Erro ao criar contabilidade' });
@@ -71,10 +80,17 @@ router.get('/', async (req: Request, res: Response) => {
 
     const contabilidades = await repo.listarContabilidades(skip, limit);
     const ids = contabilidades.map((c) => c.id);
-    const vinculadosMap = await repo.obterTotalVinculadosPorIds(ids);
+    const [vinculadosMap, empresasMap] = await Promise.all([
+      repo.obterTotalVinculadosPorIds(ids),
+      repo.obterEmpresasVinculadasPorIds(ids),
+    ]);
 
     const items = contabilidades.map((c) =>
-      toResponse({ ...c, certificados_vinculados: vinculadosMap[c.id] ?? 0 })
+      toResponse({
+        ...c,
+        certificados_vinculados: vinculadosMap[c.id] ?? 0,
+        empresas_vinculadas_count: empresasMap[c.id] ?? 0,
+      })
     );
 
     res.json({
@@ -102,8 +118,11 @@ router.get('/:contabilidade_id', async (req: Request, res: Response) => {
       return;
     }
 
-    const vinculados = await repo.obterTotalVinculados(cont.id);
-    res.json(toResponse({ ...cont, certificados_vinculados: vinculados }));
+    const [vinculados, empresasCount] = await Promise.all([
+      repo.obterTotalVinculados(cont.id),
+      repo.contarEmpresas(cont.id),
+    ]);
+    res.json(toResponse({ ...cont, certificados_vinculados: vinculados, empresas_vinculadas_count: empresasCount }));
   } catch (error) {
     logger.error({ err: error }, 'Erro ao obter contabilidade');
     res.status(500).json({ detail: 'Erro ao obter contabilidade' });
@@ -137,8 +156,11 @@ router.put('/:contabilidade_id', async (req: Request, res: Response) => {
       return;
     }
 
-    const vinculados = await repo.obterTotalVinculados(cont.id);
-    res.json(toResponse({ ...cont, certificados_vinculados: vinculados }));
+    const [vinculados, empresasCount] = await Promise.all([
+      repo.obterTotalVinculados(cont.id),
+      repo.contarEmpresas(cont.id),
+    ]);
+    res.json(toResponse({ ...cont, certificados_vinculados: vinculados, empresas_vinculadas_count: empresasCount }));
   } catch (error) {
     logger.error({ err: error }, 'Erro ao atualizar contabilidade');
     res.status(500).json({ detail: 'Erro ao atualizar contabilidade' });

@@ -15,7 +15,14 @@ export declare function setDownloadsBasePath(basePath: string): void;
  */
 export declare function getDownloadBasePath(): string;
 /**
+ * Formata o mês da execução para uso como nome de pasta.
+ * Usa o mês que está sendo executado (não a competência da nota).
+ * Ex: (2026, 1) → "janeiro-2026"
+ */
+export declare function formatarMesExecucaoParaPasta(ano: number, mes: number): string;
+/**
  * Formata a competência para uso como nome de pasta.
+ * @deprecated Use formatarMesExecucaoParaPasta para nova estrutura (contabilidade/mês-ano/empresa).
  * Ex: "10/2025" → "10-2025"
  */
 export declare function formatarCompetenciaParaPasta(competencia: string): string;
@@ -37,16 +44,19 @@ export declare function detectarExtensaoArquivo(download: Download): Promise<str
 export declare function gerarNomeArquivo(download: Download, extensao: string, prefixo?: string): Promise<string>;
 /**
  * Monta o caminho completo seguindo a hierarquia definida.
- * Estrutura: {base_path}/{competencia}/{empresa}/{tipo_nota}/
+ * Estrutura: {base_path}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo_nota}/
+ * - contabilidade: nome da contabilidade em execução
+ * - mes_extenso: mês da execução por extenso (ex: janeiro-2026), NÃO a competência da nota
  */
-export declare function montarCaminhoCompleto(basePath: string, competencia: string, empresa: string, tipoNota: string): string;
+export declare function montarCaminhoCompleto(basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, empresa: string, tipoNota: string): string;
 /**
  * Salva um download já interceptado no diretório correto.
+ * Estrutura: {base}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo}/
  */
-export declare function salvarDownloadDireto(download: Download, basePath: string, competencia: string, empresa: string, tipoNota: string, nomeArquivoPrefixo?: string): Promise<string>;
+export declare function salvarDownloadDireto(download: Download, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, empresa: string, tipoNota: string, nomeArquivoPrefixo?: string): Promise<string>;
 /**
  * Baixa um arquivo diretamente via requisição HTTP usando a sessão autenticada.
  * Estratégia RECOMENDADA para downloads.
  */
-export declare function baixarArquivoDireto(page: Page, seletorLink: string, basePath: string, competencia: string, empresa: string, tipoNota: string): Promise<string>;
+export declare function baixarArquivoDireto(page: Page, seletorLink: string, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, empresa: string, tipoNota: string): Promise<string>;
 //# sourceMappingURL=download-manager.d.ts.map

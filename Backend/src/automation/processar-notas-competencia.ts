@@ -121,22 +121,26 @@ async function verificarNotaCancelada(rowLocator: Locator): Promise<boolean> {
 
 /**
  * Verifica se uma nota é válida (não cancelada).
+ * Retorna { valida: boolean; cancelada: boolean } para contar canceladas.
  */
-async function verificarNotaValida(rowLocator: Locator): Promise<boolean> {
-  if (await verificarNotaCancelada(rowLocator)) {
+async function verificarNotaValida(rowLocator: Locator): Promise<{ valida: boolean; cancelada: boolean }> {
+  const cancelada = await verificarNotaCancelada(rowLocator);
+  if (cancelada) {
     logger.info('Nota cancelada detectada. Não será baixada.');
-    return false;
+    return { valida: false, cancelada: true };
   }
-  return true;
+  return { valida: true, cancelada: false };
 }
 
 /**
  * Baixa XML e DANFS-e de uma linha da tabela.
+ * Usa nomeContabilidade e mesExecucaoExtenso para a estrutura de pastas (não a competência da nota).
  */
 async function baixarArquivosDaLinha(
   page: Page,
   rowLocator: Locator,
-  competenciaAlvo: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
   nomeEmpresa: string,
   tipoNota: 'Emitidas' | 'Recebidas'
 ): Promise<void> {
@@ -175,7 +179,7 @@ async function baixarArquivosDaLinha(
       page.waitForEvent('download'),
       linkXml.nth(0).click(),
     ]);
-    await salvarDownloadDireto(downloadXml, basePath, competenciaAlvo, nomeEmpresa, tipoNota, prefixo);
+    await salvarDownloadDireto(downloadXml, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
   } catch (e) {
     logger.error({ err: e }, 'Erro ao baixar XML');
   }
@@ -194,7 +198,7 @@ async function baixarArquivosDaLinha(
       page.waitForEvent('download'),
       linkPdf.nth(0).click(),
     ]);
-    await salvarDownloadDireto(downloadPdf, basePath, competenciaAlvo, nomeEmpresa, tipoNota, prefixo);
+    await salvarDownloadDireto(downloadPdf, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
   } catch (e) {
     logger.error({ err: e }, 'Erro ao baixar DANFS-e');
   }
@@ -204,17 +208,20 @@ async function baixarArquivosDaLinha(
 
 /**
  * Processa a tabela de notas emitidas.
+ * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
 export async function processarTabelaEmitidas(
   page: Page,
-  competenciaAlvo: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
   nomeEmpresa: string
-): Promise<{ qtd_baixadas: number; sem_registros: boolean; encontrou_notas: boolean }> {
+): Promise<{ qtd_baixadas: number; qtd_canceladas: number; sem_registros: boolean; encontrou_notas: boolean }> {
   if (await verificarSemRegistros(page)) {
-    return { qtd_baixadas: 0, sem_registros: true, encontrou_notas: false };
+    return { qtd_baixadas: 0, qtd_canceladas: 0, sem_registros: true, encontrou_notas: false };
   }
 
   let qtdBaixadas = 0;
+  let qtdCanceladas = 0;
   let encontrouNotas = false;
 
   while (true) {
@@ -226,17 +233,12 @@ export async function processarTabelaEmitidas(
     for (let i = 0; i < total; i++) {
       const linha = linhas.nth(i);
       try {
-        const celulas = linha.locator('td');
-        let competenciaTexto = competenciaAlvo;
-        try {
-          competenciaTexto = normalizarCompetencia((await celulas.nth(2).innerText()).trim());
-        } catch {
-          /* use competenciaAlvo */
-        }
         encontrouNotas = true;
 
-        if (await verificarNotaValida(linha)) {
-          await baixarArquivosDaLinha(page, linha, competenciaTexto || competenciaAlvo, nomeEmpresa, 'Emitidas');
+        const { valida, cancelada } = await verificarNotaValida(linha);
+        if (cancelada) qtdCanceladas++;
+        if (valida) {
+          await baixarArquivosDaLinha(page, linha, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Emitidas');
           qtdBaixadas++;
         }
       } catch (e) {
@@ -249,22 +251,25 @@ export async function processarTabelaEmitidas(
     await page.waitForTimeout(_minActionDelayMs);
   }
 
-  return { qtd_baixadas: qtdBaixadas, sem_registros: false, encontrou_notas: encontrouNotas };
+  return { qtd_baixadas: qtdBaixadas, qtd_canceladas: qtdCanceladas, sem_registros: false, encontrou_notas: encontrouNotas };
 }
 
 /**
  * Processa a tabela de notas recebidas.
+ * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
 export async function processarTabelaRecebidas(
   page: Page,
-  competenciaAlvo: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
   nomeEmpresa: string
-): Promise<{ qtd_baixadas: number; sem_registros: boolean; encontrou_notas: boolean }> {
+): Promise<{ qtd_baixadas: number; qtd_canceladas: number; sem_registros: boolean; encontrou_notas: boolean }> {
   if (await verificarSemRegistros(page)) {
-    return { qtd_baixadas: 0, sem_registros: true, encontrou_notas: false };
+    return { qtd_baixadas: 0, qtd_canceladas: 0, sem_registros: true, encontrou_notas: false };
   }
 
   let qtdBaixadas = 0;
+  let qtdCanceladas = 0;
   let encontrouNotas = false;
 
   while (true) {
@@ -276,17 +281,12 @@ export async function processarTabelaRecebidas(
     for (let i = 0; i < total; i++) {
       const linha = linhas.nth(i);
       try {
-        const celulas = linha.locator('td');
-        let competenciaTexto = competenciaAlvo;
-        try {
-          competenciaTexto = normalizarCompetencia((await celulas.nth(2).innerText()).trim());
-        } catch {
-          /* use competenciaAlvo */
-        }
         encontrouNotas = true;
 
-        if (await verificarNotaValida(linha)) {
-          await baixarArquivosDaLinha(page, linha, competenciaTexto || competenciaAlvo, nomeEmpresa, 'Recebidas');
+        const { valida, cancelada } = await verificarNotaValida(linha);
+        if (cancelada) qtdCanceladas++;
+        if (valida) {
+          await baixarArquivosDaLinha(page, linha, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Recebidas');
           qtdBaixadas++;
         }
       } catch (e) {
@@ -299,7 +299,7 @@ export async function processarTabelaRecebidas(
     await page.waitForTimeout(_minActionDelayMs);
   }
 
-  return { qtd_baixadas: qtdBaixadas, sem_registros: false, encontrou_notas: encontrouNotas };
+  return { qtd_baixadas: qtdBaixadas, qtd_canceladas: qtdCanceladas, sem_registros: false, encontrou_notas: encontrouNotas };
 }
 
 /**

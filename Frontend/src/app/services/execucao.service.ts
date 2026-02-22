@@ -1,9 +1,49 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { Observable, Subject } from 'rxjs';
+import { catchError, map } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
+
+/** Eventos SSE de execução em tempo real */
+export interface ExecutionStreamEventStarted {
+  type: 'execution:started';
+  empresa_id: string;
+  cnpj: string;
+  razao_social?: string;
+  metodo: 'CERTIFICADO' | 'CREDENCIAL';
+}
+
+export interface ExecutionStreamEventStage {
+  type: 'execution:stage';
+  empresa_id: string;
+  stage: string;
+  message: string;
+}
+
+export interface ExecutionStreamEventCounts {
+  type: 'execution:counts';
+  empresa_id: string;
+  qtd_emitidas: number;
+  qtd_recebidas: number;
+  qtd_canceladas?: number;
+}
+
+export interface ExecutionStreamEventFinished {
+  type: 'execution:finished';
+  empresa_id: string;
+  status: 'OK' | 'ERRO';
+  message?: string;
+  qtd_emitidas?: number;
+  qtd_recebidas?: number;
+  qtd_canceladas?: number;
+}
+
+export type ExecutionStreamEvent =
+  | ExecutionStreamEventStarted
+  | ExecutionStreamEventStage
+  | ExecutionStreamEventCounts
+  | ExecutionStreamEventFinished;
 
 export type StatusExecucao = 'fila' | 'executando' | 'finalizado' | 'falhou';
 export type ResultadoFinal = 'SEM_MOVIMENTO' | 'NOTAS_EMITIDAS' | 'NOTAS_RECEBIDAS' | 'NFS_ENCONTRADAS';
@@ -17,6 +57,7 @@ export interface ExecucaoEmpresa {
   resultadoFinal?: ResultadoFinal; // preenchido quando status = 'finalizado'
   qtdNotasEmitidas?: number;
   qtdNotasRecebidas?: number;
+  qtdNotasCanceladas?: number;
   etapa_atual?: string;
   progresso: number; // 0-100
   logs: string[];
@@ -59,6 +100,7 @@ export interface ExecucaoStatusResponse {
   titulo?: string;
   qtd_notas_emitidas?: number;
   qtd_notas_recebidas?: number;
+  qtd_notas_canceladas?: number;
   resultado_final?: string;
 }
 
@@ -89,10 +131,14 @@ export interface MultiplasExecucoesRequest {
   dataFim: string;
   tipo: string;
   headless: boolean;
+  contabilidade_id?: number | null;
 }
 
 export interface MultiplasExecucoesResponse {
-  sucesso: number;
+  success?: boolean;
+  batch_id?: string;
+  started?: number;
+  sucesso?: number; // legado
   erros: number;
   execucoes: ExecucaoStatusResponse[];
   detalhes_erros: Array<{
@@ -100,6 +146,28 @@ export interface MultiplasExecucoesResponse {
     cnpj: string;
     erro: string;
   }>;
+}
+
+/** Item de empresa para a tela de execução (summary e fila aptas). */
+export interface EmpresaExecucaoItem {
+  empresa_id: number;
+  cnpj: string;
+  razao_social: string;
+  status_geral: 'OPERACIONAL' | 'ATENCAO' | 'PARCIAL' | 'INOPERANTE';
+  login_metodo: 'CERTIFICADO' | 'CREDENCIAL' | null;
+}
+
+/** Resposta do endpoint GET /execucao/companies/summary */
+export interface ExecutionSummaryResponse {
+  total_empresas: number;
+  total_aptas: number;
+  total_operacional: number;
+  total_atencao: number;
+  total_inoperante: number;
+  total_parcial: number;
+  aptas: EmpresaExecucaoItem[];
+  inoperantes: EmpresaExecucaoItem[];
+  parciais: EmpresaExecucaoItem[];
 }
 
 @Injectable({
@@ -211,6 +279,62 @@ export class ExecucaoService {
         return throwError(() => error);
       })
     );
+  }
+
+  obterSummaryExecucao(contabilidadeId: number): Observable<ExecutionSummaryResponse> {
+    return this.http.get<ExecutionSummaryResponse>(
+      `${this.baseUrl}/execucao/companies/summary`,
+      { params: { contabilidade_id: contabilidadeId } }
+    ).pipe(
+      catchError((error) => {
+        console.error('Erro ao obter summary de execução:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  listarEmpresasAptas(contabilidadeId: number): Observable<EmpresaExecucaoItem[]> {
+    return this.http
+      .get<{ empresas: EmpresaExecucaoItem[] }>(
+        `${this.baseUrl}/execucao/companies`,
+        { params: { contabilidade_id: contabilidadeId } }
+      )
+      .pipe(
+        map((res) => res.empresas ?? []),
+        catchError((error) => {
+          console.error('Erro ao listar empresas aptas:', error);
+          return throwError(() => error);
+        })
+      );
+  }
+
+  /**
+   * Abre stream SSE de execuções e retorna Observable que emite eventos em tempo real.
+   */
+  streamExecucoes(batchId: string): Observable<ExecutionStreamEvent> {
+    const subject = new Subject<ExecutionStreamEvent>();
+    const url = `${this.baseUrl}/execucao/stream/${batchId}`;
+
+    const eventSource = new EventSource(url);
+
+    const eventNames = ['started', 'stage', 'counts', 'finished'] as const;
+    eventNames.forEach((name) => {
+      eventSource.addEventListener(name, (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data || '{}') as ExecutionStreamEvent;
+          subject.next(data);
+        } catch {
+          /* ignore parse error */
+        }
+      });
+    });
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      subject.complete();
+    };
+
+    return subject.asObservable();
   }
 }
 

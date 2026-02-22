@@ -18,4 +18,8 @@ export declare function validarCPF(valor: string): boolean;
  * CPF (11 dígitos) é convertido para "000" + CPF = 14 dígitos.
  */
 export declare function cnpjParaEmpresa(documento: string, tipo: 'CNPJ' | 'CPF'): string;
+/**
+ * Formata documento para exibição (CNPJ ou CPF).
+ */
+export declare function formatarDocumento(doc: string, tipo: 'CNPJ' | 'CPF'): string;
 //# sourceMappingURL=documento.utils.d.ts.map

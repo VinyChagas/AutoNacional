@@ -1,219 +1,130 @@
 import {
   Component,
-  OnInit,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
+  OnInit,
 } from '@angular/core';
-import {
-  FormBuilder,
-  FormGroup,
-  ReactiveFormsModule,
-  Validators,
-  FormsModule,
-} from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
-import { EmpresasUnificadoService } from '../../services/empresas-unificado.service';
 import { ContabilidadeService } from '../../services/contabilidade.service';
-import { ValidacoesService } from '../../services/validacoes.service';
-import {
+import { EmpresasUnificadoService } from '../../services/empresas-unificado.service';
+import { CredenciaisService } from '../../services/credenciais.service';
+import { ToastService } from '../../services/toast.service';
+import type { Contabilidade } from '../../models/contabilidade.model';
+import type {
   EmpresaListagemItem,
   EmpresaDetalhes,
-  CadastroCredencialPayload,
-  SortField,
 } from '../../models/empresas-unificado.model';
-import { Contabilidade } from '../../models/contabilidade.model';
+import { toEmpresaRow } from '../../models/empresas-unificado.model';
+import {
+  computeCertStatus,
+  computeCompanyStatusGeral,
+  needsRevalidateCredentials,
+  getCertDisplayInfo as getCertDisplayInfoUtil,
+  computeStatusReason,
+} from './status.utils';
+import { EmpresaDrawerComponent, type EditorSavePayload } from './empresa-drawer/empresa-drawer.component';
+import { EmpresasCadastroComponent } from './empresas-cadastro/empresas-cadastro.component';
+import { ImportCertificadosLoteModalComponent } from './import-certificados-lote-modal/import-certificados-lote-modal.component';
+import { ImportCredenciaisModalComponent } from './import-credenciais-modal/import-credenciais-modal.component';
+import {
+  EmpresasSummaryCardsComponent,
+  type EmpresasFilterPreset,
+} from './empresas-summary-cards/empresas-summary-cards.component';
+import { EmpresasValidacaoModalComponent } from './empresas-validacao-modal/empresas-validacao-modal.component';
+
+/** Chip de filtro */
+export interface ChipFilter {
+  id: string;
+  label: string;
+}
 
 @Component({
   selector: 'app-empresas',
   standalone: true,
-  imports: [ReactiveFormsModule, FormsModule, CommonModule, RouterModule],
+  imports: [
+    FormsModule,
+    CommonModule,
+    RouterModule,
+    EmpresaDrawerComponent,
+    EmpresasCadastroComponent,
+    ImportCertificadosLoteModalComponent,
+    ImportCredenciaisModalComponent,
+    EmpresasSummaryCardsComponent,
+    EmpresasValidacaoModalComponent,
+  ],
   templateUrl: './empresas.component.html',
   styleUrls: ['./empresas.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EmpresasComponent implements OnInit {
-  items: EmpresaListagemItem[] = [];
-  filtrados: EmpresaListagemItem[] = [];
-  total = 0;
-  page = 1;
-  limit = 50;
+  title = 'Empresas';
+  subtitle = 'Cadastro unificado de empresas, certificados e credenciais';
 
-  // Seleção para exclusão em massa
-  selectedIds = new Set<string>();
-  modalExcluirAberto = false;
-  excluindoEmMassa = false;
+  /** Preset de filtro ativo (clique nos cards). */
+  presetActive: EmpresasFilterPreset | null = null;
 
   search = '';
-  contabilidadeId: number | null = null;
-  toggleComCert = false;
-  toggleComCred = false;
-  toggleCertVencido = false;
-  toggleSemCert = false;
-  toggleSemCred = false;
-  toggleSemMetodo = false;
-
-  sortField: SortField | null = null;
-  sortOrder: 'asc' | 'desc' = 'asc';
+  empresasCount = 0;
+  sortLabel = 'padrão';
+  sortOpen = false;
 
   contabilidades: Contabilidade[] = [];
-  loading = false;
+  contabilidadeId: number | null = null;
+  contabDropdownOpen = false;
   loadingContabilidades = false;
 
-  // Feedback
-  toastSucesso: string | null = null;
-  toastErro: string | null = null;
+  chipsDisponiveis: ChipFilter[] = [
+    { id: 'com_cert', label: 'Com certificado' },
+    { id: 'com_cred', label: 'Com credenciais' },
+    { id: 'cert_vencido', label: 'Cert. vencido' },
+    { id: 'sem_cert', label: 'Sem certificado' },
+    { id: 'sem_cred', label: 'Sem credenciais' },
+    { id: 'sem_metodo', label: 'Sem método' },
+  ];
+  chipsAtivos = new Set<string>([]);
 
-  // Modal Cadastrar
-  modalCadastrarAberto = false;
-  passoCadastrar: 'escolha' | 'cert' | 'cred' = 'escolha';
-  certFile: File | null = null;
-  certSenha = '';
-  credForm: FormGroup;
-  salvandoCadastro = false;
+  listaEmpresas: EmpresaListagemItem[] = [];
+  selectedIds = new Set<string>();
+  carregando = false;
+  erro: string | null = null;
 
-  // Modal Editar
-  modalEditarAberto = false;
-  editandoEmpresa: EmpresaDetalhes | null = null;
-  editTab: 'dados' | 'cert' | 'cred' = 'dados';
-  editDadosForm: FormGroup;
-  editCertFile: File | null = null;
-  editCertSenha = '';
-  editCredForm: FormGroup;
-  salvandoEdicao = false;
-  adicionandoCert = false;
-  adicionandoCred = false;
+  // Linha expandida (edição)
+  empresaSelecionada: EmpresaListagemItem | null = null;
+  empresaDetalhes: EmpresaDetalhes | null = null;
+  carregandoDetalhes = false;
+  salvandoCertificado = false;
+  salvandoGeral = false;
+  removendoCertificado = false;
 
-  // Modal Import Certificados
-  modalImportCertAberto = false;
-  importCertFiles: File[] = [];
-  importCertSenha = '';
-  importCertPreview: { session_id: string; items: any[] } | null = null;
-  importCertConfirmando = false;
-  loadingPreviewCert = false;
+  // Modal de exclusão
+  excluirConfirmando: EmpresaListagemItem | null = null;
+  excluindo = false;
 
-  // Modal Validar
-  modalValidarAberto = false;
-  validarCert = false;
-  validarCred = false;
-  validarEscopo: 'SELECTED' | 'FILTERED' | 'ALL' = 'FILTERED';
-  validarAvancadoAberto = false;
-  validarConcorrencia = 2;
-  validarTimeout = 60;
-  validarStopErros = 5;
-  validarIniciando = false;
-  validarJobId: string | null = null;
-  validarStatus: 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELED' | null = null;
-  validarProgress = 0;
-  validarTotal = 0;
-  validarOk = 0;
-  validarErrors = 0;
-  validarProcessed = 0;
-  validarPollInterval: ReturnType<typeof setInterval> | null = null;
+  // Modal confirmar remover certificado
+  removerCertificadoConfirmando: { cnpj: string; razaoSocial?: string } | null = null;
 
-  // Modal Import Credenciais
-  modalImportCredAberto = false;
-  importCredFile: File | null = null;
-  importCredSessionId: string | null = null;
-  importCredPreview: { session_id: string; items: any[] } | null = null;
-  importCredSelecionados = new Set<number>(); // linha dos itens selecionados
-  importCredConfirmando = false;
-  loadingPreviewCred = false;
+  // Editor dirty (alterações não salvas)
+  editorDirty = false;
 
   constructor(
-    private svc: EmpresasUnificadoService,
-    private contSvc: ContabilidadeService,
-    private validacoesSvc: ValidacoesService,
-    private fb: FormBuilder,
-    private cdr: ChangeDetectorRef
-  ) {
-    this.credForm = this.fb.group({
-      cnpj: ['', [Validators.required]],
-      razao_social: ['', [Validators.required, Validators.minLength(2)]],
-      senha: ['', [Validators.required]],
-      contabilidade_id: [null as number | null],
-    });
-    this.editDadosForm = this.fb.group({
-      razao_social: ['', [Validators.required, Validators.minLength(2)]],
-      regime: [''],
-      contabilidade_id: [null as number | null],
-    });
-    this.editCredForm = this.fb.group({
-      senha: ['', [Validators.required]],
-    });
-  }
+    private cdr: ChangeDetectorRef,
+    private contabilidadeService: ContabilidadeService,
+    private empresasService: EmpresasUnificadoService,
+    private credenciaisService: CredenciaisService,
+    private toast: ToastService
+  ) {}
 
   ngOnInit(): void {
     this.carregarContabilidades();
-    this.carregar();
-  }
-
-  carregar(): void {
-    this.loading = true;
-    this.cdr.markForCheck();
-    const params: Record<string, unknown> = {
-      page: this.page,
-      limit: this.limit,
-    };
-    if (this.search.trim()) params['search'] = this.search.trim();
-    if (this.contabilidadeId != null && this.contabilidadeId > 0) {
-      params['contabilidade_id'] = this.contabilidadeId;
-    }
-    if (this.toggleComCert || this.toggleCertVencido) params['has_cert'] = true;
-    if (this.toggleComCred) params['has_cred'] = true;
-    if (this.toggleSemCert) params['sem_cert'] = true;
-    if (this.toggleSemCred) params['sem_cred'] = true;
-    if (this.toggleSemMetodo) params['sem_metodo'] = true;
-    if (this.sortField) {
-      params['sort'] = this.sortField;
-      params['order'] = this.sortOrder;
-    }
-
-    this.svc.listar(params as any).subscribe({
-      next: (r) => {
-        this.items = r.items ?? [];
-        this.total = r.total ?? 0;
-        this.aplicarFiltroCertVencido();
-        this.loading = false;
-        this.cdr.markForCheck();
-      },
-      error: (e) => {
-        this.toastErro = e?.message || 'Erro ao carregar';
-        this.loading = false;
-        this.cdr.markForCheck();
-        this.limparToastErro(4000);
-      },
-    });
-  }
-
-  aplicarFiltroCertVencido(): void {
-    if (!this.toggleCertVencido) {
-      this.filtrados = [...this.items];
-      return;
-    }
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    this.filtrados = this.items.filter((e) => {
-      if (!e.has_certificado || !e.cert_validade) return false;
-      const dt = this.parseDataValidade(e.cert_validade);
-      return dt && dt < hoje;
-    });
-  }
-
-  parseDataValidade(val: string): Date | null {
-    if (!val) return null;
-    const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) {
-      const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-      return isNaN(d.getTime()) ? null : d;
-    }
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
+    this.carregarEmpresas();
   }
 
   carregarContabilidades(): void {
     this.loadingContabilidades = true;
-    this.contSvc.listar().subscribe({
+    this.cdr.markForCheck();
+    this.contabilidadeService.listar().subscribe({
       next: (r) => {
         this.contabilidades = r.contabilidades ?? [];
         this.loadingContabilidades = false;
@@ -226,517 +137,294 @@ export class EmpresasComponent implements OnInit {
     });
   }
 
-  getContabilidadeNome(item: EmpresaListagemItem): string {
-    if (item.contabilidade_nome) return item.contabilidade_nome;
-    if (item.contabilidade_id == null) return '-';
-    const c = this.contabilidades.find((x) => x.id === item.contabilidade_id);
-    return c?.nome_contabilidade ?? `ID ${item.contabilidade_id}`;
-  }
+  carregarEmpresas(): void {
+    this.carregando = true;
+    this.erro = null;
+    this.cdr.markForCheck();
 
-  toggleSort(field: SortField): void {
-    if (this.sortField === field) {
-      if (this.sortOrder === 'asc') {
-        this.sortOrder = 'desc';
-      } else {
-        this.sortField = null;
-        this.sortOrder = 'asc';
-      }
-    } else {
-      this.sortField = field;
-      this.sortOrder = 'asc';
+    const params: {
+      search?: string;
+      contabilidade_id?: number | null;
+      has_cert?: boolean;
+      has_cred?: boolean;
+      sem_cert?: boolean;
+      sem_cred?: boolean;
+      sem_metodo?: boolean;
+      sort?: string;
+      order?: 'asc' | 'desc';
+    } = {};
+
+    if (this.search.trim()) {
+      params.search = this.search.trim();
     }
-    this.carregar();
-    this.cdr.markForCheck();
-  }
-
-  getSortIcon(field: SortField): string {
-    if (this.sortField !== field) return '↕';
-    return this.sortOrder === 'asc' ? '↑' : '↓';
-  }
-
-  formatarCNPJ(cnpj: string): string {
-    const l = (cnpj || '').replace(/\D/g, '');
-    if (l.length === 14) {
-      return l.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    if (this.contabilidadeId != null && this.contabilidadeId > 0) {
+      params.contabilidade_id = this.contabilidadeId;
     }
-    return cnpj || '-';
-  }
 
-  isCertificadoVencido(item: EmpresaListagemItem): boolean {
-    if (!item.cert_validade) return false;
-    const d = this.parseDataValidade(item.cert_validade);
-    return d ? d < new Date() : false;
-  }
+    if (this.chipsAtivos.has('com_cert')) params.has_cert = true;
+    if (this.chipsAtivos.has('com_cred')) params.has_cred = true;
+    if (this.chipsAtivos.has('sem_cert')) params.sem_cert = true;
+    if (this.chipsAtivos.has('sem_cred')) params.sem_cred = true;
+    if (this.chipsAtivos.has('sem_metodo')) params.sem_metodo = true;
 
-  // --- Cadastrar ---
-  abrirModalCadastrar(): void {
-    this.modalCadastrarAberto = true;
-    this.passoCadastrar = 'escolha';
-    this.certFile = null;
-    this.certSenha = '';
-    this.credForm.reset({ contabilidade_id: null });
-    this.cdr.markForCheck();
-  }
-
-  fecharModalCadastrar(): void {
-    this.modalCadastrarAberto = false;
-    this.passoCadastrar = 'escolha';
-    this.salvandoCadastro = false;
-    this.cdr.markForCheck();
-  }
-
-  escolherCadastroCert(): void {
-    this.passoCadastrar = 'cert';
-    this.cdr.markForCheck();
-  }
-
-  escolherCadastroCred(): void {
-    this.passoCadastrar = 'cred';
-    this.credForm.reset({
-      cnpj: '',
-      razao_social: '',
-      senha: '',
-      contabilidade_id: this.contabilidadeId,
-    });
-    this.cdr.markForCheck();
-  }
-
-  onCertFileChange(e: Event): void {
-    const inp = e.target as HTMLInputElement;
-    this.certFile = inp?.files?.[0] ?? null;
-    this.cdr.markForCheck();
-  }
-
-  salvarCadastroCert(): void {
-    if (!this.certFile || !this.certSenha?.trim()) return;
-    this.salvandoCadastro = true;
-    this.cdr.markForCheck();
-    this.svc
-      .cadastroCertificado(
-        this.certFile,
-        this.certSenha,
-        this.contabilidadeId
-      )
-      .subscribe({
-        next: () => {
-          this.toastSucesso = 'Certificado cadastrado com sucesso!';
-          this.carregar();
-          this.fecharModalCadastrar();
-          this.limparToastSucesso(3000);
-          this.cdr.markForCheck();
-        },
-        error: (err) => {
-          this.toastErro = err?.message || 'Erro ao cadastrar';
-          this.salvandoCadastro = false;
-          this.limparToastErro(4000);
-          this.cdr.markForCheck();
-        },
-      });
-  }
-
-  salvarCadastroCred(): void {
-    if (this.credForm.invalid) {
-      this.credForm.markAllAsTouched();
-      return;
+    if (this.sortLabel !== 'padrão') {
+      const sortMap: Record<string, string> = {
+        CNPJ: 'cnpj',
+        'Razão Social': 'razao_social',
+        Contabilidade: 'contabilidade_nome',
+        Certificado: 'cert_validade',
+        Status: 'status_geral',
+      };
+      params.sort = sortMap[this.sortLabel] ?? 'razao_social';
+      params.order = 'asc';
     }
-    const v = this.credForm.value;
-    const cnpj = String(v.cnpj ?? '').replace(/\D/g, '');
-    if (cnpj.length !== 14) {
-      this.toastErro = 'CNPJ deve ter 14 dígitos';
-      this.limparToastErro(3000);
-      return;
-    }
-    this.salvandoCadastro = true;
-    this.cdr.markForCheck();
-    const payload: CadastroCredencialPayload = {
-      cnpj,
-      razao_social: v.razao_social?.trim(),
-      senha: v.senha,
-      contabilidade_id: v.contabilidade_id || null,
-    };
-    this.svc.cadastroCredencial(payload).subscribe({
-      next: () => {
-        this.toastSucesso = 'Credencial cadastrada com sucesso!';
-        this.carregar();
-        this.fecharModalCadastrar();
-        this.limparToastSucesso(3000);
-        this.cdr.markForCheck();
-      },
-      error: (err) => {
-        this.toastErro = err?.message || 'Erro ao cadastrar';
-        this.salvandoCadastro = false;
-        this.limparToastErro(4000);
-        this.cdr.markForCheck();
-      },
-    });
-  }
 
-  // --- Editar ---
-  abrirModalEditar(item: EmpresaListagemItem): void {
-    const id = parseInt(item.id, 10);
-    if (isNaN(id)) return;
-    this.svc.obterPorId(id).subscribe({
-      next: (d) => {
-        this.editandoEmpresa = d;
-        this.editTab = 'dados';
-        this.editDadosForm.patchValue({
-          razao_social: d.empresa.razao_social,
-          regime: d.empresa.regime ?? '',
-          contabilidade_id: d.empresa.contabilidade_id ?? null,
-        });
-        this.editCredForm.reset({ senha: '' });
-        this.editCertFile = null;
-        this.editCertSenha = '';
-        this.modalEditarAberto = true;
-        this.cdr.markForCheck();
-      },
-      error: (err) => {
-        this.toastErro = err?.message || 'Erro ao carregar';
-        this.limparToastErro(4000);
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  fecharModalEditar(): void {
-    this.modalEditarAberto = false;
-    this.editandoEmpresa = null;
-    this.salvandoEdicao = false;
-    this.adicionandoCert = false;
-    this.adicionandoCred = false;
-    this.cdr.markForCheck();
-  }
-
-  onEditCertFileChange(e: Event): void {
-    const inp = e.target as HTMLInputElement;
-    this.editCertFile = inp?.files?.[0] ?? null;
-    this.cdr.markForCheck();
-  }
-
-  adicionarCertificado(): void {
-    if (!this.editandoEmpresa || !this.editCertFile || !this.editCertSenha?.trim())
-      return;
-    this.adicionandoCert = true;
-    this.cdr.markForCheck();
-    this.svc
-      .cadastroCertificado(
-        this.editCertFile,
-        this.editCertSenha,
-        this.editandoEmpresa.empresa.contabilidade_id
-      )
-      .subscribe({
-        next: () => {
-          this.toastSucesso = 'Certificado adicionado!';
-          this.adicionandoCert = false;
-          this.editCertFile = null;
-          this.editCertSenha = '';
-          this.recarregarEdicao();
-          this.limparToastSucesso(3000);
-          this.cdr.markForCheck();
-        },
-        error: (err) => {
-          this.toastErro = err?.message || 'Erro';
-          this.adicionandoCert = false;
-          this.limparToastErro(4000);
-          this.cdr.markForCheck();
-        },
-      });
-  }
-
-  adicionarCredencial(): void {
-    if (!this.editandoEmpresa || this.editCredForm.invalid) return;
-    const senha = this.editCredForm.get('senha')?.value;
-    if (!senha?.trim()) return;
-    this.adicionandoCred = true;
-    this.cdr.markForCheck();
-    const payload: CadastroCredencialPayload = {
-      cnpj: this.editandoEmpresa.empresa.cnpj,
-      senha,
-      contabilidade_id: this.editandoEmpresa.empresa.contabilidade_id,
-    };
-    this.svc.cadastroCredencial(payload).subscribe({
-      next: () => {
-        this.toastSucesso = 'Credencial adicionada!';
-        this.adicionandoCred = false;
-        this.editCredForm.reset({ senha: '' });
-        this.recarregarEdicao();
-        this.limparToastSucesso(3000);
-        this.cdr.markForCheck();
-      },
-      error: (err) => {
-        this.toastErro = err?.message || 'Erro';
-        this.adicionandoCred = false;
-        this.limparToastErro(4000);
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  get editCertificados() {
-    const d = this.editandoEmpresa;
-    if (!d) return [];
-    return d.certificados ?? d.certificados_digitais ?? [];
-  }
-
-  salvarEdicaoDados(): void {
-    if (!this.editandoEmpresa || this.editDadosForm.invalid) return;
-    this.salvandoEdicao = true;
-    this.cdr.markForCheck();
-    const v = this.editDadosForm.value;
-    this.svc
-      .atualizar(this.editandoEmpresa.empresa.id, {
-        razao_social: v.razao_social?.trim(),
-        regime: v.regime?.trim() || undefined,
-        contabilidade_id: v.contabilidade_id ?? null,
-      })
-      .subscribe({
-        next: () => {
-          this.toastSucesso = 'Dados atualizados!';
-          this.salvandoEdicao = false;
-          this.recarregarEdicao();
-          this.limparToastSucesso(3000);
-          this.cdr.markForCheck();
-        },
-        error: (err) => {
-          this.toastErro = err?.message || 'Erro';
-          this.salvandoEdicao = false;
-          this.limparToastErro(4000);
-          this.cdr.markForCheck();
-        },
-      });
-  }
-
-  recarregarEdicao(): void {
-    if (!this.editandoEmpresa) return;
-    this.svc.obterPorId(this.editandoEmpresa.empresa.id).subscribe({
-      next: (d) => {
-        this.editandoEmpresa = d;
-        this.carregar();
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  // --- Import Certificados ---
-  abrirModalImportCert(): void {
-    this.modalImportCertAberto = true;
-    this.importCertFiles = [];
-    this.importCertSenha = '';
-    this.importCertPreview = null;
-    this.cdr.markForCheck();
-  }
-
-  fecharModalImportCert(): void {
-    this.modalImportCertAberto = false;
-    this.importCertPreview = null;
-    this.importCertConfirmando = false;
-    this.loadingPreviewCert = false;
-    this.cdr.markForCheck();
-  }
-
-  onImportCertFilesChange(e: Event): void {
-    const inp = e.target as HTMLInputElement;
-    this.importCertFiles = Array.from(inp?.files ?? []);
-    this.importCertPreview = null;
-    this.cdr.markForCheck();
-  }
-
-  fazerPreviewCert(): void {
-    if (!this.importCertFiles.length || !this.importCertSenha?.trim()) return;
-    this.loadingPreviewCert = true;
-    this.cdr.markForCheck();
-    this.svc.previewCertificados(this.importCertFiles, this.importCertSenha).subscribe({
+    this.empresasService.listar(params).subscribe({
       next: (r) => {
-        this.importCertPreview = { session_id: r.session_id, items: r.items };
-        this.loadingPreviewCert = false;
-        this.cdr.markForCheck();
-      },
-      error: (err) => {
-        this.toastErro = err?.message || 'Erro no preview';
-        this.loadingPreviewCert = false;
-        this.limparToastErro(4000);
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  confirmarImportCert(): void {
-    if (!this.importCertPreview) return;
-    const aprovados = this.importCertPreview.items
-      .filter((i) => i.acao === 'IMPORTAR')
-      .map((i) => ({ indice: i.indice }));
-    if (!aprovados.length) return;
-    this.importCertConfirmando = true;
-    this.cdr.markForCheck();
-    this.svc
-      .confirmarCertificados({
-        session_id: this.importCertPreview.session_id,
-        senha: this.importCertSenha,
-        itens: aprovados,
-        contabilidade_id: this.contabilidadeId,
-      })
-      .subscribe({
-        next: (r) => {
-          this.toastSucesso = `${r.importados} certificado(s) importado(s) com sucesso!`;
-          if (r.erros?.length) {
-            this.toastErro = `${r.erros.length} erro(s): ${r.erros.map((x) => x.mensagem).join('; ')}`;
-            this.limparToastErro(5000);
-          }
-          this.carregar();
-          this.fecharModalImportCert();
-          this.limparToastSucesso(3000);
-          this.cdr.markForCheck();
-        },
-        error: (err) => {
-          this.toastErro = err?.message || 'Erro ao importar';
-          this.importCertConfirmando = false;
-          this.limparToastErro(4000);
-          this.cdr.markForCheck();
-        },
-      });
-  }
-
-  // --- Import Credenciais ---
-  abrirModalImportCred(): void {
-    this.modalImportCredAberto = true;
-    this.importCredFile = null;
-    this.importCredSessionId = null;
-    this.importCredPreview = null;
-    this.importCredSelecionados = new Set();
-    this.cdr.markForCheck();
-  }
-
-  fecharModalImportCred(): void {
-    this.modalImportCredAberto = false;
-    this.importCredSessionId = null;
-    this.importCredPreview = null;
-    this.importCredSelecionados = new Set();
-    this.importCredConfirmando = false;
-    this.loadingPreviewCred = false;
-    this.cdr.markForCheck();
-  }
-
-  async baixarPlanilhaModeloCred(): Promise<void> {
-    const xlsxModule = await import('xlsx');
-    const XLSX = xlsxModule.default ?? xlsxModule;
-    const dados = [
-      ['Planilha modelo de importação'], // Linha 1: título (ignorada pelo parser)
-      ['Razão Social', 'Tipo de Login', 'CNPJ ou CPF', 'Senha', 'Regime Tributário'],
-      ['BLESSED LICENCAS LTDA', 'CNPJ', '54246893000189', 'SenhaExemplo1@', 'Simples Nacional'],
-      ['CARX - SERVICOS AUTOMOTIVOS LTDA', 'CNPJ', '32639996000176', 'SenhaExemplo2*', 'Simples Nacional'],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(dados);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Credenciais');
-    XLSX.writeFile(wb, 'planilha_modelo_credenciais.xlsx');
-  }
-
-  onImportCredFileChange(e: Event): void {
-    const inp = e.target as HTMLInputElement;
-    this.importCredFile = inp?.files?.[0] ?? null;
-    this.importCredPreview = null;
-    this.importCredSessionId = null;
-    this.importCredSelecionados = new Set();
-    this.cdr.markForCheck();
-    if (this.importCredFile) {
-      this.fazerPreviewCredComDados();
-    }
-  }
-
-  fazerPreviewCred(): void {
-    this.fazerPreviewCredComDados();
-  }
-
-  fazerPreviewCredComDados(): void {
-    if (!this.importCredFile) {
-      this.toastErro = 'Selecione um arquivo primeiro';
-      this.limparToastErro(3000);
-      this.cdr.markForCheck();
-      return;
-    }
-    this.loadingPreviewCred = true;
-    this.cdr.markForCheck();
-    this.svc.previewCredenciais(this.importCredFile).subscribe({
-      next: (r) => {
-        this.importCredSessionId = r.session_id;
-        this.importCredPreview = { session_id: r.session_id, items: r.items ?? [] };
-        this.importCredSelecionados = new Set(
-          (r.items ?? []).filter((i) => i.acao !== 'ERRO').map((i) => i.linha)
-        );
-        this.loadingPreviewCred = false;
-        this.cdr.markForCheck();
-      },
-      error: (err) => {
-        this.toastErro = err?.message || err?.error?.detail || 'Erro ao carregar preview. Verifique se o backend está rodando.';
-        this.loadingPreviewCred = false;
-        this.limparToastErro(5000);
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  confirmarImportCred(): void {
-    if (!this.importCredSessionId || this.importCredSelecionados.size === 0) return;
-    this.importCredConfirmando = true;
-    this.cdr.markForCheck();
-    this.svc.confirmarCredenciais({
-      session_id: this.importCredSessionId,
-      linhas_aprovadas: Array.from(this.importCredSelecionados),
-    }).subscribe({
-      next: (r) => {
-        const total = r.criadas + r.atualizadas;
-        this.toastSucesso = `${total} credencial(is) processada(s)! (${r.criadas} criadas, ${r.atualizadas} atualizadas)`;
-        if (r.erros > 0) {
-          this.toastErro = `${r.erros} erro(s) durante a importação`;
-          this.limparToastErro(5000);
+        this.listaEmpresas = r.items ?? [];
+        this.empresasCount = r.total ?? 0;
+        this.carregando = false;
+        if (this.empresaSelecionada) {
+          const updated = this.listaEmpresas.find((e) => e.id === this.empresaSelecionada?.id);
+          if (updated) this.empresaSelecionada = updated;
         }
-        this.carregar();
-        this.fecharModalImportCred();
-        this.limparToastSucesso(3000);
         this.cdr.markForCheck();
       },
       error: (err) => {
-        this.toastErro = err?.message || 'Erro';
-        this.importCredConfirmando = false;
-        this.limparToastErro(4000);
+        this.erro = err.message || 'Erro ao carregar empresas';
+        this.carregando = false;
+        this.listaEmpresas = [];
+        this.empresasCount = 0;
         this.cdr.markForCheck();
       },
     });
   }
 
-  toggleImportCredItem(linha: number, podeImportar: boolean): void {
-    if (!podeImportar) return;
-    if (this.importCredSelecionados.has(linha)) {
-      this.importCredSelecionados.delete(linha);
-    } else {
-      this.importCredSelecionados.add(linha);
+  /** Rows para os cards (conversão da lista). */
+  get rowsForCards() {
+    return this.listaEmpresas.map(toEmpresaRow);
+  }
+
+  /** Lista filtrada por preset (em memória). */
+  get filteredEmpresas(): EmpresaListagemItem[] {
+    return this.applyFilters(this.listaEmpresas, {
+      preset: this.presetActive,
+    });
+  }
+
+  /** Filtra em memória por preset. Mantém search/contab/chips via API. */
+  applyFilters(
+    items: EmpresaListagemItem[],
+    opts: { preset?: EmpresasFilterPreset | null }
+  ): EmpresaListagemItem[] {
+    let result = items;
+    if (opts.preset?.type === 'CERT_VENCIDO') {
+      result = result.filter(
+        (i) => computeCertStatus(toEmpresaRow(i)) === 'VENCIDO'
+      );
+    } else if (opts.preset?.type === 'CRED_VALIDAR') {
+      result = result.filter(
+        (i) => toEmpresaRow(i).possui_credenciais && needsRevalidateCredentials(toEmpresaRow(i))
+      );
+    } else if (opts.preset?.type === 'OPERACIONAIS') {
+      result = result.filter((i) =>
+        ['OPERACIONAL', 'ATENCAO'].includes(
+          computeCompanyStatusGeral(toEmpresaRow(i))
+        )
+      );
     }
-    this.importCredSelecionados = new Set(this.importCredSelecionados);
+    return result;
+  }
+
+  onFilterPresetRequested(preset: EmpresasFilterPreset): void {
+    this.presetActive =
+      this.presetActive?.type === preset.type ? null : preset;
     this.cdr.markForCheck();
   }
 
-  selecionarTodosImportCred(): void {
-    const importaveis = (this.importCredPreview?.items ?? []).filter((i) => i.acao !== 'ERRO').map((i) => i.linha);
-    this.importCredSelecionados = new Set(importaveis);
+  /** Retorna info de exibição do certificado (validade + dias restantes/vencidos) */
+  getCertDisplayInfo(item: EmpresaListagemItem) {
+    const info = getCertDisplayInfoUtil(toEmpresaRow(item));
+    return info ? { label: info.label, diasText: info.diasText, vencido: info.vencido, certStatus: info.certStatus } : null;
+  }
+
+  getStatusGeral(item: EmpresaListagemItem) {
+    return computeCompanyStatusGeral(toEmpresaRow(item));
+  }
+
+  getStatusReason(item: EmpresaListagemItem) {
+    return computeStatusReason(toEmpresaRow(item));
+  }
+
+  /** Retorna status geral e motivo juntos (evita múltiplos toEmpresaRow). */
+  getStatusInfo(item: EmpresaListagemItem): { status: string; reason: string } {
+    const row = toEmpresaRow(item);
+    return {
+      status: computeCompanyStatusGeral(row),
+      reason: computeStatusReason(row),
+    };
+  }
+
+  /** Exibição de credenciais (status + mensagem para INVALIDA). */
+  getCredDisplay(item: EmpresaListagemItem): { status: string; mensagem?: string } | null {
+    if (!item.has_credenciais) return null;
+    const row = toEmpresaRow(item);
+    const status = row.cred_status ?? 'NAO_TESTADO';
+    return {
+      status,
+      mensagem: row.cred_ultima_mensagem ?? undefined,
+    };
+  }
+
+  /** Contagem exibida: quando preset ativo, mostra total filtrado. */
+  get displayedCount(): number {
+    return this.presetActive ? this.filteredEmpresas.length : this.empresasCount;
+  }
+
+  getContabilidadeLabel(): string {
+    if (!this.contabilidadeId) return 'Todas as contabilidades';
+    const c = this.contabilidades.find((x) => x.id === this.contabilidadeId);
+    return c?.nome_contabilidade ?? 'Todas as contabilidades';
+  }
+
+  onContabilidadeSelect(id: number | null): void {
+    this.contabilidadeId = id;
+    this.contabDropdownOpen = false;
+    this.carregarEmpresas();
+  }
+
+  toggleChip(chipId: string): void {
+    if (this.chipsAtivos.has(chipId)) {
+      this.chipsAtivos.delete(chipId);
+    } else {
+      this.chipsAtivos.add(chipId);
+    }
+    this.chipsAtivos = new Set(this.chipsAtivos);
+    this.carregarEmpresas();
+  }
+
+  removeChip(chipId: string): void {
+    this.chipsAtivos.delete(chipId);
+    this.chipsAtivos = new Set(this.chipsAtivos);
+    this.carregarEmpresas();
+  }
+
+  clearAllChips(): void {
+    this.chipsAtivos.clear();
+    this.chipsAtivos = new Set(this.chipsAtivos);
+    this.carregarEmpresas();
+  }
+
+  isChipAtivo(chipId: string): boolean {
+    return this.chipsAtivos.has(chipId);
+  }
+
+  private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onSearchChange(): void {
+    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+    this.searchDebounceTimer = setTimeout(() => {
+      this.carregarEmpresas();
+      this.searchDebounceTimer = null;
+    }, 350);
+  }
+
+  onExportar(): void {
+    console.log('[Empresas] Exportar clicado');
+  }
+
+  onSortChange(label: string): void {
+    this.sortLabel = label;
+    this.sortOpen = false;
+    this.carregarEmpresas();
+  }
+
+  cadastroAberto = false;
+  importCertificadosLoteAberto = false;
+  importCredenciaisModalAberto = false;
+
+  onCadastrar(): void {
+    this.cadastroAberto = true;
     this.cdr.markForCheck();
   }
 
-  desmarcarTodosImportCred(): void {
-    this.importCredSelecionados = new Set();
+  fecharCadastro(): void {
+    this.cadastroAberto = false;
     this.cdr.markForCheck();
   }
 
-  getImportCredCountImportaveis(): number {
-    return (this.importCredPreview?.items ?? []).filter((i) => i.acao !== 'ERRO').length;
+  onCadastroSaved(): void {
+    this.cadastroAberto = false;
+    this.carregarEmpresas();
+    this.cdr.markForCheck();
   }
 
-  // Preview cred usa índice da planilha - os índices no preview são linha-1 (0-based).
-  // importCredPlanilhaDados é preenchido na ordem das linhas (índice 0 = linha 2, etc).
-  // Os items do preview têm indice = row.linha - 1. Então importCredPlanilhaDados[indice] deve corresponder.
-  // Porém no parse local fazemos dados.push para cada linha não-vazia - então índice i em dados = linha i+1 = indice do preview.
-  // Ok, estamos alinhados.
+  onImportarCertificados(): void {
+    this.importCertificadosLoteAberto = true;
+    this.cdr.markForCheck();
+  }
 
-  // --- Exclusão em massa ---
+  fecharImportCertificadosLote(): void {
+    this.importCertificadosLoteAberto = false;
+    this.cdr.markForCheck();
+  }
+
+  onImportCertificadosLoteConcluido(): void {
+    this.importCertificadosLoteAberto = false;
+    this.carregarEmpresas();
+    this.cdr.markForCheck();
+  }
+
+  onImportarCredenciais(): void {
+    this.importCredenciaisModalAberto = true;
+    this.cdr.markForCheck();
+  }
+
+  fecharImportCredenciaisModal(): void {
+    this.importCredenciaisModalAberto = false;
+    this.cdr.markForCheck();
+  }
+
+  onImportCredenciaisConcluido(): void {
+    this.importCredenciaisModalAberto = false;
+    this.carregarEmpresas();
+    this.cdr.markForCheck();
+  }
+
+  validacaoModalAberto = false;
+
+  onValidar(): void {
+    this.validacaoModalAberto = true;
+    this.cdr.markForCheck();
+  }
+
+  fecharValidacaoModal(): void {
+    this.validacaoModalAberto = false;
+    this.cdr.markForCheck();
+  }
+
+  onValidacaoConcluida(): void {
+    this.validacaoModalAberto = false;
+    this.carregarEmpresas();
+    this.cdr.markForCheck();
+  }
+
+  /** Empresas para o modal de validação (filtradas). */
+  get empresasParaValidacao() {
+    return this.filteredEmpresas.map((e) => ({
+      id: parseInt(e.id, 10),
+      cnpj: e.cnpj,
+      razao_social: e.razao_social,
+    }));
+  }
+
+  /** IDs selecionados como números (para escopo SELECTED). */
+  get empresaIdsSelecionados(): number[] {
+    return this.listaEmpresas
+      .filter((e) => this.selectedIds.has(e.id))
+      .map((e) => parseInt(e.id, 10));
+  }
+
   toggleSelecionar(item: EmpresaListagemItem): void {
     if (this.selectedIds.has(item.id)) {
       this.selectedIds.delete(item.id);
@@ -748,212 +436,316 @@ export class EmpresasComponent implements OnInit {
   }
 
   toggleSelecionarTodos(): void {
-    if (this.selectedIds.size === this.filtrados.length) {
+    if (this.selectedIds.size === this.listaEmpresas.length) {
       this.selectedIds.clear();
     } else {
-      this.filtrados.forEach((e) => this.selectedIds.add(e.id));
+      this.listaEmpresas.forEach((e) => this.selectedIds.add(e.id));
     }
     this.selectedIds = new Set(this.selectedIds);
     this.cdr.markForCheck();
   }
 
   isTodosSelecionados(): boolean {
-    return this.filtrados.length > 0 && this.selectedIds.size === this.filtrados.length;
+    return (
+      this.listaEmpresas.length > 0 &&
+      this.selectedIds.size === this.listaEmpresas.length
+    );
   }
 
   isIndeterminado(): boolean {
-    return this.selectedIds.size > 0 && this.selectedIds.size < this.filtrados.length;
+    return (
+      this.selectedIds.size > 0 &&
+      this.selectedIds.size < this.listaEmpresas.length
+    );
   }
 
-  limparSelecao(): void {
-    this.selectedIds.clear();
-    this.cdr.markForCheck();
-  }
-
-  abrirModalExcluir(): void {
-    if (this.selectedIds.size === 0) return;
-    this.modalExcluirAberto = true;
-    this.cdr.markForCheck();
-  }
-
-  fecharModalExcluir(): void {
-    this.modalExcluirAberto = false;
-    this.excluindoEmMassa = false;
-    this.cdr.markForCheck();
-  }
-
-  // --- Validar ---
-  abrirModalValidar(): void {
-    this.modalValidarAberto = true;
-    this.validarCert = false;
-    this.validarCred = false;
-    this.validarEscopo =
-      this.selectedIds.size > 0 ? 'SELECTED' : 'FILTERED';
-    this.validarAvancadoAberto = false;
-    this.validarJobId = null;
-    this.validarStatus = null;
-    this.cdr.markForCheck();
-  }
-
-  fecharModalValidar(): void {
-    this.modalValidarAberto = false;
-    this.validarIniciando = false;
-    this.cdr.markForCheck();
-  }
-
-  private pararPollValidacao(): void {
-    if (this.validarPollInterval) {
-      clearInterval(this.validarPollInterval);
-      this.validarPollInterval = null;
+  onEditar(item: EmpresaListagemItem): void {
+    if (this.empresaSelecionada?.id === item.id) {
+      this.fecharDrawer();
+      return;
     }
-  }
-
-  podeIniciarValidacao(): boolean {
-    return this.validarCert || this.validarCred;
-  }
-
-  resumoValidacao(): string {
-    const alvos: string[] = [];
-    if (this.validarCert) alvos.push('Certificados');
-    if (this.validarCred) alvos.push('Credenciais');
-    let escopo = '';
-    if (this.validarEscopo === 'SELECTED') {
-      escopo = `${this.selectedIds.size} empresa(s) selecionada(s)`;
-    } else if (this.validarEscopo === 'FILTERED') {
-      escopo = 'Empresas filtradas';
-    } else {
-      escopo = 'Todas as empresas';
+    if (this.empresaSelecionada && this.editorDirty) {
+      if (!confirm('Você tem alterações não salvas. Deseja descartar?')) {
+        return;
+      }
     }
-    return `Validar ${alvos.join(' e ')} em ${escopo}.`;
-  }
-
-  iniciarValidacao(): void {
-    if (!this.podeIniciarValidacao()) return;
-    const targets: ('CERTIFICADO' | 'CREDENCIAL')[] = [];
-    if (this.validarCert) targets.push('CERTIFICADO');
-    if (this.validarCred) targets.push('CREDENCIAL');
-
-    const scope: { mode: 'SELECTED' | 'FILTERED' | 'ALL'; empresa_ids?: number[] } = {
-      mode: this.validarEscopo,
-    };
-    if (this.validarEscopo === 'SELECTED' && this.selectedIds.size > 0) {
-      scope.empresa_ids = Array.from(this.selectedIds)
-        .map((s) => parseInt(s, 10))
-        .filter((n) => !isNaN(n) && n > 0);
-    }
-
-    const filters: Record<string, unknown> = {};
-    if (this.search.trim()) filters['search'] = this.search.trim();
-    if (this.contabilidadeId != null && this.contabilidadeId > 0) {
-      filters['contabilidade_id'] = this.contabilidadeId;
-    }
-    if (this.toggleComCert || this.toggleCertVencido) filters['has_cert'] = true;
-    if (this.toggleComCred) filters['has_cred'] = true;
-    if (this.toggleSemCert) filters['sem_cert'] = true;
-    if (this.toggleSemCred) filters['sem_cred'] = true;
-    if (this.toggleSemMetodo) filters['sem_metodo'] = true;
-    if (this.sortField) {
-      filters['sort'] = this.sortField;
-      filters['order'] = this.sortOrder;
-    }
-
-    const payload = {
-      targets,
-      scope,
-      filters: Object.keys(filters).length ? filters : undefined,
-      options: {
-        concurrency: this.validarConcorrencia,
-        timeoutSeconds: this.validarTimeout,
-        stopOnConsecutiveErrors: this.validarStopErros,
-      },
-    };
-
-    this.validarIniciando = true;
+    this.empresaSelecionada = item;
+    this.empresaDetalhes = null;
+    this.erro = null;
+    this.carregandoDetalhes = true;
     this.cdr.markForCheck();
-    this.validacoesSvc.start(payload).subscribe({
-      next: (r) => {
-        this.validarJobId = r.job_id;
-        this.validarStatus = 'RUNNING';
-        this.validarIniciando = false;
-        this.toastSucesso = 'Validação iniciada!';
-        this.fecharModalValidar();
-        this.iniciarPollValidacao(r.job_id);
-        this.limparToastSucesso(3000);
+
+    this.empresasService.obterPorId(item.id).subscribe({
+      next: (detalhes) => {
+        this.empresaDetalhes = detalhes;
+        this.carregandoDetalhes = false;
         this.cdr.markForCheck();
       },
       error: (err) => {
-        this.toastErro = err?.message || 'Erro ao iniciar validação';
-        this.validarIniciando = false;
-        this.limparToastErro(4000);
+        this.erro = err.message || 'Erro ao carregar detalhes';
+        this.carregandoDetalhes = false;
         this.cdr.markForCheck();
       },
     });
   }
 
-  private iniciarPollValidacao(jobId: string): void {
-    this.pararPollValidacao();
-    const poll = () => {
-      this.validacoesSvc.getStatus(jobId).subscribe({
-        next: (s) => {
-          this.validarStatus = s.status;
-          this.validarProgress = s.progress;
-          this.validarTotal = s.total;
-          this.validarOk = s.ok;
-          this.validarErrors = s.errors;
-          this.validarProcessed = s.processed;
+  fecharDrawer(): void {
+    this.empresaSelecionada = null;
+    this.empresaDetalhes = null;
+    this.erro = null;
+    this.editorDirty = false;
+    this.cdr.markForCheck();
+  }
+
+  onCloseRequest(event: { hasDirty: boolean }): void {
+    if (event.hasDirty && !confirm('Você tem alterações não salvas. Deseja descartar?')) {
+      return;
+    }
+    this.fecharDrawer();
+  }
+
+  onEditorSave(payload: EditorSavePayload): void {
+    if (!this.empresaSelecionada) return;
+
+    const total =
+      (payload.contabilidade_id != null ? 1 : 0) + (payload.credenciais ? 1 : 0);
+    if (total === 0) return;
+
+    this.salvandoGeral = true;
+    this.erro = null;
+    this.cdr.markForCheck();
+
+    let completed = 0;
+    const done = () => {
+      completed++;
+      if (completed >= total) {
+        this.salvandoGeral = false;
+        this.editorDirty = false;
+        this.toast.success('Alterações salvas');
+        this.carregarEmpresas();
+        this.empresasService.obterPorId(this.empresaSelecionada!.id).subscribe({
+          next: (d) => {
+            this.empresaDetalhes = d;
+            this.cdr.markForCheck();
+          },
+        });
+        this.cdr.markForCheck();
+      }
+    };
+
+    const fail = (msg: string) => (err: unknown) => {
+      this.erro = (err as Error)?.message || msg;
+      this.salvandoGeral = false;
+      this.cdr.markForCheck();
+    };
+
+    if (payload.contabilidade_id != null) {
+      this.empresasService
+        .atualizar(this.empresaSelecionada.id, {
+          contabilidade_id: payload.contabilidade_id,
+        })
+        .subscribe({ next: done, error: fail('Erro ao alterar contabilidade') });
+    }
+
+    if (payload.credenciais) {
+      const cred = payload.credenciais;
+      if (cred.action === 'MARK_INACTIVE') {
+        this.credenciaisService
+          .atualizarStatus(cred.credencialId, 'INATIVA')
+          .subscribe({
+            next: done,
+            error: fail('Erro ao marcar credencial como inativa'),
+          });
+      } else if (cred.action === 'REACTIVATE') {
+        this.credenciaisService
+          .atualizarStatus(cred.credencialId, 'NAO_TESTADO')
+          .subscribe({
+            next: () => {
+              if (cred.senha && cred.senha.length >= 4) {
+                this.credenciaisService
+                  .atualizar(cred.credencialId, { senha: cred.senha })
+                  .subscribe({
+                    next: done,
+                    error: fail('Erro ao atualizar senha'),
+                  });
+              } else {
+                done();
+              }
+            },
+            error: fail('Erro ao reativar credencial'),
+          });
+      } else if (cred.action === 'UPDATE') {
+        if (cred.senha) {
+          this.credenciaisService
+            .atualizar(cred.credencialId, { senha: cred.senha })
+            .subscribe({
+              next: done,
+              error: fail('Erro ao atualizar credencial'),
+            });
+        } else {
+          done();
+        }
+      } else if (cred.action === 'CREATE') {
+        this.empresasService
+          .cadastroCredencial({
+            cnpj: this.empresaSelecionada.cnpj,
+            razao_social: this.empresaSelecionada.razao_social,
+            senha: cred.senha,
+            usuario: cred.usuario,
+            tipo: cred.tipo as 'CNPJ_SENHA' | 'CPF_SENHA',
+            contabilidade_id:
+              this.empresaSelecionada.contabilidade_id ?? undefined,
+          })
+          .subscribe({
+            next: done,
+            error: fail('Erro ao cadastrar credencial'),
+          });
+      }
+    }
+  }
+
+  abrirConfirmRemoverCertificado(payload: { cnpj: string }): void {
+    this.removerCertificadoConfirmando = {
+      cnpj: payload.cnpj,
+      razaoSocial: this.empresaSelecionada?.razao_social,
+    };
+    this.cdr.markForCheck();
+  }
+
+  fecharConfirmRemoverCertificado(): void {
+    if (!this.removendoCertificado) {
+      this.removerCertificadoConfirmando = null;
+      this.cdr.markForCheck();
+    }
+  }
+
+  confirmarRemoverCertificado(): void {
+    if (!this.removerCertificadoConfirmando) return;
+
+    this.removendoCertificado = true;
+    this.erro = null;
+    this.cdr.markForCheck();
+
+    const cnpj = this.removerCertificadoConfirmando.cnpj;
+
+    this.empresasService.removerCertificado(cnpj).subscribe({
+      next: () => {
+        this.toast.success('Certificado removido com sucesso.');
+        this.removerCertificadoConfirmando = null;
+        this.removendoCertificado = false;
+        this.carregarEmpresas();
+        if (this.empresaSelecionada) {
+          this.empresasService.obterPorId(this.empresaSelecionada.id).subscribe({
+            next: (d) => {
+              this.empresaDetalhes = d;
+              this.cdr.markForCheck();
+            },
+          });
+        }
+        this.cdr.markForCheck();
+      },
+      error: (err) => {
+        this.erro = (err as Error)?.message || 'Erro ao remover certificado';
+        this.removendoCertificado = false;
+        this.cdr.markForCheck();
+      },
+    });
+  }
+
+  onCertificadoEnviado(payload: {
+    file: File;
+    senha: string;
+    contabilidade_id: number;
+  }): void {
+    this.salvandoCertificado = true;
+    this.erro = null;
+    this.cdr.markForCheck();
+
+    this.empresasService
+      .cadastroCertificado(payload.file, payload.senha, payload.contabilidade_id)
+      .subscribe({
+        next: () => {
+          this.toast.success('Certificado importado com sucesso!');
+          this.carregarEmpresas();
+          this.salvandoCertificado = false;
+          setTimeout(() => this.fecharDrawer(), 700);
           this.cdr.markForCheck();
-          if (s.status === 'DONE' || s.status === 'FAILED' || s.status === 'CANCELED') {
-            this.pararPollValidacao();
-            this.carregar();
-            if (s.status === 'DONE') {
-              this.toastSucesso = `Validação concluída: ${s.ok} OK, ${s.errors} erros`;
-              this.limparToastSucesso(4000);
-            }
-          }
+        },
+        error: (err) => {
+          this.erro = err.message || 'Erro ao importar certificado';
+          this.salvandoCertificado = false;
+          this.cdr.markForCheck();
         },
       });
-    };
-    poll();
-    this.validarPollInterval = setInterval(poll, 2000);
   }
 
-  confirmarExclusaoEmMassa(): void {
-    if (this.selectedIds.size === 0) return;
-    const ids = Array.from(this.selectedIds)
-      .map((s) => parseInt(s, 10))
-      .filter((n) => !isNaN(n) && n > 0);
-    if (ids.length === 0) return;
-    this.excluindoEmMassa = true;
+  onDeletar(item: EmpresaListagemItem): void {
+    this.excluirConfirmando = item;
+  }
+
+  fecharConfirmExcluir(): void {
+    if (!this.excluindo) {
+      this.excluirConfirmando = null;
+      this.cdr.markForCheck();
+    }
+  }
+
+  confirmarExcluir(): void {
+    if (!this.excluirConfirmando) return;
+
+    this.excluindo = true;
     this.cdr.markForCheck();
-    this.svc.excluirEmMassa(ids).subscribe({
-      next: (r) => {
-        this.toastSucesso = `${r.deleted} empresa(s) excluída(s) com sucesso!`;
-        this.limparSelecao();
-        this.fecharModalExcluir();
-        this.carregar();
-        this.limparToastSucesso(3000);
+
+    const id = parseInt(this.excluirConfirmando.id, 10);
+    this.empresasService.excluir(id).subscribe({
+      next: () => {
+        this.toast.success('Empresa excluída com sucesso!');
+        this.carregarEmpresas();
+        this.excluirConfirmando = null;
+        this.excluindo = false;
         this.cdr.markForCheck();
       },
       error: (err) => {
-        this.toastErro = err?.message || 'Erro ao excluir';
-        this.excluindoEmMassa = false;
-        this.limparToastErro(4000);
+        this.erro = err.message || 'Erro ao excluir empresa';
+        this.excluindo = false;
         this.cdr.markForCheck();
       },
     });
   }
 
-  limparToastSucesso(ms: number): void {
-    setTimeout(() => {
-      this.toastSucesso = null;
-      this.cdr.markForCheck();
-    }, ms);
+  fecharDropdownSeAberto(): void {
+    let changed = false;
+    if (this.sortOpen) {
+      this.sortOpen = false;
+      changed = true;
+    }
+    if (this.contabDropdownOpen) {
+      this.contabDropdownOpen = false;
+      changed = true;
+    }
+    if (changed) this.cdr.markForCheck();
   }
 
-  limparToastErro(ms: number): void {
-    setTimeout(() => {
-      this.toastErro = null;
-      this.cdr.markForCheck();
-    }, ms);
+  formatarCNPJ(cnpj: string): string {
+    return this.formatarDocumento(cnpj);
+  }
+
+  /** Formata CNPJ ou CPF. CPF é detectado quando valor tem 14 dígitos começando com 000 (pad do backend). */
+  formatarDocumento(valor: string): string {
+    const l = (valor || '').replace(/\D/g, '');
+    if (l.length === 11) {
+      return l.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+    }
+    if (l.length === 14) {
+      if (l.startsWith('000')) {
+        const cpf = l.slice(-11);
+        return cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+      }
+      return l.replace(
+        /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+        '$1.$2.$3/$4-$5'
+      );
+    }
+    return valor || '-';
   }
 }

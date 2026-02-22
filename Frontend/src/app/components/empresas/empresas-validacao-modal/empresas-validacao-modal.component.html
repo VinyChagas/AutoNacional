@@ -1,0 +1,138 @@
+@if (isOpen) {
+  <div class="modal-overlay" (click)="onFechar()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2 class="modal-title">Validar empresas</h2>
+        <button
+          type="button"
+          class="modal-close"
+          (click)="onFechar()"
+          [disabled]="rodando"
+          title="Fechar"
+        >
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Seção 1: Escopo -->
+        <section class="modal-section">
+          <h3 class="section-title">Escopo</h3>
+          <div class="radio-row">
+            <label class="radio-label">
+              <input
+                type="radio"
+                name="scope"
+                [value]="'FILTERED'"
+                [(ngModel)]="scope"
+              />
+              Validar empresas filtradas ({{ scopeFilteredCount }})
+            </label>
+            <label class="radio-label">
+              <input
+                type="radio"
+                name="scope"
+                [value]="'SELECTED'"
+                [(ngModel)]="scope"
+              />
+              Validar selecionadas ({{ scopeSelectedCount }})
+            </label>
+          </div>
+        </section>
+
+        <!-- Seção 2: Modo de validação -->
+        <section class="modal-section">
+          <h3 class="section-title">Modo de validação</h3>
+          <div class="checkbox-row">
+              <label class="checkbox-label">
+                <input type="radio" name="modoCred" [value]="true" [(ngModel)]="headless" />
+                Headless (recomendado)
+              </label>
+              <label class="checkbox-label">
+                <input type="radio" name="modoCred" [value]="false" [(ngModel)]="headless" />
+                Visível (abrir navegador)
+              </label>
+          </div>
+          <p class="section-hint">Visível é mais lento, útil para depuração.</p>
+        </section>
+
+        <!-- Lista de progresso -->
+        @if (progressItems.length > 0) {
+          <section class="modal-section progress-section">
+            <div class="progress-header">
+              <span class="progress-bar-label">{{ progressDone }}/{{ progressTotal }} concluídas</span>
+              <label class="filter-falhas">
+                <input type="checkbox" [(ngModel)]="apenasFalhas" />
+                Mostrar apenas falhas
+              </label>
+            </div>
+            <div class="progress-table-wrap">
+              <table class="progress-table">
+                <thead>
+                  <tr>
+                    <th>CNPJ</th>
+                    <th>Razão Social</th>
+                    <th>Método</th>
+                    <th>Status</th>
+                    <th>Mensagem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (item of filteredProgressItems; track item.empresa_id + item.metodo) {
+                    <tr>
+                      <td class="td-mono">{{ formatarCnpj(item.cnpj) }}</td>
+                      <td>{{ item.razao_social }}</td>
+                      <td>{{ item.metodo }}</td>
+                      <td>
+                        <span
+                          class="status-badge"
+                          [class.status-ok]="item.status === 'OK'"
+                          [class.status-invalida]="item.status === 'INVALIDA'"
+                          [class.status-erro]="item.status === 'ERRO_VALIDACAO' || item.status === 'ERRO'"
+                          [class.status-vencido]="item.status === 'VENCIDO'"
+                          [class.status-testando]="item.status === 'TESTANDO'"
+                        >
+                          {{ item.status }}
+                        </span>
+                      </td>
+                      <td class="td-msg">{{ item.message ?? '-' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            @if (doneTotals && !rodando) {
+              <div class="done-summary">
+                <p>Concluído: {{ doneTotals.ok }} OK, {{ doneTotals.invalidas }} inválidas, {{ doneTotals.erros }} erros</p>
+                <button type="button" class="btn-concluir" (click)="onConcluir()">
+                  Concluir e atualizar tabela
+                </button>
+              </div>
+            }
+          </section>
+        }
+      </div>
+
+      <div class="modal-footer">
+        <button
+          type="button"
+          class="btn-secondary"
+          (click)="onFechar()"
+          [disabled]="rodando"
+        >
+          Fechar
+        </button>
+        <button
+          type="button"
+          class="btn-primary"
+          (click)="onIniciar()"
+          [disabled]="!podeIniciar() || rodando"
+        >
+          {{ rodando ? 'Validando...' : 'Iniciar validação' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

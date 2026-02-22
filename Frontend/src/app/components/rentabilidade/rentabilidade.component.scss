@@ -1,0 +1,557 @@
+// Painel de Rentabilidade - AutoNacional
+$radius-lg: 20px;
+$radius-md: 14px;
+$radius-sm: 10px;
+
+.rentabilidade-page {
+  background: var(--bg-page, #f8fafc);
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.rentabilidade-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.rentabilidade-header {
+  margin-bottom: 1.5rem;
+
+  .page-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary, #1e293b);
+    margin: 0 0 0.25rem 0;
+  }
+
+  .page-subtitle {
+    font-size: 0.95rem;
+    color: var(--text-muted, #64748b);
+    margin: 0;
+  }
+}
+
+.filtros-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.filtro-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  .filtro-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+  }
+
+  .filtro-select {
+    padding: 0.5rem 0.75rem;
+    border-radius: $radius-sm;
+    border: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-card, #fff);
+    font-size: 0.9rem;
+    color: var(--text-primary, #1e293b);
+    min-width: 160px;
+  }
+}
+
+.loading-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem;
+  color: var(--text-muted, #64748b);
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-color, #e2e8f0);
+    border-top-color: var(--primary, #4f46e5);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.erro-block {
+  padding: 1rem 1.25rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: $radius-md;
+  color: #dc2626;
+  margin-bottom: 1.5rem;
+}
+
+.metrics-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.metric-card {
+  background: var(--bg-card, #fff);
+  border-radius: $radius-md;
+  padding: 1.25rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  .metric-label {
+    font-size: 0.78rem;
+    color: var(--text-muted, #64748b);
+    font-weight: 500;
+  }
+
+  .metric-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-primary, #1e293b);
+
+    &.metric-ok {
+      color: #16a34a;
+    }
+
+    &.metric-erro {
+      color: #dc2626;
+    }
+  }
+}
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  background: var(--bg-card, #fff);
+  border-radius: $radius-md;
+  border: 1px dashed var(--border-color, #e2e8f0);
+  color: var(--text-muted, #64748b);
+  margin-bottom: 1.5rem;
+}
+
+.bloco {
+  background: var(--bg-card, #fff);
+  border-radius: $radius-lg;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+}
+
+.bloco-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary, #1e293b);
+  margin: 0 0 1rem 0;
+  padding-bottom: 0.5rem;
+}
+
+.modelos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.modelo-card {
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: $radius-md;
+  padding: 1rem;
+  background: var(--surface-2, #f8fafc);
+
+  .modelo-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .modelo-nome {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-primary, #1e293b);
+  }
+
+  .modelo-body {
+    margin-top: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+
+    &.modelo-body-col {
+      flex-direction: column;
+    }
+  }
+
+  .modelo-opt {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+
+  input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+
+    &:checked + .toggle-slider {
+      background: var(--primary, #4f46e5);
+    }
+
+    &:checked + .toggle-slider::before {
+      transform: translateX(20px);
+    }
+  }
+
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--border-color, #cbd5e1);
+    border-radius: 24px;
+    transition: 0.3s;
+
+    &::before {
+      content: '';
+      position: absolute;
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: 0.3s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+  }
+}
+
+.input-brl,
+.input-num,
+.input-desc,
+.input-cenario {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: $radius-sm;
+  font-size: 0.9rem;
+  background: var(--bg-card, #fff);
+  color: var(--text-primary, #1e293b);
+
+  &::placeholder {
+    color: var(--text-muted, #94a3b8);
+  }
+}
+
+.receita-destaque {
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%);
+  border-radius: $radius-md;
+  border: 1px solid rgba(79, 70, 229, 0.2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  .receita-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary, #1e293b);
+  }
+
+  .receita-valor {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary, #4f46e5);
+  }
+}
+
+.custos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.custo-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  label {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+    font-weight: 500;
+  }
+
+  &.custo-row-dual {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  &.custo-row-outro {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+
+    .input-desc {
+      flex: 1;
+    }
+
+    .input-brl {
+      width: 100px;
+    }
+
+    .btn-remove {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: none;
+      background: rgba(239, 68, 68, 0.15);
+      color: #dc2626;
+      border-radius: $radius-sm;
+      cursor: pointer;
+      font-size: 1.2rem;
+      line-height: 1;
+    }
+  }
+}
+
+.btn-add-custo {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--primary, #4f46e5);
+  background: transparent;
+  border: 1px dashed var(--primary, #4f46e5);
+  border-radius: $radius-sm;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: rgba(79, 70, 229, 0.08);
+  }
+}
+
+.custo-total {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+
+  .custo-total-valor {
+    font-size: 1.2rem;
+    color: var(--text-primary, #1e293b);
+  }
+}
+
+.resultado-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.resultado-item {
+  padding: 1rem;
+  background: var(--surface-2, #f8fafc);
+  border-radius: $radius-md;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  .resultado-label {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+    font-weight: 500;
+  }
+
+  .resultado-valor {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-primary, #1e293b);
+
+    &.negativo {
+      color: #dc2626;
+    }
+  }
+
+  &.resultado-lucro .resultado-valor:not(.negativo) {
+    color: #16a34a;
+  }
+}
+
+.meta-inputs {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.meta-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  label {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+    font-weight: 500;
+  }
+
+  input {
+    width: 160px;
+  }
+}
+
+.recomendacao-box {
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.04) 100%);
+  border-radius: $radius-md;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.recomendacao-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+
+  .recomendacao-label {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+  }
+
+  .recomendacao-valor {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #16a34a;
+  }
+}
+
+.cenarios-save {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+
+  .input-cenario {
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .btn-save-cenario {
+    padding: 0.5rem 1.25rem;
+    background: var(--primary, #4f46e5);
+    color: white;
+    border: none;
+    border-radius: $radius-sm;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s;
+
+    &:hover {
+      background: #4338ca;
+    }
+  }
+}
+
+.cenarios-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: $radius-md;
+}
+
+.cenarios-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+
+  th, td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  th {
+    background: var(--surface-2, #f8fafc);
+    font-weight: 600;
+    color: var(--text-primary, #1e293b);
+  }
+
+  td.negativo {
+    color: #dc2626;
+  }
+
+  .btn-remove-sm {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    transition: background 0.2s;
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.3);
+    }
+  }
+}
+
+.cenarios-empty {
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .rentabilidade-page {
+    padding: 1rem;
+  }
+
+  .metrics-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .modelos-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .custos-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .resultado-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

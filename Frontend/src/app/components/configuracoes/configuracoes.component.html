@@ -1,425 +1,394 @@
-<div class="w-full py-12 px-4">
-  <div class="max-w-6xl mx-auto">
+<div class="settings-page" [class.dark]="false">
+  <div class="settings-container">
     <!-- Header -->
-    <div class="text-center mb-12">
-      <h1 class="text-5xl md:text-6xl font-bold mb-4 text-[#0C0D0A]">
-        Configurações da Automação
-      </h1>
-      <p class="text-lg md:text-xl text-[#1E2615] font-light tracking-wide max-w-2xl mx-auto">
-        Parâmetros globais para controlar o comportamento da automação
-      </p>
-      <div class="mt-6 h-0.5 w-24 mx-auto bg-gradient-to-r from-transparent via-[#8BCB70] to-transparent"></div>
-    </div>
-
-    <!-- Loading Spinner -->
-    <div *ngIf="loading" class="flex justify-center items-center py-20">
-      <div class="relative">
-        <div class="w-16 h-16 border-4 border-[#8BCB70]/30 border-t-[#8BCB70] rounded-full animate-spin"></div>
+    <header class="settings-header">
+      <div>
+        <h1 class="settings-title">Painel de Controle</h1>
+        <p class="settings-subtitle">Configurações da automação NFSe</p>
       </div>
-    </div>
+    </header>
 
-    <!-- Form -->
-    <form [formGroup]="settingsForm" *ngIf="!loading" (ngSubmit)="saveSettings()">
-      <div class="grid md:grid-cols-2 gap-8 mb-8">
-        <!-- Card 1: Execução Geral -->
-        <div class="card-futuristic rounded-2xl p-8">
-          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
-            <div class="w-2 h-2 bg-[#8BCB70] rounded-full mr-3"></div>
-            Execução Geral
-          </h2>
-          
-          <div class="space-y-6">
-            <!-- Headless Toggle -->
-            <div class="flex items-center justify-between">
-              <label class="text-[#1E2615] font-medium">Modo Headless</label>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" formControlName="headless" class="sr-only peer">
-                <div class="w-11 h-6 bg-[#1E2615]/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#8BCB70]"></div>
-              </label>
-            </div>
-
-            <!-- Company Timeout -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Timeout por Empresa (segundos)
-              </label>
-              <input
-                type="number"
-                formControlName="companyTimeoutSeconds"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('companyTimeoutSeconds')"
-              />
-              <p *ngIf="isFieldInvalid('companyTimeoutSeconds')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('companyTimeoutSeconds') }}
-              </p>
-            </div>
-
-            <!-- Max Retries -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Máximo de Tentativas por Etapa
-              </label>
-              <input
-                type="number"
-                formControlName="maxRetriesPerStep"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('maxRetriesPerStep')"
-              />
-              <p *ngIf="isFieldInvalid('maxRetriesPerStep')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('maxRetriesPerStep') }}
-              </p>
-            </div>
-
-            <!-- Min Action Delay -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Delay Mínimo entre Ações (ms)
-              </label>
-              <input
-                type="number"
-                formControlName="minActionDelayMs"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('minActionDelayMs')"
-              />
-              <p *ngIf="isFieldInvalid('minActionDelayMs')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('minActionDelayMs') }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card 2: Navegadores / Concorrência -->
-        <div class="card-futuristic rounded-2xl p-8">
-          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
-            <div class="w-2 h-2 bg-[#7EBFB3] rounded-full mr-3"></div>
-            Navegadores / Concorrência
-          </h2>
-          
-          <div class="space-y-6">
-            <!-- Max Concurrent Browsers -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Máximo de Navegadores Concorrentes
-              </label>
-              <input
-                type="number"
-                formControlName="maxConcurrentBrowsers"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('maxConcurrentBrowsers')"
-              />
-              <p *ngIf="isFieldInvalid('maxConcurrentBrowsers')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('maxConcurrentBrowsers') }}
-              </p>
-            </div>
-
-            <!-- Default Concurrent Browsers -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Navegadores Concorrentes Padrão
-              </label>
-              <input
-                type="number"
-                formControlName="defaultConcurrentBrowsers"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('defaultConcurrentBrowsers')"
-              />
-              <p *ngIf="isFieldInvalid('defaultConcurrentBrowsers')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('defaultConcurrentBrowsers') }}
-              </p>
-            </div>
-
-            <!-- Browser Launch Delay -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Delay entre Lançamentos (ms)
-              </label>
-              <input
-                type="number"
-                formControlName="browserLaunchDelayMs"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('browserLaunchDelayMs')"
-              />
-              <p *ngIf="isFieldInvalid('browserLaunchDelayMs')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('browserLaunchDelayMs') }}
-              </p>
-            </div>
-
-            <!-- Viewport Preset -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Preset de Viewport
-              </label>
-              <select
-                formControlName="viewportPreset"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-              >
-                <option value="HD">HD (1280x720)</option>
-                <option value="FULLHD">Full HD (1920x1080)</option>
-                <option value="QHD">QHD (2560x1440)</option>
-                <option value="CUSTOM">Personalizado</option>
-              </select>
-            </div>
-
-            <!-- Custom Viewport (condicional) -->
-            <div *ngIf="viewportPreset === 'CUSTOM'" class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-[#1E2615] font-medium mb-2">
-                  Largura (px)
-                </label>
-                <input
-                  type="number"
-                  formControlName="viewportWidth"
-                  class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                  [class.border-red-500]="isFieldInvalid('viewportWidth')"
-                />
-                <p *ngIf="isFieldInvalid('viewportWidth')" class="text-red-500 text-sm mt-1">
-                  {{ getFieldError('viewportWidth') }}
-                </p>
-              </div>
-              <div>
-                <label class="block text-[#1E2615] font-medium mb-2">
-                  Altura (px)
-                </label>
-                <input
-                  type="number"
-                  formControlName="viewportHeight"
-                  class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                  [class.border-red-500]="isFieldInvalid('viewportHeight')"
-                />
-                <p *ngIf="isFieldInvalid('viewportHeight')" class="text-red-500 text-sm mt-1">
-                  {{ getFieldError('viewportHeight') }}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card 3: Diretórios -->
-        <div class="card-futuristic rounded-2xl p-8">
-          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
-            <div class="w-2 h-2 bg-[#A9D9D4] rounded-full mr-3"></div>
-            Diretórios
-          </h2>
-          
-          <div class="space-y-6">
-            <!-- Downloads Base Path -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Caminho Base de Downloads
-              </label>
-              <div class="flex gap-0">
-                <input
-                  type="text"
-                  formControlName="downloadsBasePath"
-                  class="flex-1 px-4 py-2 rounded-l-lg rounded-r-none border border-r-0 border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                  [class.border-red-500]="isFieldInvalid('downloadsBasePath')"
-                />
-                <button
-                  type="button"
-                  (click)="selectDirectory('downloadsBasePath')"
-                  class="px-4 py-2 rounded-r-lg rounded-l-none border border-l-0 border-[#1E2615]/30 bg-[#8BCB70]/20 hover:bg-[#8BCB70]/30 text-[#0C0D0A] font-medium transition-all flex items-center justify-center"
-                  title="Selecionar pasta"
-                  [class.border-red-500]="isFieldInvalid('downloadsBasePath')"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                  </svg>
-                </button>
-              </div>
-              <p *ngIf="isFieldInvalid('downloadsBasePath')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('downloadsBasePath') }}
-              </p>
-            </div>
-
-            <!-- Downloads Pattern -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Padrão de Downloads
-              </label>
-              <input
-                type="text"
-                formControlName="downloadsPattern"
-                placeholder='Ex: "{cnpj}/{ano}/{mes}"'
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('downloadsPattern')"
-              />
-              <p *ngIf="isFieldInvalid('downloadsPattern')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('downloadsPattern') }}
-              </p>
-            </div>
-
-            <!-- Logs Path -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Caminho de Logs
-              </label>
-              <div class="flex gap-0">
-                <input
-                  type="text"
-                  formControlName="logsPath"
-                  class="flex-1 px-4 py-2 rounded-l-lg rounded-r-none border border-r-0 border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                  [class.border-red-500]="isFieldInvalid('logsPath')"
-                />
-                <button
-                  type="button"
-                  (click)="selectDirectory('logsPath')"
-                  class="px-4 py-2 rounded-r-lg rounded-l-none border border-l-0 border-[#1E2615]/30 bg-[#8BCB70]/20 hover:bg-[#8BCB70]/30 text-[#0C0D0A] font-medium transition-all flex items-center justify-center"
-                  title="Selecionar pasta"
-                  [class.border-red-500]="isFieldInvalid('logsPath')"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                  </svg>
-                </button>
-              </div>
-              <p *ngIf="isFieldInvalid('logsPath')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('logsPath') }}
-              </p>
-            </div>
-
-            <!-- Temp Path -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Caminho Temporário
-              </label>
-              <div class="flex gap-0">
-                <input
-                  type="text"
-                  formControlName="tempPath"
-                  class="flex-1 px-4 py-2 rounded-l-lg rounded-r-none border border-r-0 border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                  [class.border-red-500]="isFieldInvalid('tempPath')"
-                />
-                <button
-                  type="button"
-                  (click)="selectDirectory('tempPath')"
-                  class="px-4 py-2 rounded-r-lg rounded-l-none border border-l-0 border-[#1E2615]/30 bg-[#8BCB70]/20 hover:bg-[#8BCB70]/30 text-[#0C0D0A] font-medium transition-all flex items-center justify-center"
-                  title="Selecionar pasta"
-                  [class.border-red-500]="isFieldInvalid('tempPath')"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                  </svg>
-                </button>
-              </div>
-              <p *ngIf="isFieldInvalid('tempPath')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('tempPath') }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card 4: Logs & Relatórios -->
-        <div class="card-futuristic rounded-2xl p-8">
-          <h2 class="text-2xl font-bold text-[#0C0D0A] mb-6 flex items-center">
-            <div class="w-2 h-2 bg-[#8BCB70] rounded-full mr-3"></div>
-            Logs & Relatórios
-          </h2>
-          
-          <div class="space-y-6">
-            <!-- Log Level -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Nível de Log
-              </label>
-              <select
-                formControlName="logLevel"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-              >
-                <option value="ERROR">ERROR</option>
-                <option value="WARN">WARN</option>
-                <option value="INFO">INFO</option>
-                <option value="DEBUG">DEBUG</option>
-              </select>
-            </div>
-
-            <!-- Save Error Screenshots Toggle -->
-            <div class="flex items-center justify-between">
-              <label class="text-[#1E2615] font-medium">Salvar Screenshots de Erros</label>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" formControlName="saveErrorScreenshots" class="sr-only peer">
-                <div class="w-11 h-6 bg-[#1E2615]/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#8BCB70]"></div>
-              </label>
-            </div>
-
-            <!-- Generate PDF Report Toggle -->
-            <div class="flex items-center justify-between">
-              <label class="text-[#1E2615] font-medium">Gerar Relatório PDF</label>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" formControlName="generatePdfReport" class="sr-only peer">
-                <div class="w-11 h-6 bg-[#1E2615]/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#8BCB70]"></div>
-              </label>
-            </div>
-
-            <!-- Log Retention Days -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Retenção de Logs (dias)
-              </label>
-              <input
-                type="number"
-                formControlName="logRetentionDays"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('logRetentionDays')"
-              />
-              <p *ngIf="isFieldInvalid('logRetentionDays')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('logRetentionDays') }}
-              </p>
-            </div>
-
-            <!-- Max Errors in Panel -->
-            <div>
-              <label class="block text-[#1E2615] font-medium mb-2">
-                Máximo de Erros no Painel
-              </label>
-              <input
-                type="number"
-                formControlName="maxErrorsInPanel"
-                class="w-full px-4 py-2 rounded-lg border border-[#1E2615]/20 bg-white/50 focus:outline-none focus:ring-2 focus:ring-[#8BCB70] focus:border-transparent"
-                [class.border-red-500]="isFieldInvalid('maxErrorsInPanel')"
-              />
-              <p *ngIf="isFieldInvalid('maxErrorsInPanel')" class="text-red-500 text-sm mt-1">
-                {{ getFieldError('maxErrorsInPanel') }}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Mensagem de Feedback -->
-      <div *ngIf="saveMessage" class="mb-6 p-4 rounded-lg" 
-           [class.bg-green-100]="saveMessage.type === 'success'"
-           [class.bg-red-100]="saveMessage.type === 'error'"
-           [class.text-green-800]="saveMessage.type === 'success'"
-           [class.text-red-800]="saveMessage.type === 'error'">
-        {{ saveMessage.text }}
-      </div>
-
-      <!-- Botões de Ação -->
-      <div class="flex justify-center gap-4">
+    <!-- Tabs -->
+    <nav class="settings-tabs">
+      @for (tab of tabs; track tab.id) {
         <button
           type="button"
-          (click)="reloadDefaults()"
-          class="px-8 py-3 rounded-lg border-2 border-[#1E2615]/30 text-[#1E2615] font-semibold hover:bg-[#1E2615]/5 transition-all"
-          [disabled]="loading || saving"
+          class="tab-btn"
+          [class.active]="activeTab === tab.id"
+          (click)="switchTab(tab.id)"
         >
-          Recarregar Padrões
+          <span class="tab-icon">{{ tab.icon === 'play' ? '▶' : tab.icon === 'folder' ? '📁' : tab.icon === 'document' ? '📄' : '🛡' }}</span>
+          {{ tab.label }}
         </button>
-        <button
-          type="submit"
-          class="btn-futuristic px-8 py-3 rounded-lg font-semibold"
-          [disabled]="loading || saving || settingsForm.invalid"
-        >
-          <span *ngIf="!saving">Salvar</span>
-          <span *ngIf="saving" class="flex items-center">
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Salvando...
-          </span>
-        </button>
+      }
+    </nav>
+
+    <!-- Loading -->
+    @if (loading && activeTab !== 'ambiente') {
+      <div class="loading-block">
+        <div class="spinner"></div>
+        <p>Carregando configurações...</p>
       </div>
-    </form>
+    }
+
+    <!-- Content -->
+    @if (!loading || activeTab === 'ambiente') {
+      <form [formGroup]="settingsForm" class="settings-content">
+        <!-- ABA: Automação -->
+        @if (activeTab === 'automacao') {
+          <div class="tab-panel">
+            <div class="card">
+              <h2 class="card-title">Execução</h2>
+              <p class="card-desc">Parâmetros de tempo e retentativas</p>
+              <div class="preset-row">
+                <label class="field-label">Preset</label>
+                <div class="preset-btns">
+                  @for (p of presets; track p.value) {
+                    <button
+                      type="button"
+                      class="preset-btn"
+                      [class.selected]="presetSelected === p.value"
+                      (click)="applyPreset(p.value)"
+                    >
+                      {{ p.label }}
+                    </button>
+                  }
+                </div>
+                <span class="helper">Clique para aplicar valores sugeridos (não salva automaticamente)</span>
+              </div>
+              <div class="field-row">
+                <div class="flex-between">
+                  <label class="field-label">Modo Headless</label>
+                  <label class="toggle">
+                    <input type="checkbox" formControlName="headless" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="field-row">
+                <label class="field-label">Timeout por Empresa (seg)</label>
+                <input type="number" formControlName="companyTimeoutSeconds" class="field-input" />
+                <span class="helper">Recomendado: 300-3600</span>
+                @if (isFieldInvalid('companyTimeoutSeconds')) {
+                  <span class="field-error">{{ getFieldError('companyTimeoutSeconds') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Máx. Tentativas por Etapa</label>
+                <input type="number" formControlName="maxRetriesPerStep" class="field-input" />
+                @if (isFieldInvalid('maxRetriesPerStep')) {
+                  <span class="field-error">{{ getFieldError('maxRetriesPerStep') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Delay Mín. entre Ações (ms)</label>
+                <input type="number" formControlName="minActionDelayMs" class="field-input" />
+                @if (isFieldInvalid('minActionDelayMs')) {
+                  <span class="field-error">{{ getFieldError('minActionDelayMs') }}</span>
+                }
+              </div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">Concorrência / Navegadores</h2>
+              <p class="card-desc">Limites de navegadores simultâneos</p>
+              <div class="field-row">
+                <label class="field-label">Máx. Navegadores Concorrentes</label>
+                <input type="number" formControlName="maxConcurrentBrowsers" class="field-input" />
+                <span class="helper">Recomendado: 2-4</span>
+                @if (isFieldInvalid('maxConcurrentBrowsers')) {
+                  <span class="field-error">{{ getFieldError('maxConcurrentBrowsers') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Padrão de Navegadores</label>
+                <input type="number" formControlName="defaultConcurrentBrowsers" class="field-input" />
+                <span class="helper">Deve ser ≤ máximo</span>
+                @if (isFieldInvalid('defaultConcurrentBrowsers') || settingsForm.hasError('defaultExceedsMax')) {
+                  <span class="field-error">{{ getFieldError('defaultConcurrentBrowsers') || 'Padrão não pode ser maior que o máximo' }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Delay entre Lançamentos (ms)</label>
+                <input type="number" formControlName="browserLaunchDelayMs" class="field-input" />
+                @if (isFieldInvalid('browserLaunchDelayMs')) {
+                  <span class="field-error">{{ getFieldError('browserLaunchDelayMs') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Viewport</label>
+                <select formControlName="viewportPreset" class="field-input field-select">
+                  @for (opt of viewportOptions; track opt.value) {
+                    <option [value]="opt.value">{{ opt.label }}</option>
+                  }
+                </select>
+                @if (viewportPreset === 'CUSTOM') {
+                  <div class="custom-viewport">
+                    <input type="number" formControlName="viewportWidth" placeholder="Largura" class="field-input" />
+                    <input type="number" formControlName="viewportHeight" placeholder="Altura" class="field-input" />
+                  </div>
+                  @if (isFieldInvalid('viewportWidth') || isFieldInvalid('viewportHeight')) {
+                    <span class="field-error">Largura e altura obrigatórias ( > 0 )</span>
+                  }
+                }
+              </div>
+            </div>
+          </div>
+        }
+
+        <!-- ABA: Arquivos e Diretórios -->
+        @if (activeTab === 'arquivos') {
+          <div class="tab-panel">
+            <div class="card">
+              <h2 class="card-title">Arquivos e Diretórios</h2>
+              <p class="card-desc">Caminhos para downloads, logs e temporários</p>
+              <div class="field-row">
+                <label class="field-label">Caminho Base de Downloads</label>
+                <div class="field-with-btn">
+                  <input type="text" formControlName="downloadsBasePath" class="field-input" />
+                  <button type="button" class="btn-folder" (click)="selectDirectory('downloadsBasePath')" title="Selecionar pasta">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                    </svg>
+                  </button>
+                </div>
+                @if (isFieldInvalid('downloadsBasePath')) {
+                  <span class="field-error">{{ getFieldError('downloadsBasePath') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Padrão de Downloads</label>
+                <input type="text" formControlName="downloadsPattern" class="field-input" placeholder="{cnpj}/{ano}/{mes}" />
+                <span class="helper">Placeholders: &#123;cnpj&#125;, &#123;ano&#125;, &#123;mes&#125;</span>
+                @if (isFieldInvalid('downloadsPattern')) {
+                  <span class="field-error">{{ getFieldError('downloadsPattern') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Caminho de Logs</label>
+                <div class="field-with-btn">
+                  <input type="text" formControlName="logsPath" class="field-input" />
+                  <button type="button" class="btn-folder" (click)="selectDirectory('logsPath')" title="Selecionar pasta">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                    </svg>
+                  </button>
+                </div>
+                @if (isFieldInvalid('logsPath')) {
+                  <span class="field-error">{{ getFieldError('logsPath') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Caminho Temporário</label>
+                <div class="field-with-btn">
+                  <input type="text" formControlName="tempPath" class="field-input" />
+                  <button type="button" class="btn-folder" (click)="selectDirectory('tempPath')" title="Selecionar pasta">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                    </svg>
+                  </button>
+                </div>
+                @if (isFieldInvalid('tempPath')) {
+                  <span class="field-error">{{ getFieldError('tempPath') }}</span>
+                }
+              </div>
+
+              <!-- Preview do Pattern -->
+              <div class="preview-box">
+                <h3 class="preview-title">Preview do caminho final</h3>
+                <div class="preview-inputs">
+                  <input
+                    type="text"
+                    [(ngModel)]="previewCnpj"
+                    [ngModelOptions]="{ standalone: true }"
+                    placeholder="CNPJ ex: 00.000.000/0001-00"
+                    class="field-input preview-inp"
+                  />
+                  <input
+                    type="text"
+                    [(ngModel)]="previewCompetencia"
+                    [ngModelOptions]="{ standalone: true }"
+                    placeholder="Competência ex: 2026-01"
+                    class="field-input preview-inp"
+                  />
+                </div>
+                <div class="preview-path">{{ patternPreview }}</div>
+                <button type="button" class="btn-secondary" (click)="testPaths()" [disabled]="testingPaths || settingsForm.invalid">
+                  @if (testingPaths) {
+                    <span class="spinner small"></span>
+                    Testando...
+                  } @else {
+                    Testar diretórios
+                  }
+                </button>
+                @if (pathTestResult) {
+                  <div class="test-result" [class.ok]="pathTestResult.checks.downloadsWritable && pathTestResult.checks.logsWritable && pathTestResult.checks.tempWritable">
+                    <div>Preview: {{ pathTestResult.previewResolvedPath }}</div>
+                    <div>Downloads: {{ pathTestResult.checks.downloadsWritable ? '✅' : '❌' }}</div>
+                    <div>Logs: {{ pathTestResult.checks.logsWritable ? '✅' : '❌' }}</div>
+                    <div>Temp: {{ pathTestResult.checks.tempWritable ? '✅' : '❌' }}</div>
+                    <div>Subpastas: {{ pathTestResult.checks.canCreateSubfolders ? '✅' : '❌' }}</div>
+                    @if (pathTestResult.checks.errors.length) {
+                      <div class="test-errors">{{ pathTestResult.checks.errors.join('; ') }}</div>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        }
+
+        <!-- ABA: Logs e Diagnóstico -->
+        @if (activeTab === 'logs') {
+          <div class="tab-panel">
+            <div class="card">
+              <h2 class="card-title">Logs e Relatórios</h2>
+              <p class="card-desc">Nível de log, screenshots e retenção</p>
+              <div class="field-row">
+                <label class="field-label">Nível de Log</label>
+                <select formControlName="logLevel" class="field-input field-select">
+                  <option value="DEBUG">DEBUG</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARN">WARN</option>
+                  <option value="ERROR">ERROR</option>
+                </select>
+              </div>
+              <div class="field-row flex-between">
+                <label class="field-label">Salvar Screenshots de Erros</label>
+                <label class="toggle">
+                  <input type="checkbox" formControlName="saveErrorScreenshots" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="field-row flex-between">
+                <label class="field-label">Gerar Relatório PDF</label>
+                <label class="toggle">
+                  <input type="checkbox" formControlName="generatePdfReport" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="field-row">
+                <label class="field-label">Retenção de Logs (dias)</label>
+                <input type="number" formControlName="logRetentionDays" class="field-input" />
+                @if (isFieldInvalid('logRetentionDays')) {
+                  <span class="field-error">{{ getFieldError('logRetentionDays') }}</span>
+                }
+              </div>
+              <div class="field-row">
+                <label class="field-label">Máx. Erros no Painel</label>
+                <input type="number" formControlName="maxErrorsInPanel" class="field-input" />
+                @if (isFieldInvalid('maxErrorsInPanel')) {
+                  <span class="field-error">{{ getFieldError('maxErrorsInPanel') }}</span>
+                }
+              </div>
+              <div class="diagnostic-actions">
+                <button type="button" class="btn-ghost" (click)="onDebugTemporario()">
+                  Ativar debug por 30 minutos
+                </button>
+                <button type="button" class="btn-ghost" (click)="onColetarDiagnostico()">
+                  Coletar pacote de diagnóstico
+                </button>
+              </div>
+            </div>
+          </div>
+        }
+
+        <!-- ABA: Ambiente e Status (READ-ONLY) -->
+        @if (activeTab === 'ambiente') {
+          <div class="tab-panel">
+            <div class="card">
+              <h2 class="card-title">Ambiente e Status</h2>
+              <p class="card-desc">Indicadores do sistema (somente leitura)</p>
+              @if (loadingStatus) {
+                <div class="loading-inline"><span class="spinner small"></span> Verificando...</div>
+              } @else if (configStatus) {
+                <div class="status-grid">
+                  <div class="status-item">
+                    <span class="status-label">API Online</span>
+                    <span class="status-badge" [class.ok]="configStatus.apiUp">{{ configStatus.apiUp ? 'Configurado ✅' : 'Não configurado ❌' }}</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">Banco de Dados</span>
+                    <span class="status-badge" [class.ok]="configStatus.dbConnected">{{ formatStatus(configStatus.dbConnected) }} {{ configStatus.dbConnected ? '✅' : '❌' }}</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">Supabase</span>
+                    <span class="status-badge" [class.ok]="configStatus.supabaseConfigured">{{ formatStatus(configStatus.supabaseConfigured) }} {{ configStatus.supabaseConfigured ? '✅' : '❌' }}</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">Playwright</span>
+                    <span class="status-badge" [class.ok]="configStatus.playwrightOk">{{ formatStatus(configStatus.playwrightOk) }} {{ configStatus.playwrightOk ? '✅' : '❌' }}</span>
+                  </div>
+                  <div class="status-item full">
+                    <span class="status-label">CORS Origins</span>
+                    <span class="status-value">{{ (configStatus.corsOrigins && configStatus.corsOrigins.length) ? configStatus.corsOrigins.join(', ') : '-' }}</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">Porta</span>
+                    <span class="status-value">{{ configStatus.port }}</span>
+                  </div>
+                  @if (configStatus.version) {
+                    <div class="status-item">
+                      <span class="status-label">Versão</span>
+                      <span class="status-value">{{ configStatus.version }}</span>
+                    </div>
+                  }
+                </div>
+                <button type="button" class="btn-ghost" (click)="refreshStatus()">Atualizar status</button>
+              }
+            </div>
+          </div>
+        }
+      </form>
+    }
+
+    <!-- Barra de ações fixa -->
+    @if (activeTab !== 'ambiente' && !loading) {
+      <footer class="settings-footer">
+        @if (hasUnsavedChanges) {
+          <span class="unsaved-badge">Alterações não salvas</span>
+        }
+        <div class="footer-actions">
+          <button type="button" class="btn-ghost" (click)="resetToDefaults()">
+            Restaurar padrões
+          </button>
+          <button
+            type="button"
+            class="btn-ghost"
+            (click)="discardChanges()"
+            [disabled]="!hasUnsavedChanges"
+          >
+            Descartar
+          </button>
+          <button
+            type="button"
+            class="btn-primary"
+            (click)="saveSettings()"
+            [disabled]="saving || !hasUnsavedChanges || settingsForm.invalid"
+          >
+            @if (saving) {
+              <span class="spinner small"></span>
+              Salvando...
+            } @else {
+              Salvar alterações
+            }
+          </button>
+        </div>
+      </footer>
+    }
   </div>
 </div>
 
+<!-- Modal de confirmação ao trocar de aba -->
+@if (showDiscardModal) {
+  <div class="modal-overlay" (click)="cancelTabSwitch()">
+    <div class="modal-box" (click)="$event.stopPropagation()">
+      <h3>Alterações não salvas</h3>
+      <p>Deseja descartar as alterações e trocar de aba?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" (click)="cancelTabSwitch()">Cancelar</button>
+        <button type="button" class="btn-primary" (click)="confirmTabSwitch(true)">Descartar e trocar</button>
+      </div>
+    </div>
+  </div>
+}

@@ -238,6 +238,20 @@ export class EmpresasUnificadoService {
       );
   }
 
+  excluir(id: number | string): Observable<void> {
+    return this.http
+      .delete<void>(`${this.baseUrl}/empresas/${id}`)
+      .pipe(catchError(this.handleError));
+  }
+
+  /** Remove certificado digital da empresa pelo CNPJ */
+  removerCertificado(cnpj: string): Observable<void> {
+    const cnpjLimpo = (cnpj || '').replace(/\D/g, '');
+    return this.http
+      .delete<void>(`${this.baseUrl}/certificados/cnpj/${cnpjLimpo}`)
+      .pipe(catchError(this.handleError));
+  }
+
   excluirEmMassa(ids: number[]): Observable<{ success: boolean; deleted: number }> {
     return this.http
       .request<ApiSuccess<{ success: boolean; deleted: number }>>(

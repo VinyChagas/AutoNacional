@@ -129,24 +129,46 @@ async function previewCredenciais(req, res) {
 async function confirmarCredenciais(req, res) {
     const body = req.body;
     const session_id = typeof body.session_id === 'string' ? body.session_id.trim() : '';
-    const linhasRaw = Array.isArray(body.linhas_aprovadas)
+    const contabilidade_id_default = body.contabilidade_id_default != null
+        ? parseInt(String(body.contabilidade_id_default), 10)
+        : 0;
+    const updateExisting = Boolean(body.updateExisting);
+    let rows = [];
+    if (Array.isArray(body.rows)) {
+        rows = body.rows
+            .filter((x) => x != null && typeof x === 'object' && 'rowIndex' in x)
+            .map((x) => ({
+            rowIndex: parseInt(String(x.rowIndex), 10),
+            contabilidade_id: x.contabilidade_id != null
+                ? parseInt(String(x.contabilidade_id), 10)
+                : undefined,
+        }))
+            .filter((r) => !isNaN(r.rowIndex) && r.rowIndex >= 0);
+    }
+    const linhas_aprovadas = Array.isArray(body.linhas_aprovadas)
         ? body.linhas_aprovadas
+            .map((x) => (typeof x === 'number' ? x : parseInt(String(x), 10)))
+            .filter((n) => !isNaN(n) && n >= 0)
         : [];
-    const linhas_aprovadas = linhasRaw
-        .map((x) => (typeof x === 'number' ? x : parseInt(String(x), 10)))
-        .filter((n) => !isNaN(n) && n > 0);
     if (!session_id) {
         (0, response_1.jsonError)(res, 'session_id é obrigatório', 400);
         return;
     }
-    if (linhas_aprovadas.length === 0) {
-        (0, response_1.jsonError)(res, 'Envie ao menos uma linha em linhas_aprovadas', 400);
+    if (rows.length === 0 && linhas_aprovadas.length === 0) {
+        (0, response_1.jsonError)(res, 'Envie rows (com rowIndex) ou linhas_aprovadas', 400);
+        return;
+    }
+    if (!contabilidade_id_default || contabilidade_id_default < 1) {
+        (0, response_1.jsonError)(res, 'contabilidade_id_default é obrigatório', 400);
         return;
     }
     try {
         const result = await credService.confirmarCredenciais({
             session_id,
-            linhas_aprovadas,
+            contabilidade_id_default,
+            updateExisting,
+            rows: rows.length > 0 ? rows : undefined,
+            linhas_aprovadas: rows.length === 0 ? linhas_aprovadas : undefined,
         });
         (0, response_1.jsonCreated)(res, result, 'Importação de credenciais concluída');
     }

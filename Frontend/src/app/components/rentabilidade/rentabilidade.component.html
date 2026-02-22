@@ -1,0 +1,378 @@
+<div class="rentabilidade-page">
+  <div class="rentabilidade-container">
+    <!-- Header -->
+    <header class="rentabilidade-header">
+      <div>
+        <h1 class="page-title">Painel de Rentabilidade</h1>
+        <p class="page-subtitle">Simulador de precificação e margem da automação</p>
+      </div>
+    </header>
+
+    <!-- Filtros Topo -->
+    <section class="filtros-row">
+      <div class="filtro-group">
+        <label class="filtro-label">Competência</label>
+        <select
+          [ngModel]="competencia()"
+          (ngModelChange)="onCompetenciaChange($event)"
+          class="filtro-select"
+        >
+          @for (c of competenciasDisponiveis(); track c) {
+            <option [value]="c">{{ c }}</option>
+          }
+        </select>
+      </div>
+      <div class="filtro-group">
+        <label class="filtro-label">Contabilidade</label>
+        <select
+          [ngModel]="contabilidadeId()"
+          (ngModelChange)="onContabilidadeChange($event)"
+          class="filtro-select"
+        >
+          <option [ngValue]="null">Todas</option>
+          @for (ct of contabilidades; track ct.id) {
+            <option [ngValue]="ct.id">{{ ct.nome_contabilidade }}</option>
+          }
+        </select>
+      </div>
+    </section>
+
+    <!-- Loading / Erro -->
+    @if (carregando()) {
+      <div class="loading-block">
+        <div class="spinner"></div>
+        <p>Carregando métricas do mês...</p>
+      </div>
+    }
+    @if (erro()) {
+      <div class="erro-block">
+        <span>{{ erro() }}</span>
+      </div>
+    }
+
+    <!-- Cards de Métricas -->
+    @if (summary() && !carregando()) {
+      <section class="metrics-cards">
+        <div class="metric-card">
+          <span class="metric-label">Empresas processadas</span>
+          <span class="metric-value">{{ summary()!.empresas_processadas_total }}</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Empresas OK</span>
+          <span class="metric-value metric-ok">{{ summary()!.empresas_ok }}</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Empresas erro</span>
+          <span class="metric-value metric-erro">{{ summary()!.empresas_erro }}</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Total de notas</span>
+          <span class="metric-value">{{ summary()!.total_notas }}</span>
+        </div>
+        @if (summary()!.nf_canceladas != null && summary()!.nf_canceladas > 0) {
+          <div class="metric-card">
+            <span class="metric-label">NF canceladas</span>
+            <span class="metric-value">{{ summary()!.nf_canceladas }}</span>
+          </div>
+        }
+        @if (summary(); as s) {
+          @if (s.tempo_total_segundos != null && s.tempo_total_segundos > 0) {
+            <div class="metric-card">
+              <span class="metric-label">Tempo total</span>
+              <span class="metric-value">{{ formatarTempo(s.tempo_total_segundos) }}</span>
+            </div>
+          }
+        }
+      </section>
+
+      <!-- Sem dados no mês -->
+      @if (summary()!.empresas_processadas_total === 0 && summary()!.total_notas === 0) {
+        <div class="empty-state">
+          <p>Nenhum dado de execução encontrado para este mês/contabilidade. Execute a automação (tela Execução) para que as métricas sejam gravadas automaticamente.</p>
+        </div>
+      }
+
+      <!-- Bloco Modelos de Cobrança -->
+      <section class="bloco bloco-cobranca">
+        <h2 class="bloco-title">Modelos de cobrança</h2>
+        <div class="modelos-grid">
+          <!-- Por empresa -->
+          <div class="modelo-card">
+            <div class="modelo-header">
+              <span class="modelo-nome">Por empresa processada</span>
+              <label class="toggle">
+                <input type="checkbox" [ngModel]="modeloPorEmpresa().ativo" (ngModelChange)="setModeloPorEmpresaAtivo($event)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            @if (modeloPorEmpresa().ativo) {
+              <div class="modelo-body">
+                <input
+                  type="text"
+                  [ngModel]="modeloPorEmpresa().valorPorEmpresa"
+                  (ngModelChange)="setModeloPorEmpresaValor(parseBRLInput($event))"
+                  placeholder="R$ por empresa"
+                  class="input-brl"
+                />
+                <label class="modelo-opt">
+                  <input type="checkbox" [ngModel]="modeloPorEmpresa().considerarApenasOk" (ngModelChange)="setModeloPorEmpresaConsiderarOk($event)" />
+                  Considerar apenas OK
+                </label>
+              </div>
+            }
+          </div>
+
+          <!-- Por nota -->
+          <div class="modelo-card">
+            <div class="modelo-header">
+              <span class="modelo-nome">Por nota baixada</span>
+              <label class="toggle">
+                <input type="checkbox" [ngModel]="modeloPorNota().ativo" (ngModelChange)="setModeloPorNotaAtivo($event)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            @if (modeloPorNota().ativo) {
+              <div class="modelo-body">
+                <input
+                  type="text"
+                  [ngModel]="modeloPorNota().valorPorNota"
+                  (ngModelChange)="setModeloPorNotaValor(parseBRLInput($event))"
+                  placeholder="R$ por nota"
+                  class="input-brl"
+                />
+              </div>
+            }
+          </div>
+
+          <!-- Mensalidade fixa -->
+          <div class="modelo-card">
+            <div class="modelo-header">
+              <span class="modelo-nome">Mensalidade fixa</span>
+              <label class="toggle">
+                <input type="checkbox" [ngModel]="modeloMensalidade().ativo" (ngModelChange)="setModeloMensalidadeAtivo($event)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            @if (modeloMensalidade().ativo) {
+              <div class="modelo-body">
+                <input
+                  type="text"
+                  [ngModel]="modeloMensalidade().valorMensal"
+                  (ngModelChange)="setModeloMensalidadeValor(parseBRLInput($event))"
+                  placeholder="R$ mensal"
+                  class="input-brl"
+                />
+              </div>
+            }
+          </div>
+
+          <!-- Mínimo mensal -->
+          <div class="modelo-card">
+            <div class="modelo-header">
+              <span class="modelo-nome">Mínimo mensal (piso)</span>
+              <label class="toggle">
+                <input type="checkbox" [ngModel]="modeloMinimo().ativo" (ngModelChange)="setModeloMinimoAtivo($event)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            @if (modeloMinimo().ativo) {
+              <div class="modelo-body">
+                <input
+                  type="text"
+                  [ngModel]="modeloMinimo().valorMinimo"
+                  (ngModelChange)="setModeloMinimoValor(parseBRLInput($event))"
+                  placeholder="R$ mínimo"
+                  class="input-brl"
+                />
+              </div>
+            }
+          </div>
+
+          <!-- Franquia + excedente -->
+          <div class="modelo-card">
+            <div class="modelo-header">
+              <span class="modelo-nome">Franquia + excedente</span>
+              <label class="toggle">
+                <input type="checkbox" [ngModel]="modeloFranquia().ativo" (ngModelChange)="setModeloFranquiaAtivo($event)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            @if (modeloFranquia().ativo) {
+              <div class="modelo-body modelo-body-col">
+                <input
+                  type="number"
+                  [ngModel]="modeloFranquia().franquiaNotas"
+                  (ngModelChange)="setModeloFranquiaNotas(+$event || 0)"
+                  placeholder="Notas incluídas"
+                  class="input-num"
+                  min="0"
+                />
+                <input
+                  type="text"
+                  [ngModel]="modeloFranquia().valorPorNotaExcedente"
+                  (ngModelChange)="setModeloFranquiaValorExcedente(parseBRLInput($event))"
+                  placeholder="R$ por nota excedente"
+                  class="input-brl"
+                />
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="receita-destaque">
+          <span class="receita-label">Receita estimada</span>
+          <span class="receita-valor">{{ formatarBRL(receitaCalculada()) }}</span>
+        </div>
+      </section>
+
+      <!-- Bloco Custos -->
+      <section class="bloco bloco-custos">
+        <h2 class="bloco-title">Custos mensais</h2>
+        <div class="custos-grid">
+          <div class="custo-row">
+            <label>Infra VPS (R$)</label>
+            <input type="text" [ngModel]="custosFixos().infraVps" (ngModelChange)="setCustosFixosInfraVps(parseBRLInput($event))" class="input-brl" />
+          </div>
+          <div class="custo-row">
+            <label>Energia/Internet (R$)</label>
+            <input type="text" [ngModel]="custosFixos().energiaInternet" (ngModelChange)="setCustosFixosEnergia(parseBRLInput($event))" class="input-brl" />
+          </div>
+          <div class="custo-row">
+            <label>Licenças/serviços (R$)</label>
+            <input type="text" [ngModel]="custosFixos().licencasServicos" (ngModelChange)="setCustosFixosLicencas(parseBRLInput($event))" class="input-brl" />
+          </div>
+          <div class="custo-row custo-row-dual">
+            <label>Suporte (horas × R$/h)</label>
+            <input type="number" [ngModel]="custosFixos().suporteHoras" (ngModelChange)="setCustosFixosSuporteHoras(+$event || 0)" class="input-num" min="0" placeholder="h" />
+            <input type="text" [ngModel]="custosFixos().suporteValorHora" (ngModelChange)="setCustosFixosSuporteValorHora(parseBRLInput($event))" class="input-brl" placeholder="R$/h" />
+          </div>
+          <div class="custo-row">
+            <label>Custo por execução (R$)</label>
+            <input type="text" [ngModel]="custosVariaveis().custoPorExecucao" (ngModelChange)="setCustosVariaveisExecucao(parseBRLInput($event))" class="input-brl" />
+          </div>
+          <div class="custo-row">
+            <label>Custo por nota (R$)</label>
+            <input type="text" [ngModel]="custosVariaveis().custoPorNota" (ngModelChange)="setCustosVariaveisNota(parseBRLInput($event))" class="input-brl" />
+          </div>
+        </div>
+        @for (o of custosVariaveis().outros; track $index) {
+          <div class="custo-row custo-row-outro">
+            <input type="text" [ngModel]="o.label" (ngModelChange)="setOutroCustoLabel($index, $event)" placeholder="Descrição" class="input-desc" />
+            <input type="text" [ngModel]="o.valor" (ngModelChange)="setOutroCustoValor($index, parseBRLInput($event))" class="input-brl" placeholder="R$" />
+            <button type="button" class="btn-remove" (click)="removerOutroCusto($index)" title="Remover">×</button>
+          </div>
+        }
+        <button type="button" class="btn-add-custo" (click)="adicionarOutroCusto()">+ Outro custo</button>
+        <div class="custo-total">
+          <span>Custo total</span>
+          <span class="custo-total-valor">{{ formatarBRL(custoTotal()) }}</span>
+        </div>
+      </section>
+
+      <!-- Bloco Resultado -->
+      <section class="bloco bloco-resultado">
+        <h2 class="bloco-title">Resultado</h2>
+        <div class="resultado-grid">
+          <div class="resultado-item">
+            <span class="resultado-label">Receita</span>
+            <span class="resultado-valor">{{ formatarBRL(receitaCalculada()) }}</span>
+          </div>
+          <div class="resultado-item">
+            <span class="resultado-label">Custo</span>
+            <span class="resultado-valor">{{ formatarBRL(custoTotal()) }}</span>
+          </div>
+          <div class="resultado-item resultado-lucro">
+            <span class="resultado-label">Lucro</span>
+            <span class="resultado-valor" [class.negativo]="lucro() < 0">{{ formatarBRL(lucro()) }}</span>
+          </div>
+          <div class="resultado-item">
+            <span class="resultado-label">Margem</span>
+            <span class="resultado-valor">{{ margem().toFixed(1) }}%</span>
+          </div>
+          <div class="resultado-item">
+            <span class="resultado-label">Ticket médio por empresa</span>
+            <span class="resultado-valor">{{ formatarBRL(ticketMedioEmpresa()) }}</span>
+          </div>
+          <div class="resultado-item">
+            <span class="resultado-label">Receita por nota</span>
+            <span class="resultado-valor">{{ formatarBRL(receitaPorNota()) }}</span>
+          </div>
+          @if (summary(); as s2) {
+            @if (s2.tempo_total_segundos != null && s2.tempo_total_segundos > 0) {
+              <div class="resultado-item">
+                <span class="resultado-label">Receita por hora</span>
+                <span class="resultado-valor">{{ formatarBRL(receitaPorHora()) }}/h</span>
+              </div>
+            }
+          }
+        </div>
+      </section>
+
+      <!-- Bloco Meta e Recomendação -->
+      <section class="bloco bloco-meta">
+        <h2 class="bloco-title">Meta e preço recomendado</h2>
+        <div class="meta-inputs">
+          <div class="meta-field">
+            <label>Meta de lucro (R$)</label>
+            <input type="text" [ngModel]="metaPreco().metaLucro" (ngModelChange)="setMetaLucro(parseBRLInput($event) || undefined)" class="input-brl" placeholder="Opcional" />
+          </div>
+          <div class="meta-field">
+            <label>Meta de margem (%)</label>
+            <input type="number" [ngModel]="metaPreco().metaMargem" (ngModelChange)="setMetaMargem(+$event || undefined)" class="input-num" placeholder="Opcional" min="0" max="99" step="0.1" />
+          </div>
+        </div>
+        @if ((metaPreco().metaLucro != null && metaPreco().metaLucro! > 0) || (metaPreco().metaMargem != null && metaPreco().metaMargem! > 0)) {
+          <div class="recomendacao-box">
+            <div class="recomendacao-item">
+              <span class="recomendacao-label">Preço recomendado por empresa</span>
+              <span class="recomendacao-valor">{{ formatarBRL(precoEmpresaRecomendado()) }}</span>
+            </div>
+            <div class="recomendacao-item">
+              <span class="recomendacao-label">Preço recomendado por nota</span>
+              <span class="recomendacao-valor">{{ formatarBRL(precoNotaRecomendado()) }}</span>
+            </div>
+          </div>
+        }
+      </section>
+
+      <!-- Bloco Cenários -->
+      <section class="bloco bloco-cenarios">
+        <h2 class="bloco-title">Cenários</h2>
+        <div class="cenarios-save">
+          <input type="text" [(ngModel)]="novoCenarioNome" placeholder="Nome do cenário (ex: Cenário A)" class="input-cenario" />
+          <button type="button" class="btn-save-cenario" (click)="salvarCenario()">Salvar cenário</button>
+        </div>
+        @if (cenarios().length > 0) {
+          <div class="cenarios-table-wrap">
+            <table class="cenarios-table">
+              <thead>
+                <tr>
+                  <th>Cenário</th>
+                  <th>Receita</th>
+                  <th>Custo</th>
+                  <th>Lucro</th>
+                  <th>Margem</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (c of cenarios(); track c.id) {
+                  <tr>
+                    <td>{{ c.nome }}</td>
+                    <td>{{ formatarBRL(c.receita) }}</td>
+                    <td>{{ formatarBRL(c.custo) }}</td>
+                    <td [class.negativo]="c.lucro < 0">{{ formatarBRL(c.lucro) }}</td>
+                    <td>{{ c.margem.toFixed(1) }}%</td>
+                    <td><button type="button" class="btn-remove-sm" (click)="removerCenario(c.id)" title="Remover">×</button></td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <p class="cenarios-empty">Nenhum cenário salvo. Salve o cenário atual para comparar com outros.</p>
+        }
+      </section>
+    }
+  </div>
+</div>

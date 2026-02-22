@@ -55,3 +55,17 @@ export function cnpjParaEmpresa(documento: string, tipo: 'CNPJ' | 'CPF'): string
   }
   return n;
 }
+
+/**
+ * Formata documento para exibição (CNPJ ou CPF).
+ */
+export function formatarDocumento(doc: string, tipo: 'CNPJ' | 'CPF'): string {
+  const n = normalizarDocumento(doc);
+  if (tipo === 'CPF' && n.length === 11) {
+    return n.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  }
+  if (n.length === 14) {
+    return n.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  }
+  return n || '-';
+}

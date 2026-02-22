@@ -1,37 +1,39 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { ReactiveFormsModule } from '@angular/forms';
 import { ContabilidadeService } from '../../services/contabilidade.service';
+import { SidebarService } from '../../services/sidebar.service';
+import { ToastService } from '../../services/toast.service';
 import { Contabilidade, ContabilidadeCreate, ContabilidadeUpdate } from '../../models/contabilidade.model';
+import { ContabilidadeDrawerComponent } from './contabilidade-drawer/contabilidade-drawer.component';
+
+export type DrawerMode = 'create' | 'edit';
 
 @Component({
   selector: 'app-contabilidades',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, ContabilidadeDrawerComponent],
   templateUrl: './contabilidades.component.html',
-  styleUrls: ['./contabilidades.component.scss']
+  styleUrls: ['./contabilidades.component.scss'],
 })
 export class ContabilidadesComponent implements OnInit {
   contabilidades: Contabilidade[] = [];
-  formulario: FormGroup;
-  editandoId: number | null = null;
-  exibindoFormulario = false;
+  isDrawerOpen = false;
+  drawerMode: DrawerMode = 'create';
+  selectedContabilidade: Contabilidade | null = null;
   carregando = false;
+  salvando = false;
   erro: string | null = null;
-  sucesso: string | null = null;
+
+  // Confirmar exclusão (modal simples)
+  excluirConfirmando: Contabilidade | null = null;
+  excluindo = false;
 
   constructor(
     private contabilidadeService: ContabilidadeService,
-    private fb: FormBuilder
-  ) {
-    this.formulario = this.fb.group({
-      nome_contabilidade: ['', [Validators.required, Validators.minLength(3)]],
-      cnpj: ['', [Validators.required, this.validarCNPJ]],
-      email: ['', [Validators.email]],
-      telefone: [''],
-      responsavel: ['']
-    });
-  }
+    private sidebarService: SidebarService,
+    private toast: ToastService
+  ) {}
 
   ngOnInit(): void {
     this.carregarContabilidades();
@@ -40,7 +42,7 @@ export class ContabilidadesComponent implements OnInit {
   carregarContabilidades(): void {
     this.carregando = true;
     this.erro = null;
-    
+
     this.contabilidadeService.listar().subscribe({
       next: (response) => {
         this.contabilidades = response.contabilidades || [];
@@ -50,128 +52,106 @@ export class ContabilidadesComponent implements OnInit {
         this.erro = error.message || 'Erro ao carregar contabilidades';
         this.carregando = false;
         console.error('Erro ao carregar contabilidades:', error);
-      }
+      },
     });
   }
 
-  abrirFormulario(contabilidade?: Contabilidade): void {
-    this.exibindoFormulario = true;
+  abrirDrawerCriar(): void {
+    this.drawerMode = 'create';
+    this.selectedContabilidade = null;
+    this.sidebarService.collapseIfExpanded();
+    this.isDrawerOpen = true;
     this.erro = null;
-    this.sucesso = null;
-    
-    if (contabilidade) {
-      this.editandoId = contabilidade.id;
-      this.formulario.patchValue({
-        nome_contabilidade: contabilidade.nome_contabilidade,
-        cnpj: contabilidade.cnpj,
-        email: contabilidade.email || '',
-        telefone: contabilidade.telefone || '',
-        responsavel: contabilidade.responsavel || ''
-      });
-      // Desabilita CNPJ na edição
-      this.formulario.get('cnpj')?.disable();
-    } else {
-      this.editandoId = null;
-      this.formulario.reset();
-      this.formulario.get('cnpj')?.enable();
-    }
   }
 
-  fecharFormulario(): void {
-    this.exibindoFormulario = false;
-    this.editandoId = null;
-    this.formulario.reset();
+  abrirDrawerEditar(contabilidade: Contabilidade): void {
+    this.drawerMode = 'edit';
+    this.selectedContabilidade = contabilidade;
+    this.sidebarService.collapseIfExpanded();
+    this.isDrawerOpen = true;
     this.erro = null;
-    this.sucesso = null;
   }
 
-  salvar(): void {
-    if (this.formulario.invalid) {
-      this.marcarCamposComErro();
-      return;
-    }
-
-    this.carregando = true;
+  fecharDrawer(): void {
+    this.isDrawerOpen = false;
+    this.selectedContabilidade = null;
     this.erro = null;
-    this.sucesso = null;
+  }
 
-    const dados = this.formulario.getRawValue();
+  onDrawerSaved(dados: Record<string, unknown>): void {
+    this.salvando = true;
+    this.erro = null;
 
-    if (this.editandoId) {
-      // Atualizar
+    if (this.drawerMode === 'edit' && this.selectedContabilidade) {
       const updateData: ContabilidadeUpdate = {
-        nome_contabilidade: dados.nome_contabilidade,
-        email: dados.email || undefined,
-        telefone: dados.telefone || undefined,
-        responsavel: dados.responsavel || undefined
+        nome_contabilidade: dados['nome_contabilidade'] as string,
+        email: (dados['email'] as string) || undefined,
+        telefone: (dados['telefone'] as string) || undefined,
+        responsavel: (dados['responsavel'] as string) || undefined,
       };
 
-      this.contabilidadeService.atualizar(this.editandoId, updateData).subscribe({
+      this.contabilidadeService.atualizar(this.selectedContabilidade.id, updateData).subscribe({
         next: () => {
-          this.sucesso = 'Contabilidade atualizada com sucesso!';
+          this.toast.success('Contabilidade atualizada com sucesso!');
           this.carregarContabilidades();
-          setTimeout(() => this.fecharFormulario(), 1500);
+          setTimeout(() => this.fecharDrawer(), 700);
+          this.salvando = false;
         },
         error: (error) => {
           this.erro = error.message || 'Erro ao atualizar contabilidade';
-          this.carregando = false;
-        }
+          this.salvando = false;
+        },
       });
     } else {
-      // Criar
       const createData: ContabilidadeCreate = {
-        nome_contabilidade: dados.nome_contabilidade,
-        cnpj: this.limparCNPJ(dados.cnpj),
-        email: dados.email || undefined,
-        telefone: dados.telefone || undefined,
-        responsavel: dados.responsavel || undefined
+        nome_contabilidade: dados['nome_contabilidade'] as string,
+        cnpj: this.limparCNPJ((dados['cnpj'] as string) || ''),
+        email: (dados['email'] as string) || undefined,
+        telefone: (dados['telefone'] as string) || undefined,
+        responsavel: (dados['responsavel'] as string) || undefined,
       };
 
       this.contabilidadeService.criar(createData).subscribe({
         next: () => {
-          this.sucesso = 'Contabilidade cadastrada com sucesso!';
+          this.toast.success('Contabilidade cadastrada com sucesso!');
           this.carregarContabilidades();
-          setTimeout(() => this.fecharFormulario(), 1500);
+          setTimeout(() => this.fecharDrawer(), 700);
+          this.salvando = false;
         },
         error: (error) => {
           this.erro = error.message || 'Erro ao cadastrar contabilidade';
-          this.carregando = false;
-        }
+          this.salvando = false;
+        },
       });
     }
   }
 
-  excluir(contabilidade: Contabilidade): void {
-    if (!confirm(`Deseja realmente excluir a contabilidade "${contabilidade.nome_contabilidade}"?`)) {
-      return;
+  abrirConfirmExcluir(contabilidade: Contabilidade): void {
+    this.excluirConfirmando = contabilidade;
+  }
+
+  fecharConfirmExcluir(): void {
+    if (!this.excluindo) {
+      this.excluirConfirmando = null;
     }
+  }
 
-    this.carregando = true;
-    this.erro = null;
+  confirmarExcluir(): void {
+    if (!this.excluirConfirmando) return;
 
-    this.contabilidadeService.excluir(contabilidade.id).subscribe({
+    this.excluindo = true;
+    this.contabilidadeService.excluir(this.excluirConfirmando.id).subscribe({
       next: () => {
-        this.sucesso = 'Contabilidade excluída com sucesso!';
+        this.toast.success('Contabilidade excluída com sucesso!');
         this.carregarContabilidades();
-        setTimeout(() => this.sucesso = null, 3000);
+        this.excluirConfirmando = null;
+        this.excluindo = false;
       },
       error: (error) => {
         this.erro = error.message || 'Erro ao excluir contabilidade';
-        this.carregando = false;
-      }
+        this.excluindo = false;
+      },
     });
-  }
-
-  validarCNPJ(control: any): { [key: string]: any } | null {
-    if (!control.value) return null;
-    
-    const cnpjLimpo = control.value.replace(/[^\d]/g, '');
-    
-    if (cnpjLimpo.length !== 14) {
-      return { cnpjInvalido: true };
-    }
-    
-    return null;
   }
 
   limparCNPJ(cnpj: string): string {
@@ -184,24 +164,7 @@ export class ContabilidadesComponent implements OnInit {
     return limpo.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
   }
 
-  marcarCamposComErro(): void {
-    Object.keys(this.formulario.controls).forEach(key => {
-      const control = this.formulario.get(key);
-      if (control?.invalid) {
-        control.markAsTouched();
-      }
-    });
-  }
-
-  get campoInvalido(): { [key: string]: boolean } {
-    return {
-      'campo-invalido': true
-    };
+  getEmpresasVinculadasCount(c: Contabilidade): number {
+    return c.empresas_vinculadas_count ?? c.certificados_vinculados ?? 0;
   }
 }
-
-
-
-
-
-

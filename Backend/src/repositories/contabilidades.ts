@@ -111,6 +111,27 @@ export async function obterTotalVinculados(
 }
 
 /**
+ * Total de empresas vinculadas por contabilidade (em batch).
+ */
+export async function obterEmpresasVinculadasPorIds(
+  contabilidadeIds: number[]
+): Promise<Record<number, number>> {
+  if (contabilidadeIds.length === 0) return {};
+  const rows = await prisma.empresa.groupBy({
+    by: ['contabilidadeId'],
+    where: { contabilidadeId: { in: contabilidadeIds } },
+    _count: { id: true },
+  });
+  const result: Record<number, number> = {};
+  for (const row of rows) {
+    if (row.contabilidadeId != null) {
+      result[row.contabilidadeId] = row._count.id;
+    }
+  }
+  return result;
+}
+
+/**
  * Total de vinculados para múltiplas contabilidades (em batch).
  */
 export async function obterTotalVinculadosPorIds(

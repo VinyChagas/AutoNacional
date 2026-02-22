@@ -5,6 +5,7 @@ import { ExecucaoComponent } from './components/execucao/execucao.component';
 import { ConfiguracoesComponent } from './components/configuracoes/configuracoes.component';
 import { ContabilidadesComponent } from './components/contabilidades/contabilidades.component';
 import { EmpresasComponent } from './components/empresas/empresas.component';
+import { RentabilidadeComponent } from './components/rentabilidade/rentabilidade.component';
 
 export const routes: Routes = [
   {
@@ -50,6 +51,11 @@ export const routes: Routes = [
         path: 'contabilidades',
         component: ContabilidadesComponent,
         data: { animation: 'contabilidades' }
+      },
+      {
+        path: 'rentabilidade',
+        component: RentabilidadeComponent,
+        data: { animation: 'rentabilidade' }
       }
     ]
   }
