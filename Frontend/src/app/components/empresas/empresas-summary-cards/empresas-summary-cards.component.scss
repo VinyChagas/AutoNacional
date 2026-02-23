@@ -78,4 +78,16 @@ $top-bar: 4px;
     font-size: 0.72rem;
     color: var(--text-muted);
   }
+
+  &.summary-card-loading {
+    .summary-card-value-loading {
+      opacity: 0.4;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
 }

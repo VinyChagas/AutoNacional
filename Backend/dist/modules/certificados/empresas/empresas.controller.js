@@ -39,6 +39,7 @@ exports.listarPorContabilidade = listarPorContabilidade;
 exports.obterPorCnpj = obterPorCnpj;
 exports.cadastroCertificado = cadastroCertificado;
 exports.excluirEmMassa = excluirEmMassa;
+exports.summary = summary;
 exports.cadastroCredencial = cadastroCredencial;
 const service = __importStar(require("./empresas.service"));
 const repo = __importStar(require("./empresas.repo"));
@@ -178,6 +179,25 @@ async function excluirEmMassa(req, res) {
     }
     const deleted = await repo.deletarEmMassa(ids);
     (0, response_1.jsonSuccess)(res, { deleted });
+}
+async function summary(req, res) {
+    const queryParams = service.parseListarParams(req.query);
+    const conflito = service.validarFiltrosConflitantes(queryParams);
+    if (conflito) {
+        (0, response_1.jsonError)(res, conflito, 400);
+        return;
+    }
+    const summaryParams = {
+        search: queryParams.search,
+        contabilidade_id: queryParams.contabilidade_id,
+        has_cert: queryParams.has_cert,
+        has_cred: queryParams.has_cred,
+        sem_cert: queryParams.sem_cert,
+        sem_cred: queryParams.sem_cred,
+        sem_metodo: queryParams.sem_metodo,
+    };
+    const data = await service.obterSummary(summaryParams);
+    (0, response_1.jsonSuccess)(res, data);
 }
 async function cadastroCredencial(req, res) {
     const body = req.body;

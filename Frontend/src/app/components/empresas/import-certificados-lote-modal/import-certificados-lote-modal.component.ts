@@ -3,12 +3,12 @@ import {
   EventEmitter,
   Input,
   Output,
-  OnInit,
   ChangeDetectorRef,
+  OnChanges,
+  SimpleChanges,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ContabilidadeService } from '../../../services/contabilidade.service';
 import { EmpresasUnificadoService } from '../../../services/empresas-unificado.service';
 import { ToastService } from '../../../services/toast.service';
 
@@ -33,6 +33,7 @@ export interface CertificadoLoteItem {
   senha: string;
   status: ItemStatus;
   message?: string;
+  validating?: boolean;
 }
 
 export type FiltroStatus = 'todos' | 'validos' | 'vencidos';
@@ -44,14 +45,14 @@ export type FiltroStatus = 'todos' | 'validos' | 'vencidos';
   templateUrl: './import-certificados-lote-modal.component.html',
   styleUrls: ['./import-certificados-lote-modal.component.scss'],
 })
-export class ImportCertificadosLoteModalComponent implements OnInit {
+export class ImportCertificadosLoteModalComponent implements OnChanges {
   @Input() isOpen = false;
+  @Input() contabilidadeIdSelecionada: number | null = null;
+  @Input() contabilidadeNomeSelecionada: string | null = null;
   @Output() close = new EventEmitter<void>();
   @Output() concluido = new EventEmitter<void>();
 
   items: CertificadoLoteItem[] = [];
-  contabilidades: Array<{ id: number; nome_contabilidade: string }> = [];
-  loadingContabilidades = false;
   loadingPreview = false;
   filtroStatus: FiltroStatus = 'todos';
   ordenarValidosPrimeiro = true;
@@ -63,32 +64,25 @@ export class ImportCertificadosLoteModalComponent implements OnInit {
 
   constructor(
     private cdr: ChangeDetectorRef,
-    private contabilidadeService: ContabilidadeService,
     private empresasService: EmpresasUnificadoService,
     private toast: ToastService
   ) {}
 
-  ngOnInit(): void {
-    this.carregarContabilidades();
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['isOpen'] && !changes['isOpen'].currentValue && changes['isOpen'].previousValue) {
+      this.resetState();
+    }
   }
 
-  carregarContabilidades(): void {
-    this.loadingContabilidades = true;
-    this.contabilidadeService.listar().subscribe({
-      next: (r) => {
-        this.contabilidades = (r.contabilidades ?? []).map((c) => ({
-          id: c.id,
-          nome_contabilidade: c.nome_contabilidade,
-        }));
-        this.loadingContabilidades = false;
-        this.cdr.markForCheck();
-      },
-      error: () => {
-        this.loadingContabilidades = false;
-        this.contabilidades = [];
-        this.cdr.markForCheck();
-      },
-    });
+  private resetState(): void {
+    this.items = [];
+    this.loadingPreview = false;
+    this.filtroStatus = 'todos';
+    this.ordenarValidosPrimeiro = true;
+    this.busca = '';
+    this.previewSenha = '';
+    this.nextId = 0;
+    this.fileInput = null;
   }
 
   get totalCount(): number {
@@ -161,6 +155,20 @@ export class ImportCertificadosLoteModalComponent implements OnInit {
     return senha.length >= 3;
   }
 
+  aplicarSenhaParaTodos(): void {
+    const senhaBase = this.previewSenha.trim();
+    if (!senhaBase) {
+      this.toast.error('Preencha a senha padrão antes de aplicar para todos.');
+      return;
+    }
+    this.items = this.items.map((item) => ({
+      ...item,
+      senha: senhaBase,
+    }));
+    this.toast.success('Senha aplicada para todos os certificados.');
+    this.cdr.markForCheck();
+  }
+
   acionarFileInput(input: HTMLInputElement): void {
     this.fileInput = input;
     input.value = '';
@@ -184,8 +192,8 @@ export class ImportCertificadosLoteModalComponent implements OnInit {
         razao_social: '',
         validade: null,
         isExpired: false,
-        contabilidade_id: null,
-        senha: '',
+        contabilidade_id: this.contabilidadeIdSelecionada,
+        senha: this.previewSenha || '',
         status: 'PENDENTE',
       });
     }
@@ -313,10 +321,12 @@ export class ImportCertificadosLoteModalComponent implements OnInit {
         return;
       }
     }
+    this.resetState();
     this.concluido.emit();
   }
 
   fechar(): void {
+    this.resetState();
     this.close.emit();
   }
 

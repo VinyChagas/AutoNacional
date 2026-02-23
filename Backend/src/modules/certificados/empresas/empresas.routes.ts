@@ -10,6 +10,7 @@ import * as controller from './empresas.controller';
 const router = Router();
 
 router.get('/', asyncHandler(controller.listar));
+router.get('/summary', asyncHandler(controller.summary));
 router.delete('/', asyncHandler(controller.excluirEmMassa));
 router.get('/contabilidade/:contabilidade_id', asyncHandler(controller.listarPorContabilidade));
 router.get('/cnpj/:cnpj', asyncHandler(controller.obterPorCnpj));

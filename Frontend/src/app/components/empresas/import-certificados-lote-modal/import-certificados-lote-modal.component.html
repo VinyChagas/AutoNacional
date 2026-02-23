@@ -16,6 +16,14 @@
       </div>
 
       <div class="import-modal-body">
+        <!-- Contabilidade vinculada (read-only) -->
+        <div class="import-contab-info">
+          <label class="import-label">Contabilidade</label>
+          <span class="import-contab-badge">
+            {{ contabilidadeNomeSelecionada || 'Nenhuma selecionada' }}
+          </span>
+        </div>
+
         <!-- Seleção de arquivos -->
         <div class="import-select-wrap">
           <input
@@ -39,7 +47,7 @@
         </div>
 
         @if (items.length > 0) {
-          <!-- Senha para pré-visualizar -->
+          <!-- Senha padrão + botões -->
           <div class="import-preview-row">
             <div class="import-preview-senha">
               <label class="import-label">Senha padrão para pré-visualizar</label>
@@ -48,7 +56,6 @@
                 [(ngModel)]="previewSenha"
                 class="import-input"
                 placeholder="Se todos usam a mesma senha"
-                [disabled]="loadingPreview"
               />
             </div>
             <button
@@ -58,6 +65,15 @@
               [disabled]="loadingPreview || previewSenha.trim().length < 3"
             >
               {{ loadingPreview ? 'Pré-visualizando...' : 'Pré-visualizar' }}
+            </button>
+            <button
+              type="button"
+              class="import-btn-apply-all"
+              (click)="aplicarSenhaParaTodos()"
+              [disabled]="!previewSenha.trim()"
+              title="Aplicar a senha padrão para todos os itens do lote"
+            >
+              Aplicar senha para todos
             </button>
           </div>
 
@@ -112,7 +128,6 @@
                 <tr>
                   <th>Status</th>
                   <th>CNPJ</th>
-                  <th>Contabilidade</th>
                   <th>Senha</th>
                   <th class="th-actions">Ações</th>
                 </tr>
@@ -135,24 +150,12 @@
                       {{ item.cnpj ? formatarCNPJ(item.cnpj) : item.filename }}
                     </td>
                     <td>
-                      <select
-                        [(ngModel)]="item.contabilidade_id"
-                        class="import-select"
-                        [disabled]="item.status === 'DUPLICADO' || item.status === 'ERRO' || item.status === 'IMPORTANDO'"
-                      >
-                        <option [ngValue]="null">Selecione...</option>
-                        @for (c of contabilidades; track c.id) {
-                          <option [ngValue]="c.id">{{ c.nome_contabilidade }}</option>
-                        }
-                      </select>
-                    </td>
-                    <td>
                       <input
                         type="password"
                         [(ngModel)]="item.senha"
                         class="import-input import-input-senha"
                         placeholder="Senha"
-                        [disabled]="item.status === 'DUPLICADO' || item.status === 'ERRO' || item.status === 'IMPORTANDO'"
+                        [disabled]="item.status === 'IMPORTANDO'"
                         autocomplete="off"
                       />
                     </td>
@@ -173,7 +176,7 @@
                   </tr>
                   @if (item.message) {
                     <tr class="import-row-message">
-                      <td colspan="5" class="td-error">{{ item.message }}</td>
+                      <td colspan="4" class="td-error">{{ item.message }}</td>
                     </tr>
                   }
                 }

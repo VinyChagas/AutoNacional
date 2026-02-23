@@ -174,6 +174,26 @@ export async function excluirEmMassa(req: Request, res: Response): Promise<void>
   jsonSuccess(res, { deleted });
 }
 
+export async function summary(req: Request, res: Response): Promise<void> {
+  const queryParams = service.parseListarParams(req.query as service.ListarEmpresasQuery);
+  const conflito = service.validarFiltrosConflitantes(queryParams);
+  if (conflito) {
+    jsonError(res, conflito, 400);
+    return;
+  }
+  const summaryParams = {
+    search: queryParams.search,
+    contabilidade_id: queryParams.contabilidade_id,
+    has_cert: queryParams.has_cert,
+    has_cred: queryParams.has_cred,
+    sem_cert: queryParams.sem_cert,
+    sem_cred: queryParams.sem_cred,
+    sem_metodo: queryParams.sem_metodo,
+  };
+  const data = await service.obterSummary(summaryParams);
+  jsonSuccess(res, data);
+}
+
 export async function cadastroCredencial(req: Request, res: Response): Promise<void> {
   const body = req.body as Record<string, unknown>;
   const cnpj = typeof body.cnpj === 'string' ? body.cnpj.trim() : '';

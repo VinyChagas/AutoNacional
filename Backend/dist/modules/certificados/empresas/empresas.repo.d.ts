@@ -77,6 +77,16 @@ export interface EmpresaDetalhada {
  */
 export declare function deletarEmMassa(ids: number[]): Promise<number>;
 /**
+ * Retorna métricas de resumo (total, cert vencidos, cred para validar, operacionais).
+ * Usa os mesmos filtros da listagem: contabilidade, search, has_cert, has_cred, sem_*.
+ */
+export declare function obterSummary(params: Pick<EmpresaListagemParams, 'search' | 'contabilidade_id' | 'has_cert' | 'has_cred' | 'sem_cert' | 'sem_cred' | 'sem_metodo'>): Promise<{
+    total_empresas: number;
+    certificados_vencidos: number;
+    credenciais_para_validar: number;
+    operacionais: number;
+}>;
+/**
  * Obtém empresa por ID com certificados e credenciais.
  */
 export declare function obterPorIdComDetalhes(id: number): Promise<EmpresaDetalhada | null>;

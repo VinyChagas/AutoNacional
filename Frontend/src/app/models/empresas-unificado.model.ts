@@ -102,6 +102,13 @@ export interface EmpresaListagemResponse {
   limit: number;
 }
 
+export interface EmpresasSummaryResponse {
+  total_empresas: number;
+  certificados_vencidos: number;
+  credenciais_para_validar: number;
+  operacionais: number;
+}
+
 export interface EmpresaDetalhes {
   empresa: {
     id: number;

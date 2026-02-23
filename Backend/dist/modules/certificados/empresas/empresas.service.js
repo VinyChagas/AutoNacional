@@ -37,6 +37,7 @@ exports.parseListarParams = parseListarParams;
 exports.validarFiltrosConflitantes = validarFiltrosConflitantes;
 exports.listarEmpresas = listarEmpresas;
 exports.obterEmpresaPorId = obterEmpresaPorId;
+exports.obterSummary = obterSummary;
 /**
  * Serviço de empresas - regras de negócio e parse de parâmetros.
  */
@@ -98,5 +99,8 @@ async function listarEmpresas(params) {
 }
 async function obterEmpresaPorId(id) {
     return repo.obterPorIdComDetalhes(id);
+}
+async function obterSummary(params) {
+    return repo.obterSummary(params);
 }
 //# sourceMappingURL=empresas.service.js.map

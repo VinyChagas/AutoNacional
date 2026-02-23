@@ -4,10 +4,15 @@
       type="button"
       class="summary-card"
       [class.summary-card-active]="isCardActive(card)"
+      [class.summary-card-loading]="loading"
       (click)="onCardClick(card.preset)"
     >
       <span class="summary-card-title">{{ card.title }}</span>
-      <span class="summary-card-value">{{ card.value }}</span>
+      @if (loading) {
+        <span class="summary-card-value summary-card-value-loading">--</span>
+      } @else {
+        <span class="summary-card-value">{{ card.value }}</span>
+      }
       <span class="summary-card-subtext">{{ card.subtext }}</span>
     </button>
   }

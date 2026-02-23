@@ -43,6 +43,7 @@ const upload_1 = require("../../../middleware/upload");
 const controller = __importStar(require("./empresas.controller"));
 const router = (0, express_1.Router)();
 router.get('/', (0, error_handler_1.asyncHandler)(controller.listar));
+router.get('/summary', (0, error_handler_1.asyncHandler)(controller.summary));
 router.delete('/', (0, error_handler_1.asyncHandler)(controller.excluirEmMassa));
 router.get('/contabilidade/:contabilidade_id', (0, error_handler_1.asyncHandler)(controller.listarPorContabilidade));
 router.get('/cnpj/:cnpj', (0, error_handler_1.asyncHandler)(controller.obterPorCnpj));

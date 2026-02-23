@@ -81,3 +81,9 @@ export async function listarEmpresas(params: EmpresaListagemParams) {
 export async function obterEmpresaPorId(id: number) {
   return repo.obterPorIdComDetalhes(id);
 }
+
+export async function obterSummary(
+  params: Pick<EmpresaListagemParams, 'search' | 'contabilidade_id' | 'has_cert' | 'has_cred' | 'sem_cert' | 'sem_cred' | 'sem_metodo'>
+) {
+  return repo.obterSummary(params);
+}

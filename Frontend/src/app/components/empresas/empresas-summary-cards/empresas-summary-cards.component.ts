@@ -6,12 +6,7 @@ import {
   ChangeDetectionStrategy,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import type { EmpresaRow } from '../../../models/empresas-unificado.model';
-import {
-  computeCertStatus,
-  computeCompanyStatusGeral,
-  needsRevalidateCredentials,
-} from '../status.utils';
+import type { EmpresasSummaryResponse } from '../../../models/empresas-unificado.model';
 
 export type EmpresasFilterPreset =
   | { type: 'ALL' }
@@ -36,26 +31,25 @@ export interface SummaryCard {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EmpresasSummaryCardsComponent {
-  @Input({ required: true }) rows: EmpresaRow[] = [];
+  @Input() summary: EmpresasSummaryResponse = {
+    total_empresas: 0,
+    certificados_vencidos: 0,
+    credenciais_para_validar: 0,
+    operacionais: 0,
+  };
+
+  @Input() totalFromList: number | null = null;
+
+  @Input() loading = false;
 
   @Input() activePreset: EmpresasFilterPreset | null = null;
 
   @Output() filterRequested = new EventEmitter<EmpresasFilterPreset>();
 
   get cards(): SummaryCard[] {
-    const rows = this.rows;
-    const total = rows.length;
-    const certVencido = rows.filter(
-      (r) => computeCertStatus(r) === 'VENCIDO'
-    ).length;
-    const credValidar = rows.filter(
-      (r) => r.possui_credenciais && needsRevalidateCredentials(r)
-    ).length;
-    const operacionais = rows.filter(
-      (r) =>
-        ['OPERACIONAL', 'ATENCAO'].includes(computeCompanyStatusGeral(r))
-    ).length;
-
+    const total = this.summary.total_empresas > 0
+      ? this.summary.total_empresas
+      : (this.totalFromList ?? 0);
     return [
       {
         id: 'total',
@@ -67,21 +61,21 @@ export class EmpresasSummaryCardsComponent {
       {
         id: 'cert_vencido',
         title: 'Certificados Vencidos',
-        value: certVencido,
+        value: this.summary.certificados_vencidos,
         subtext: 'Renovar certificado',
         preset: { type: 'CERT_VENCIDO' },
       },
       {
         id: 'cred_validar',
         title: 'Credenciais para Validar',
-        value: credValidar,
+        value: this.summary.credenciais_para_validar,
         subtext: 'Revalidar em 7 dias',
         preset: { type: 'CRED_VALIDAR' },
       },
       {
         id: 'operacionais',
         title: 'Operacionais',
-        value: operacionais,
+        value: this.summary.operacionais,
         subtext: 'Aptas para automação',
         preset: { type: 'OPERACIONAIS' },
       },

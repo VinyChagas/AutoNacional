@@ -15,6 +15,7 @@ import type { Contabilidade } from '../../models/contabilidade.model';
 import type {
   EmpresaListagemItem,
   EmpresaDetalhes,
+  EmpresasSummaryResponse,
 } from '../../models/empresas-unificado.model';
 import { toEmpresaRow } from '../../models/empresas-unificado.model';
 import {
@@ -70,6 +71,21 @@ export class EmpresasComponent implements OnInit {
   sortLabel = 'padrão';
   sortOpen = false;
 
+  // Paginação
+  page = 1;
+  pageSize = 20;
+  pageSizeOptions = [20, 50, 100];
+  totalCount = 0;
+
+  // Summary (cards)
+  summary: EmpresasSummaryResponse = {
+    total_empresas: 0,
+    certificados_vencidos: 0,
+    credenciais_para_validar: 0,
+    operacionais: 0,
+  };
+  loadingSummary = false;
+
   contabilidades: Contabilidade[] = [];
   contabilidadeId: number | null = null;
   contabDropdownOpen = false;
@@ -119,6 +135,7 @@ export class EmpresasComponent implements OnInit {
   ngOnInit(): void {
     this.carregarContabilidades();
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   carregarContabilidades(): void {
@@ -152,7 +169,12 @@ export class EmpresasComponent implements OnInit {
       sem_metodo?: boolean;
       sort?: string;
       order?: 'asc' | 'desc';
-    } = {};
+      page?: number;
+      limit?: number;
+    } = {
+      page: this.page,
+      limit: this.pageSize,
+    };
 
     if (this.search.trim()) {
       params.search = this.search.trim();
@@ -182,6 +204,7 @@ export class EmpresasComponent implements OnInit {
     this.empresasService.listar(params).subscribe({
       next: (r) => {
         this.listaEmpresas = r.items ?? [];
+        this.totalCount = r.total ?? 0;
         this.empresasCount = r.total ?? 0;
         this.carregando = false;
         if (this.empresaSelecionada) {
@@ -194,7 +217,47 @@ export class EmpresasComponent implements OnInit {
         this.erro = err.message || 'Erro ao carregar empresas';
         this.carregando = false;
         this.listaEmpresas = [];
+        this.totalCount = 0;
         this.empresasCount = 0;
+        this.cdr.markForCheck();
+      },
+    });
+  }
+
+  carregarSummary(): void {
+    this.loadingSummary = true;
+    this.cdr.markForCheck();
+
+    const params: {
+      contabilidade_id?: number | null;
+      search?: string;
+      has_cert?: boolean;
+      has_cred?: boolean;
+      sem_cert?: boolean;
+      sem_cred?: boolean;
+      sem_metodo?: boolean;
+    } = {};
+
+    if (this.contabilidadeId != null && this.contabilidadeId > 0) {
+      params.contabilidade_id = this.contabilidadeId;
+    }
+    if (this.search.trim()) {
+      params.search = this.search.trim();
+    }
+    if (this.chipsAtivos.has('com_cert')) params.has_cert = true;
+    if (this.chipsAtivos.has('com_cred')) params.has_cred = true;
+    if (this.chipsAtivos.has('sem_cert')) params.sem_cert = true;
+    if (this.chipsAtivos.has('sem_cred')) params.sem_cred = true;
+    if (this.chipsAtivos.has('sem_metodo')) params.sem_metodo = true;
+
+    this.empresasService.getSummary(params).subscribe({
+      next: (s) => {
+        this.summary = s;
+        this.loadingSummary = false;
+        this.cdr.markForCheck();
+      },
+      error: () => {
+        this.loadingSummary = false;
         this.cdr.markForCheck();
       },
     });
@@ -290,6 +353,38 @@ export class EmpresasComponent implements OnInit {
   onContabilidadeSelect(id: number | null): void {
     this.contabilidadeId = id;
     this.contabDropdownOpen = false;
+    this.page = 1;
+    this.carregarEmpresas();
+    this.carregarSummary();
+  }
+
+  // Paginação
+  get totalPages(): number {
+    return Math.max(1, Math.ceil(this.totalCount / this.pageSize));
+  }
+
+  get pageNumbers(): number[] {
+    const total = this.totalPages;
+    const current = this.page;
+    const pages: number[] = [];
+    const delta = 2;
+    const start = Math.max(1, current - delta);
+    const end = Math.min(total, current + delta);
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  }
+
+  onPageChange(newPage: number): void {
+    if (newPage < 1 || newPage > this.totalPages || newPage === this.page) return;
+    this.page = newPage;
+    this.carregarEmpresas();
+  }
+
+  onPageSizeChange(newSize: number): void {
+    this.pageSize = newSize;
+    this.page = 1;
     this.carregarEmpresas();
   }
 
@@ -300,19 +395,25 @@ export class EmpresasComponent implements OnInit {
       this.chipsAtivos.add(chipId);
     }
     this.chipsAtivos = new Set(this.chipsAtivos);
+    this.page = 1;
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   removeChip(chipId: string): void {
     this.chipsAtivos.delete(chipId);
     this.chipsAtivos = new Set(this.chipsAtivos);
+    this.page = 1;
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   clearAllChips(): void {
     this.chipsAtivos.clear();
     this.chipsAtivos = new Set(this.chipsAtivos);
+    this.page = 1;
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   isChipAtivo(chipId: string): boolean {
@@ -324,7 +425,9 @@ export class EmpresasComponent implements OnInit {
   onSearchChange(): void {
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     this.searchDebounceTimer = setTimeout(() => {
+      this.page = 1;
       this.carregarEmpresas();
+      this.carregarSummary();
       this.searchDebounceTimer = null;
     }, 350);
   }
@@ -336,6 +439,7 @@ export class EmpresasComponent implements OnInit {
   onSortChange(label: string): void {
     this.sortLabel = label;
     this.sortOpen = false;
+    this.page = 1;
     this.carregarEmpresas();
   }
 
@@ -356,6 +460,7 @@ export class EmpresasComponent implements OnInit {
   onCadastroSaved(): void {
     this.cadastroAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
@@ -372,6 +477,7 @@ export class EmpresasComponent implements OnInit {
   onImportCertificadosLoteConcluido(): void {
     this.importCertificadosLoteAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
@@ -388,6 +494,7 @@ export class EmpresasComponent implements OnInit {
   onImportCredenciaisConcluido(): void {
     this.importCredenciaisModalAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
@@ -406,6 +513,7 @@ export class EmpresasComponent implements OnInit {
   onValidacaoConcluida(): void {
     this.validacaoModalAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listarComAgregados = listarComAgregados;
 exports.deletarEmMassa = deletarEmMassa;
+exports.obterSummary = obterSummary;
 exports.obterPorIdComDetalhes = obterPorIdComDetalhes;
 /**
  * Repositório de empresas - listagem com agregados e detalhes.
@@ -264,6 +265,124 @@ async function deletarEmMassa(ids) {
         await tx.empresa.deleteMany({ where: { id: { in: empresaIds } } });
     });
     return empresaIds.length;
+}
+/**
+ * Retorna métricas de resumo (total, cert vencidos, cred para validar, operacionais).
+ * Usa os mesmos filtros da listagem: contabilidade, search, has_cert, has_cred, sem_*.
+ */
+async function obterSummary(params) {
+    const whereConditions = [];
+    if (params.contabilidade_id != null) {
+        whereConditions.push({ contabilidadeId: params.contabilidade_id });
+    }
+    if (params.search && params.search.trim()) {
+        const s = params.search.trim();
+        const sNorm = normCnpj(s);
+        whereConditions.push({
+            OR: [
+                { cnpj: { contains: sNorm, mode: 'insensitive' } },
+                { razaoSocial: { contains: s, mode: 'insensitive' } },
+                ...(sNorm.length >= 4 ? [{ cnpj: sNorm }] : []),
+            ],
+        });
+    }
+    const where = whereConditions.length > 0 ? { AND: whereConditions } : {};
+    const empresas = await client_1.prisma.empresa.findMany({
+        where,
+        orderBy: { razaoSocial: 'asc' },
+        take: 50000,
+        select: { id: true, cnpj: true },
+    });
+    if (empresas.length === 0) {
+        return { total_empresas: 0, certificados_vencidos: 0, credenciais_para_validar: 0, operacionais: 0 };
+    }
+    const cnps = empresas.map((e) => normCnpj(e.cnpj));
+    const ids = empresas.map((e) => e.id);
+    const [certs, creds] = await Promise.all([
+        client_1.prisma.certificado.findMany({
+            where: { cnpj: { in: cnps } },
+            select: { cnpj: true, dataValidade: true },
+        }),
+        client_1.prisma.credencial.findMany({
+            where: { empresaId: { in: ids } },
+            select: { empresaId: true, status: true, ultimoTesteEm: true },
+            orderBy: [{ ultimoTesteEm: 'desc' }, { updatedAt: 'desc' }],
+        }),
+    ]);
+    const certPorCnpj = new Map();
+    for (const c of certs) {
+        const cn = normCnpj(c.cnpj);
+        const dv = c.dataValidade?.trim() || null;
+        const cur = certPorCnpj.get(cn);
+        if (!cur || (dv && (!cur || dv > cur)))
+            certPorCnpj.set(cn, dv);
+        else if (!certPorCnpj.has(cn))
+            certPorCnpj.set(cn, dv);
+    }
+    const credPorEmpresa = new Map();
+    for (const cr of creds) {
+        if (!credPorEmpresa.has(cr.empresaId)) {
+            credPorEmpresa.set(cr.empresaId, {
+                status: cr.status,
+                ultimoTesteEm: cr.ultimoTesteEm ?? null,
+            });
+        }
+    }
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const seteDiasAtras = new Date(hoje.getTime() - 7 * 24 * 60 * 60 * 1000);
+    let items = [];
+    for (const e of empresas) {
+        const cn = normCnpj(e.cnpj);
+        const hasCert = certPorCnpj.has(cn);
+        const certVal = certPorCnpj.get(cn) ?? null;
+        const hasCred = credPorEmpresa.has(e.id);
+        const credData = credPorEmpresa.get(e.id);
+        const credStat = credData?.status ?? null;
+        const credUltimoTeste = credData?.ultimoTesteEm ?? null;
+        items.push({ hasCert, certVal, hasCred, credStat, credUltimoTeste });
+    }
+    if (params.has_cert === true)
+        items = items.filter((i) => i.hasCert);
+    else if (params.has_cert === false)
+        items = items.filter((i) => !i.hasCert);
+    if (params.has_cred === true)
+        items = items.filter((i) => i.hasCred);
+    else if (params.has_cred === false)
+        items = items.filter((i) => !i.hasCred);
+    if (params.sem_metodo) {
+        items = items.filter((i) => !i.hasCert && !i.hasCred);
+    }
+    else {
+        if (params.sem_cert)
+            items = items.filter((i) => !i.hasCert);
+        if (params.sem_cred)
+            items = items.filter((i) => !i.hasCred);
+    }
+    let certificados_vencidos = 0;
+    let credenciais_para_validar = 0;
+    let operacionais = 0;
+    for (const i of items) {
+        if (i.hasCert && !isCertValido(true, i.certVal)) {
+            certificados_vencidos++;
+        }
+        if (i.hasCred) {
+            const status = (i.credStat ?? '').toUpperCase();
+            const ultimoTeste = i.credUltimoTeste;
+            if (status === 'NAO_TESTADO' ||
+                status === 'INVALIDA' ||
+                status === 'ERRO_VALIDACAO' ||
+                (ultimoTeste && ultimoTeste < seteDiasAtras)) {
+                credenciais_para_validar++;
+            }
+        }
+        const { status } = calcularStatusGeral(i.hasCert, i.certVal, i.hasCred, i.credStat);
+        if (status === 'OPERACIONAL') {
+            operacionais++;
+        }
+    }
+    const total_empresas = items.length;
+    return { total_empresas, certificados_vencidos, credenciais_para_validar, operacionais };
 }
 /**
  * Obtém empresa por ID com certificados e credenciais.
