@@ -15,6 +15,7 @@ export interface OpcoesLoginCredencial {
   headless?: boolean;
   timeout?: number;
   viewport?: { width: number; height: number };
+  onLoginPageReady?: () => void;
 }
 
 /**
@@ -41,7 +42,7 @@ export async function abrirDashboardNfseComCredencial(
 
   const logs: string[] = [];
   const log = (msg: string) => {
-    logger.info(msg);
+    logger.debug(msg);
     logs.push(msg);
   };
 
@@ -114,6 +115,7 @@ export async function abrirDashboardNfseComCredencial(
       throw new NFSeAutenticacaoError('Portal NFSe: campos de documento/senha não encontrados');
     }
 
+    opcoes.onLoginPageReady?.();
     log('Preenchendo credenciais...');
     await inputCnpj.fill(docLimpo, { timeout: 5000 });
     await inputSenha.fill(senha, { timeout: 5000 });

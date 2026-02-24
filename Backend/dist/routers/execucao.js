@@ -43,8 +43,10 @@ const logger_1 = require("../infrastructure/logger");
 const empresasRepo = __importStar(require("../repositories/empresas"));
 const certificadosRepo = __importStar(require("../repositories/certificados"));
 const execution_service_1 = require("../services/execution-service");
+const sleep_1 = require("../utils/sleep");
 const execution_events_service_1 = require("../services/execution-events.service");
 const automation_metrics_service_1 = require("../services/automation-metrics.service");
+const execucoesRepo = __importStar(require("../repositories/execucoes"));
 const execution_summary_service_1 = require("../services/execution-summary.service");
 const logger = (0, logger_1.getLogger)('execucao');
 const router = (0, express_1.Router)({ mergeParams: true });
@@ -96,6 +98,7 @@ const DATA_REGEX = /^\d{2}\/\d{2}\/\d{4}$/;
  * { success: true, batch_id: "uuid", started: 5, erros: 0, execucoes: [...], detalhes_erros: [] }
  */
 // POST /api/execucao/multiplas - DEVE vir antes de /:empresa_id
+// Producer: apenas enfileira; browser launch ocorre APENAS no worker (fila).
 router.post('/multiplas', async (req, res) => {
     try {
         const batchId = (0, crypto_1.randomUUID)();
@@ -116,8 +119,8 @@ router.post('/multiplas', async (req, res) => {
             });
             return;
         }
-        const resultados = [];
         const erros = [];
+        const validos = [];
         for (const emp of empresas) {
             const cnpjLimpo = limparCnpj(emp.cnpj);
             if (cnpjLimpo.length !== 14) {
@@ -125,7 +128,6 @@ router.post('/multiplas', async (req, res) => {
                 continue;
             }
             try {
-                // empresa_id pode vir como ID numérico ou CNPJ (14 dígitos)
                 const empresaIdRaw = emp.empresa_id;
                 const parsed = parseInt(empresaIdRaw, 10);
                 const isCnpjFormat = empresaIdRaw && String(empresaIdRaw).replace(/\D/g, '').length === 14;
@@ -156,52 +158,84 @@ router.post('/multiplas', async (req, res) => {
                     empresaId = parsed;
                     const existe = await empresasRepo.obterEmpresaPorId(empresaId);
                     if (!existe) {
-                        erros.push({
-                            empresa_id: emp.empresa_id,
-                            cnpj: emp.cnpj,
-                            erro: 'Empresa não encontrada',
-                        });
+                        erros.push({ empresa_id: emp.empresa_id, cnpj: emp.cnpj, erro: 'Empresa não encontrada' });
                         continue;
                     }
                 }
                 const tipoAuth = emp.tipo_autenticacao === 'credenciais' ? 'credenciais' : 'certificado';
-                await (0, execution_service_1.adicionarExecucao)(empresaId, cnpjLimpo, dataInicio, dataFim, tipo, headless, undefined, batchId, tipoAuth);
-                const status = (0, execution_service_1.obterStatus)(String(empresaId));
-                resultados.push({
-                    empresa_id: String(empresaId),
-                    cnpj: cnpjLimpo,
-                    status: status?.status || 'pendente',
-                    etapa_atual: status?.etapa_atual || 'inicio',
-                    progresso: status?.progresso ?? 0,
-                    logs: status?.logs || [],
-                });
+                validos.push({ empresaId, cnpj: cnpjLimpo, tipoAuth });
             }
             catch (e) {
-                erros.push({
-                    empresa_id: emp.empresa_id,
-                    cnpj: emp.cnpj,
-                    erro: e.message,
-                });
+                erros.push({ empresa_id: emp.empresa_id, cnpj: emp.cnpj, erro: e.message });
             }
         }
-        const started = resultados.length;
-        if (started > 0 && dataInicio && DATA_REGEX.test(dataInicio)) {
+        if (validos.length === 0) {
+            res.status(400).json({
+                detail: 'Nenhuma empresa válida para executar',
+                erros: erros.length,
+                detalhes_erros: erros,
+            });
+            return;
+        }
+        const delayMs = await (0, execution_service_1.obterDelayEnfileiramento)();
+        const concurrencyFinal = await (0, execution_service_1.configurarConcorrenciaParaBatch)(validos.length);
+        if (dataInicio && DATA_REGEX.test(dataInicio)) {
             const comp = `${dataInicio.slice(6, 10)}-${dataInicio.slice(3, 5)}`;
             await (0, automation_metrics_service_1.criarBatch)({
                 batchId,
                 competencia: comp,
                 contabilidadeId,
-                totalEmpresas: started,
+                totalEmpresas: validos.length,
             });
         }
+        const primeiro = validos[0];
+        const execucaoId = await (0, execution_service_1.adicionarExecucao)(primeiro.empresaId, primeiro.cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, primeiro.tipoAuth);
+        const status = (0, execution_service_1.obterStatus)(String(primeiro.empresaId));
+        logger.debug(`[producer] enfileirou empresa ${primeiro.empresaId} (1/${validos.length})`);
+        const execucoes = validos.map((v, idx) => {
+            if (idx === 0) {
+                return {
+                    id: execucaoId,
+                    empresa_id: String(primeiro.empresaId),
+                    cnpj: primeiro.cnpj,
+                    status: status?.status || 'pendente',
+                    etapa_atual: status?.etapa_atual || 'inicio',
+                    progresso: status?.progresso ?? 0,
+                    logs: status?.logs || [],
+                };
+            }
+            return {
+                empresa_id: String(v.empresaId),
+                cnpj: v.cnpj,
+                status: 'pendente',
+                etapa_atual: 'inicio',
+                progresso: 0,
+                logs: [],
+            };
+        });
         res.status(202).json({
             success: true,
             batch_id: batchId,
-            started,
+            started: validos.length,
             erros: erros.length,
-            execucoes: resultados,
+            execucoes,
             detalhes_erros: erros,
+            concurrency_final: concurrencyFinal,
+            delayMs,
         });
+        (async () => {
+            for (let i = 1; i < validos.length; i++) {
+                await (0, sleep_1.sleep)(delayMs);
+                const { empresaId, cnpj, tipoAuth } = validos[i];
+                try {
+                    await (0, execution_service_1.adicionarExecucao)(empresaId, cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, tipoAuth);
+                    logger.debug(`[producer] enfileirou empresa ${empresaId} (${i + 1}/${validos.length})`);
+                }
+                catch (e) {
+                    logger.error({ err: e, empresaId }, 'Erro ao enfileirar empresa em background');
+                }
+            }
+        })().catch((err) => logger.error({ err }, 'Erro no enfileiramento em background'));
     }
     catch (error) {
         logger.error({ err: error }, 'Erro ao adicionar múltiplas execuções');
@@ -217,6 +251,31 @@ router.get('/stream/:batch_id', (req, res) => {
         return;
     }
     (0, execution_events_service_1.registrarClienteSSE)(batchId, res);
+});
+// GET /api/execucao/batch/:batch_id/status - Status de todas as execuções do batch (1 request em vez de N)
+// Query opcional: empresa_ids=1,2,3 — para fallback no DB quando não estiver em memória
+router.get('/batch/:batch_id/status', async (req, res) => {
+    try {
+        const batchId = String(req.params.batch_id ?? '');
+        if (!batchId) {
+            res.status(400).json({ detail: 'batch_id é obrigatório' });
+            return;
+        }
+        const rawIds = req.query.empresa_ids ?? req.query.empresaIds;
+        let empresaIdsFallback;
+        if (typeof rawIds === 'string') {
+            empresaIdsFallback = rawIds
+                .split(',')
+                .map((s) => parseInt(s.trim(), 10))
+                .filter((n) => !isNaN(n) && n > 0);
+        }
+        const statuses = await (0, execution_service_1.obterStatusBatch)(batchId, empresaIdsFallback);
+        res.json({ execucoes: statuses });
+    }
+    catch (error) {
+        logger.error({ err: error }, 'Erro ao obter status do batch');
+        res.status(500).json({ detail: 'Erro ao obter status do batch' });
+    }
 });
 // POST /api/execucao/:empresa_id - Iniciar execução
 router.post('/:empresa_id', async (req, res) => {
@@ -285,14 +344,47 @@ router.get('/:empresa_id/status', async (req, res) => {
         let status = (0, execution_service_1.obterStatus)(empresaId);
         if (!status) {
             const cnpjLimpo = limparCnpj(empresaId);
+            let empresaIdNum = null;
+            let cnpj = null;
             if (cnpjLimpo.length === 14) {
                 const emp = await empresasRepo.obterEmpresaPorCnpj(cnpjLimpo);
                 if (emp) {
+                    empresaIdNum = emp.id;
+                    cnpj = emp.cnpj;
                     status = (0, execution_service_1.obterStatus)(String(emp.id));
                     if (status) {
                         res.json({ ...status, empresa_id: String(emp.id), cnpj: emp.cnpj });
                         return;
                     }
+                }
+            }
+            if (!empresaIdNum) {
+                const parsed = parseInt(empresaId, 10);
+                if (!isNaN(parsed)) {
+                    const emp = await empresasRepo.obterEmpresaPorId(parsed);
+                    if (emp) {
+                        empresaIdNum = emp.id;
+                        cnpj = emp.cnpj;
+                    }
+                }
+            }
+            // Fallback: execução já finalizou e foi removida de execucoesAtivas — buscar no banco
+            if (empresaIdNum) {
+                const ultima = await execucoesRepo.obterUltimaPorEmpresa(empresaIdNum);
+                if (ultima && (ultima.status === 'concluido' || ultima.status === 'falhou')) {
+                    res.json({
+                        empresa_id: String(empresaIdNum),
+                        cnpj: cnpj ?? ultima.cnpj ?? '',
+                        status: ultima.status,
+                        etapa_atual: ultima.etapaAtual,
+                        progresso: ultima.progresso,
+                        logs: [],
+                        mensagem: ultima.status === 'falhou' ? (ultima.mensagemErro ?? '') : (ultima.mensagem ?? ''),
+                        qtd_notas_emitidas: ultima.qtdNotasEmitidas,
+                        qtd_notas_recebidas: ultima.qtdNotasRecebidas,
+                        resultado_final: ultima.resultadoFinal,
+                    });
+                    return;
                 }
             }
             res.status(404).json({

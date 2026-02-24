@@ -6,6 +6,7 @@ export declare function listarExecucoes(opts?: {
     empresaId?: number;
 }): Promise<Execucao[]>;
 export declare function obterPorId(id: number): Promise<Execucao | null>;
+export declare function obterUltimaPorEmpresa(empresaId: number): Promise<Execucao | null>;
 export declare function criar(data: {
     empresaId: number;
     cnpj?: string;

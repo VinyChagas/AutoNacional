@@ -28,7 +28,7 @@ async function abrirDashboardNfseComCredencial(documento, senha, opcoes = {}) {
     }
     const logs = [];
     const log = (msg) => {
-        logger.info(msg);
+        logger.debug(msg);
         logs.push(msg);
     };
     let browser;
@@ -89,6 +89,7 @@ async function abrirDashboardNfseComCredencial(documento, senha, opcoes = {}) {
         if (!inputCnpj || !inputSenha) {
             throw new playwright_nfse_1.NFSeAutenticacaoError('Portal NFSe: campos de documento/senha não encontrados');
         }
+        opcoes.onLoginPageReady?.();
         log('Preenchendo credenciais...');
         await inputCnpj.fill(docLimpo, { timeout: 5000 });
         await inputSenha.fill(senha, { timeout: 5000 });

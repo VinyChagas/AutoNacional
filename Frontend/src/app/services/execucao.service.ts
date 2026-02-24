@@ -219,6 +219,18 @@ export class ExecucaoService {
     );
   }
 
+  /** Status de todas as execuções do batch em 1 request (evita N requests e crash da UI) */
+  obterStatusBatch(batchId: string): Observable<{ execucoes: ExecucaoStatusResponse[] }> {
+    return this.http.get<{ execucoes: ExecucaoStatusResponse[] }>(
+      `${this.baseUrl}/execucao/batch/${batchId}/status`
+    ).pipe(
+      catchError((error) => {
+        console.error('Erro ao obter status do batch:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
   processarLogsEmTempoReal(
     logs: string[],
     callback: (log: string, progresso: number) => void

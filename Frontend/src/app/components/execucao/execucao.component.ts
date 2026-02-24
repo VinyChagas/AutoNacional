@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CertificadoService, Certificado, CertificadoResponse } from '../../services/certificado.service';
-import { ExecucaoService, ExecucaoEmpresa, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest, ExecutionSummaryResponse, EmpresaExecucaoItem, ExecutionStreamEvent } from '../../services/execucao.service';
+import { ExecucaoService, ExecucaoEmpresa, ExecucaoStatusResponse, StatusExecucao, ResultadoFinal, ResumoExecucoesResponse, MultiplasExecucoesRequest, ExecutionSummaryResponse, EmpresaExecucaoItem, ExecutionStreamEvent } from '../../services/execucao.service';
 import { ExecucaoLogsService } from '../../services/execucao-logs.service';
 import { ToastService } from '../../services/toast.service';
 import { ContabilidadeService } from '../../services/contabilidade.service';
@@ -114,6 +114,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   ];
   
   private intervalosStatus: Map<string, any> = new Map();
+  private batchPollingInterval: ReturnType<typeof setInterval> | null = null;
   private destroy$ = new Subject<void>();
   private streamSubscription: { unsubscribe: () => void } | null = null;
 
@@ -253,6 +254,10 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.streamSubscription?.unsubscribe();
     this.streamSubscription = null;
+    if (this.batchPollingInterval) {
+      clearInterval(this.batchPollingInterval);
+      this.batchPollingInterval = null;
+    }
     this.intervalosStatus.forEach(intervalo => clearInterval(intervalo));
     this.intervalosStatus.clear();
     this.destroy$.next();
@@ -802,11 +807,15 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
       this.atualizarExecucoesFinalizadasFiltradas();
 
-      // Polling como fallback (SSE é primário)
-      this.execucoes.forEach((execucao) => {
-        const empresaId = execucao.empresa_id || execucao.cnpj;
-        this.iniciarPollingStatus(execucao, empresaId);
-      });
+      // Polling: 1 request por batch (evita N requests e crash da UI)
+      if (response.batch_id) {
+        this.iniciarPollingBatch(response.batch_id);
+      } else {
+        this.execucoes.forEach((execucao) => {
+          const empresaId = execucao.empresa_id || execucao.cnpj;
+          this.iniciarPollingStatus(execucao, empresaId);
+        });
+      }
 
       // Mostra mensagem de sucesso/erro
       const started = response.started ?? response.sucesso ?? 0;
@@ -840,47 +849,97 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Método removido - não é mais necessário executar sequencialmente
-  // As execuções são adicionadas à fila e processadas simultaneamente pelo backend
+  /** Polling em lote: 1 request para todo o batch (evita crash quando muitas empresas) */
+  private iniciarPollingBatch(batchId: string) {
+    if (this.batchPollingInterval) {
+      clearInterval(this.batchPollingInterval);
+    }
+    const intervalo = setInterval(async () => {
+      try {
+        const res = await firstValueFrom(this.execucaoService.obterStatusBatch(batchId));
+        const statuses = res.execucoes || [];
+        if (statuses.length === 0) {
+          const temPendentes = this.executionRows.some(
+            (r) => r.status === 'FILA' || r.status === 'EM_EXECUCAO'
+          );
+          if (!temPendentes) {
+            clearInterval(intervalo);
+            this.batchPollingInterval = null;
+            return;
+          }
+        }
+        this.aplicarStatusBatch(statuses);
+      } catch {
+        /* ignora erro de rede */
+      }
+    }, 2500);
+    this.batchPollingInterval = intervalo;
+  }
+
+  private aplicarStatusBatch(statuses: ExecucaoStatusResponse[]) {
+    if (statuses.length === 0) return;
+    const execUpdates: Array<{ idx: number; upd: Partial<ExecucaoEmpresa> }> = [];
+    const rowUpdates: Array<{ idx: number; status: ExecutionRowStatus; mensagem: string; qtdE: number; qtdR: number; qtdC: number }> = [];
+    for (const s of statuses) {
+      const empresaId = String(s.empresa_id ?? '');
+      const cnpj = String(s.cnpj ?? '');
+      const execIdx = this.execucoes.findIndex(
+        (e) => String(e.empresa_id) === empresaId || e.cnpj === cnpj
+      );
+      const rowIdx = this.executionRows.findIndex(
+        (r) => String(r.empresa_id) === empresaId || r.cnpj === cnpj
+      );
+      if (execIdx >= 0 && rowIdx >= 0) {
+        const statusMap = this.mapearStatusBackendParaFrontend(String(s.status ?? ''));
+        const statusRow: ExecutionRowStatus = statusMap === 'executando' ? 'EM_EXECUCAO' : statusMap === 'fila' ? 'FILA' : statusMap === 'finalizado' ? 'OK' : statusMap === 'falhou' ? 'ERRO' : 'FILA';
+        const qtdE = s.qtd_notas_emitidas ?? 0;
+        const qtdR = s.qtd_notas_recebidas ?? 0;
+        const qtdC = s.qtd_notas_canceladas ?? 0;
+        execUpdates.push({ idx: execIdx, upd: {
+          status: statusMap,
+          progresso: s.progresso ?? 0,
+          mensagem: s.mensagem ?? '',
+          logs: s.logs ?? [],
+          etapa_atual: s.etapa_atual ?? '',
+          erro: s.erro,
+          qtdNotasEmitidas: qtdE,
+          qtdNotasRecebidas: qtdR,
+          qtdNotasCanceladas: qtdC,
+          resultadoFinal: (s.resultado_final as ResultadoFinal) ?? undefined,
+        }});
+        rowUpdates.push({ idx: rowIdx, status: statusRow, mensagem: statusRow === 'ERRO' ? (s.mensagem || s.erro || '') : '', qtdE, qtdR, qtdC });
+      }
+    }
+    if (execUpdates.length === 0) return;
+    let execucoes = [...this.execucoes];
+    let executionRows = [...this.executionRows];
+    for (const { idx, upd } of execUpdates) {
+      execucoes = [...execucoes.slice(0, idx), { ...execucoes[idx], ...upd }, ...execucoes.slice(idx + 1)];
+    }
+    for (const { idx, status, mensagem, qtdE, qtdR, qtdC } of rowUpdates) {
+      executionRows = [...executionRows.slice(0, idx), { ...executionRows[idx], status, mensagem, qtd_emitidas: qtdE, qtd_recebidas: qtdR, qtd_canceladas: qtdC }, ...executionRows.slice(idx + 1)];
+    }
+    this.execucoes = execucoes;
+    this.executionRows = executionRows;
+    this.atualizarExecucoesFinalizadasFiltradas();
+    this.cdr.markForCheck();
+  }
 
   private iniciarPollingStatus(execucao: ExecucaoEmpresa, empresaId: string) {
-    console.log(`[Polling] Iniciando polling para empresa ${empresaId}, execução ${execucao.id}`);
-    
-    // Limpa intervalo anterior se existir
     if (this.intervalosStatus.has(execucao.id)) {
-      console.log(`[Polling] Limpando intervalo anterior para ${execucao.id}`);
       clearInterval(this.intervalosStatus.get(execucao.id));
     }
 
     let tentativasErro404 = 0;
     const maxTentativas404 = 3;
-    let contadorPolling = 0;
 
-    // Polling a cada 2 segundos
     const intervalo = setInterval(async () => {
-      contadorPolling++;
-      console.log(`[Polling] Verificando status da empresa ${empresaId} (tentativa ${contadorPolling})`);
-      
       try {
         const status = await firstValueFrom(
           this.execucaoService.obterStatusExecucao(empresaId)
         );
 
-        console.log(`[Polling] Status recebido para ${empresaId}:`, status);
-        console.log(`[Polling] Detalhes completos do status:`, {
-          empresa_id: status.empresa_id,
-          cnpj: status.cnpj,
-          status: status.status,
-          etapa_atual: status.etapa_atual,
-          progresso: status.progresso,
-          mensagem: status.mensagem,
-          erro: status.erro,
-          logs: status.logs,
-          url_atual: status.url_atual,
-          titulo: status.titulo
-        });
-
-        // Reset contador de 404 se conseguir obter status
+        tentativasErro404 = 0;
         tentativasErro404 = 0;
 
         // Atualiza execução (sem remover do array)
@@ -906,32 +965,12 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           this.atualizarExecucoesFinalizadasFiltradas();
         }
 
-        // Se concluído ou falhou, para o polling
         const statusMapeado = this.mapearStatusBackendParaFrontend(status.status);
-        console.log(`[Polling] Status mapeado para ${empresaId}: ${statusMapeado} (anterior: ${execucao.status})`);
-        
-        // Se falhou, mostra o erro detalhadamente
-        if (statusMapeado === 'falhou') {
-          console.error(`[Polling] ⚠️ EXECUÇÃO FALHOU para ${empresaId}:`);
-          console.error(`[Polling] - Mensagem: ${status.mensagem || 'Sem mensagem'}`);
-          console.error(`[Polling] - Erro: ${status.erro || 'Sem detalhes de erro'}`);
-          console.error(`[Polling] - Etapa atual: ${status.etapa_atual || 'N/A'}`);
-          console.error(`[Polling] - Logs completos:`, JSON.stringify(status.logs || [], null, 2));
-          if (status.logs && status.logs.length > 0) {
-            console.error(`[Polling] - Últimos logs:`, status.logs.slice(-5));
-          }
-        }
-        
         if (statusMapeado === 'finalizado' || statusMapeado === 'falhou') {
-          console.log(`[Polling] Execução ${statusMapeado} para ${empresaId}, parando polling`);
           clearInterval(intervalo);
           this.intervalosStatus.delete(execucao.id);
-        } else {
-          console.log(`[Polling] Execução ainda em andamento para ${empresaId}: ${statusMapeado}, continuando polling...`);
         }
       } catch (error: any) {
-        console.error(`Erro ao obter status para empresa ${empresaId}:`, error);
-
         // 404 = execução foi removida do backend (normal quando termina com OK ou ERRO)
         // NÃO sobrescrever se já temos status final (SSE pode ter atualizado antes)
         if (error.status === 404 || error.statusCode === 404) {

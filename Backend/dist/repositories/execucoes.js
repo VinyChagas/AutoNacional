@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listarExecucoes = listarExecucoes;
 exports.obterPorId = obterPorId;
+exports.obterUltimaPorEmpresa = obterUltimaPorEmpresa;
 exports.criar = criar;
 exports.atualizar = atualizar;
 /**
@@ -25,6 +26,14 @@ async function obterPorId(id) {
     return client_1.prisma.execucao.findUnique({
         where: { id },
     });
+}
+async function obterUltimaPorEmpresa(empresaId) {
+    const list = await client_1.prisma.execucao.findMany({
+        where: { empresaId },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+    });
+    return list[0] ?? null;
 }
 async function criar(data) {
     return client_1.prisma.execucao.create({

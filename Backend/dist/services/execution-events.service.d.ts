@@ -32,8 +32,14 @@ export interface ExecutionEventFinished {
     qtd_emitidas?: number;
     qtd_recebidas?: number;
     qtd_canceladas?: number;
+    resultado_final?: string;
 }
-export type ExecutionEvent = ExecutionEventStarted | ExecutionEventStage | ExecutionEventCounts | ExecutionEventFinished;
+export interface ExecutionEventLoginReady {
+    type: 'execution:login_ready';
+    empresa_id: string;
+    message: string;
+}
+export type ExecutionEvent = ExecutionEventStarted | ExecutionEventStage | ExecutionEventCounts | ExecutionEventFinished | ExecutionEventLoginReady;
 export declare function registrarClienteSSE(batchId: string, res: Response): void;
 export declare function emitirEventoExecucao(batchId: string | undefined, evento: ExecutionEvent): void;
 //# sourceMappingURL=execution-events.service.d.ts.map

@@ -84,7 +84,7 @@ Se não definido, o backend aceita `http://localhost:4200` por padrão.
 
 | Variável              | Obrigatória | Default | Descrição                                 |
 | --------------------- | ----------- | ------- | ----------------------------------------- |
-| `PLAYWRIGHT_TIMEOUT`  | Não         | `30000` | Timeout geral do Playwright (ms)          |
+| `PLAYWRIGHT_TIMEOUT`  | Não         | `60000` | Timeout geral do Playwright (ms)          |
 | `PLAYWRIGHT_HEADLESS` | Não         | `false` | Modo headless (true = sem interface)      |
 | `QUEUE_TIMEOUT`       | Não         | `60`    | Timeout da fila de execução (segundos)    |
 
@@ -147,7 +147,7 @@ INTERNAL_API_KEY=minha-api-key-interna
 CORS_ORIGINS=http://localhost:1234
 
 # Playwright
-PLAYWRIGHT_TIMEOUT=30000
+PLAYWRIGHT_TIMEOUT=60000
 PLAYWRIGHT_HEADLESS=false
 QUEUE_TIMEOUT=60
 ```

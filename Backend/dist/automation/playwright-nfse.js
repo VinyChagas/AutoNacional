@@ -31,12 +31,12 @@ async function criarContextoComCertificado(certificado, opcoes = {}) {
     const headless = opcoes.headless ?? config.headless;
     const ignoreHttpsErrors = opcoes.ignoreHttpsErrors ?? true;
     const viewport = opcoes.viewport ?? config.viewport;
-    logger.info('Iniciando Chromium...');
+    logger.debug('Iniciando Chromium...');
     const browser = await playwright_1.chromium.launch({
         headless,
         args: config.args,
     });
-    logger.info('Configurando certificado cliente no contexto...');
+    logger.debug('Configurando certificado cliente no contexto...');
     const context = await browser.newContext({
         ignoreHTTPSErrors: ignoreHttpsErrors,
         viewport,
@@ -63,7 +63,7 @@ async function abrirDashboardNfse(certificado, opcoes = {}) {
     const timeout = opcoes.timeout ?? config.timeout;
     const logs = [];
     const log = (msg) => {
-        logger.info(msg);
+        logger.debug(msg);
         logs.push(msg);
     };
     let browser;
@@ -136,6 +136,7 @@ async function abrirDashboardNfse(certificado, opcoes = {}) {
             }
         }
         if (loginFound && !dashboardFound) {
+            opcoes.onLoginPageReady?.();
             log('Elemento de login encontrado - tentando autenticar...');
             try {
                 await loginElement.click({ timeout: 5000 });

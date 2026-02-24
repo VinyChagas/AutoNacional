@@ -6,6 +6,7 @@ export interface OpcoesLoginCredencial {
         width: number;
         height: number;
     };
+    onLoginPageReady?: () => void;
 }
 /**
  * Abre o dashboard do portal NFSe Nacional autenticado com credencial (CNPJ/CPF + senha).

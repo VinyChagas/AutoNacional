@@ -42,6 +42,8 @@ export interface OpcoesContexto {
   headless?: boolean;
   ignoreHttpsErrors?: boolean;
   viewport?: { width: number; height: number };
+  /** Chamado quando a tela de login está pronta (após page.goto, antes do clique) */
+  onLoginPageReady?: () => void;
 }
 
 /**
@@ -59,13 +61,13 @@ export async function criarContextoComCertificado(
   const ignoreHttpsErrors = opcoes.ignoreHttpsErrors ?? true;
   const viewport = opcoes.viewport ?? config.viewport;
 
-  logger.info('Iniciando Chromium...');
+  logger.debug('Iniciando Chromium...');
   const browser = await chromium.launch({
     headless,
     args: config.args,
   });
 
-  logger.info('Configurando certificado cliente no contexto...');
+  logger.debug('Configurando certificado cliente no contexto...');
   const context = await browser.newContext({
     ignoreHTTPSErrors: ignoreHttpsErrors,
     viewport,
@@ -96,6 +98,7 @@ export async function abrirDashboardNfse(
     headless?: boolean;
     timeout?: number;
     viewport?: { width: number; height: number };
+    onLoginPageReady?: () => void;
   } = {}
 ): Promise<ResultadoAutenticacao> {
   const config = getPlaywrightConfig();
@@ -103,7 +106,7 @@ export async function abrirDashboardNfse(
   const logs: string[] = [];
 
   const log = (msg: string) => {
-    logger.info(msg);
+    logger.debug(msg);
     logs.push(msg);
   };
 
@@ -187,6 +190,7 @@ export async function abrirDashboardNfse(
     }
 
     if (loginFound && !dashboardFound) {
+      opcoes.onLoginPageReady?.();
       log('Elemento de login encontrado - tentando autenticar...');
       try {
         await loginElement.click({ timeout: 5000 });

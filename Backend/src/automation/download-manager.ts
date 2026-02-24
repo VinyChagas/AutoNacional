@@ -23,7 +23,7 @@ let _downloadsBasePath: string | null = null;
  */
 export function setDownloadsBasePath(basePath: string): void {
   _downloadsBasePath = resolveStoragePath(basePath);
-  logger.info({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
+  logger.debug({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
 }
 
 /**
@@ -193,7 +193,7 @@ export async function salvarDownloadDireto(
   const caminhoFinal = path.join(dirDestino, nomeArquivo);
   await download.saveAs(caminhoFinal);
 
-  logger.info({ caminho: caminhoFinal }, 'Arquivo salvo com sucesso');
+  logger.debug({ caminho: caminhoFinal }, 'Arquivo salvo com sucesso');
   return caminhoFinal;
 }
 
@@ -259,7 +259,7 @@ export async function baixarArquivoDireto(
   const caminhoFinal = path.join(pastaFinal, nomeArquivo);
 
   await fs.writeFile(caminhoFinal, content);
-  logger.info({ caminho: caminhoFinal, size: content.length }, 'Arquivo salvo com sucesso');
+  logger.debug({ caminho: caminhoFinal, size: content.length }, 'Arquivo salvo com sucesso');
 
   return caminhoFinal;
 }

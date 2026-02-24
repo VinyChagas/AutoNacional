@@ -5,7 +5,7 @@
  * pelos scripts de automação.
  */
 export interface PlaywrightConfig {
-    /** Timeout em milissegundos para operações (default: 30000) */
+    /** Timeout em milissegundos para operações (default: 60000) */
     timeout: number;
     /** Se true, executa navegador em modo headless */
     headless: boolean;

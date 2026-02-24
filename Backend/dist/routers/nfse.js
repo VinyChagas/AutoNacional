@@ -40,7 +40,7 @@ router.post('/:cnpj/abrir', async (req, res) => {
         }
         const resultado = await (0, playwright_nfse_1.abrirDashboardNfse)(certificado, {
             headless,
-            timeout: 30000,
+            timeout: 60000,
         });
         res.json({
             sucesso: resultado.sucesso,

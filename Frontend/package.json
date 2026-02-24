@@ -11,7 +11,8 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "test:ci": "ng test --no-watch --code-coverage",
-    "lint": "ng lint"
+    "lint": "ng lint",
+    "playwright:install": "playwright install"
   },
   "private": true,
   "engines": {
@@ -51,6 +52,7 @@
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
     "postcss": "^8.5.6",
+    "@playwright/test": "^1.49.0",
     "tailwindcss": "^3.4.18",
     "typescript": "~5.4.2"
   }

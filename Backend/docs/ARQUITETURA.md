@@ -434,7 +434,7 @@ Execução:
 - `FERNET_KEY` - Chave de criptografia (gerada automaticamente se não existir)
 
 **Opcionais:**
-- `PLAYWRIGHT_TIMEOUT` - Timeout do Playwright (padrão: 30000ms)
+- `PLAYWRIGHT_TIMEOUT` - Timeout do Playwright (padrão: 60000ms)
 - `PLAYWRIGHT_HEADLESS` - Modo headless (padrão: false)
 - `QUEUE_TIMEOUT` - Timeout da fila (padrão: 60s)
 - `CORS_ORIGINS` - Origens permitidas para CORS

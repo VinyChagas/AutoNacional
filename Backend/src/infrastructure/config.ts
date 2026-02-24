@@ -60,7 +60,7 @@ export const CORS_ORIGINS: string[] = corsOriginsEnv
 // ============================================================================
 
 export const PLAYWRIGHT_TIMEOUT = parseInt(
-  process.env.PLAYWRIGHT_TIMEOUT || '30000',
+  process.env.PLAYWRIGHT_TIMEOUT || '60000',
   10
 );
 export const PLAYWRIGHT_HEADLESS =
@@ -72,6 +72,12 @@ export const PLAYWRIGHT_HEADLESS =
 
 export const QUEUE_TIMEOUT = parseInt(
   process.env.QUEUE_TIMEOUT || '60',
+  10
+);
+
+/** Cap máximo de concorrência em batch. User pode configurar 60+; este limita para evitar sobrecarga. */
+export const MAX_CONCURRENCY_CAP = parseInt(
+  process.env.MAX_CONCURRENCY_CAP || '8',
   10
 );
 

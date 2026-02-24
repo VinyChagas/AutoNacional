@@ -15,5 +15,7 @@ export declare const CORS_ORIGINS: string[];
 export declare const PLAYWRIGHT_TIMEOUT: number;
 export declare const PLAYWRIGHT_HEADLESS: boolean;
 export declare const QUEUE_TIMEOUT: number;
+/** Cap máximo de concorrência em batch. User pode configurar 60+; este limita para evitar sobrecarga. */
+export declare const MAX_CONCURRENCY_CAP: number;
 export declare const PORT: number;
 //# sourceMappingURL=config.d.ts.map

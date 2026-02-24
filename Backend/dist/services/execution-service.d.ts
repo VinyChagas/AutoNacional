@@ -2,6 +2,7 @@
  * Service de orquestração de execuções de automação NFSe.
  *
  * Gerencia fila de execuções e coordena: playwright_nfse → processar_notas → salvamento.
+ * Padrão producer/worker: endpoint apenas enfileira; browser launch ocorre APENAS no worker.
  */
 import type { CertificadoEmMemoria } from '../automation/playwright-nfse';
 type TipoAutenticacao = 'certificado' | 'credenciais';
@@ -16,11 +17,26 @@ export declare function setCertificateLoader(loader: CertificateLoader): void;
  */
 export declare function obterCertificadoPorCnpj(cnpj: string): Promise<CertificadoEmMemoria>;
 /**
+ * Obtém delay entre enfileiramentos (configurável, padrão 150ms).
+ */
+export declare function obterDelayEnfileiramento(): Promise<number>;
+/**
+ * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, cap, totalEmpresas).
+ * Se userConfigured for alto (ex: 60), aplica cap e loga aviso.
+ */
+export declare function configurarConcorrenciaParaBatch(totalEmpresas: number): Promise<number>;
+/**
  * Adiciona uma execução à fila.
  * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
  * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
 export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria, batchId?: string, tipoAutenticacao?: TipoAutenticacao): Promise<number>;
+/**
+ * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).
+ * @param batchId - UUID do batch
+ * @param empresaIdsFallback - Se fornecido, para cada empresa_id não encontrado em memória, busca última execução no DB
+ */
+export declare function obterStatusBatch(batchId: string, empresaIdsFallback?: number[]): Promise<Record<string, unknown>[]>;
 /**
  * Obtém o status de uma execução em andamento.
  */

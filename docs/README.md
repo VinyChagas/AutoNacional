@@ -48,6 +48,7 @@ O **AutoNacional** é uma plataforma completa para automação de processos cont
 | [BANCO_DE_DADOS.md](./BANCO_DE_DADOS.md)             | Schema do banco de dados (Prisma/PostgreSQL)                 |
 | [VARIAVEIS_AMBIENTE.md](./VARIAVEIS_AMBIENTE.md)     | Referência de variáveis de ambiente                          |
 | [FLUXOS.md](./FLUXOS.md)                             | Fluxos de negócio e automação                                |
+| [AUTOMACAO_NFSE.md](./AUTOMACAO_NFSE.md)             | Funcionamento completo da automação (individual e filas)     |
 | [DEPENDENCIAS.md](./DEPENDENCIAS.md)                 | Lista e descrição de todas as dependências                   |
 | [CHECKLIST_TESTES_EMPRESAS.md](./CHECKLIST_TESTES_EMPRESAS.md) | Checklist de testes manuais da tela de Empresas    |
 

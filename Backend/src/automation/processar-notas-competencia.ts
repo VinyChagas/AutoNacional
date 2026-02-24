@@ -5,16 +5,15 @@
  */
 
 import { Page, Locator } from 'playwright';
-import {
-  getDownloadBasePath,
-  setDownloadsBasePath,
-  salvarDownloadDireto,
-} from './download-manager';
+import { setDownloadsBasePath, salvarDownloadDireto } from './download-manager';
 import { getLogger } from '../infrastructure/logger';
 
 const logger = getLogger('processar-notas');
 
 export { setDownloadsBasePath };
+
+/** Timeout para waitForEvent('download') e click em downloads. 45-60s recomendado para lote. */
+const DOWNLOAD_TIMEOUT_MS = 50000;
 
 let _minActionDelayMs = 500;
 
@@ -126,7 +125,7 @@ async function verificarNotaCancelada(rowLocator: Locator): Promise<boolean> {
 async function verificarNotaValida(rowLocator: Locator): Promise<{ valida: boolean; cancelada: boolean }> {
   const cancelada = await verificarNotaCancelada(rowLocator);
   if (cancelada) {
-    logger.info('Nota cancelada detectada. Não será baixada.');
+    logger.debug('Nota cancelada detectada. Não será baixada.');
     return { valida: false, cancelada: true };
   }
   return { valida: true, cancelada: false };
@@ -135,16 +134,17 @@ async function verificarNotaValida(rowLocator: Locator): Promise<{ valida: boole
 /**
  * Baixa XML e DANFS-e de uma linha da tabela.
  * Usa nomeContabilidade e mesExecucaoExtenso para a estrutura de pastas (não a competência da nota).
+ * basePath deve ser único por execução/empresa para evitar sobreposição em lote.
  */
 async function baixarArquivosDaLinha(
   page: Page,
   rowLocator: Locator,
+  basePath: string,
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
   nomeEmpresa: string,
   tipoNota: 'Emitidas' | 'Recebidas'
 ): Promise<void> {
-  const basePath = getDownloadBasePath();
   const colunaAcoesIdx = tipoNota === 'Emitidas' ? 6 : 5;
   const celulas = rowLocator.locator('td');
 
@@ -176,12 +176,18 @@ async function baixarArquivosDaLinha(
       linkXml = menuSuspenso.locator('a:has-text("XML")');
     }
     const [downloadXml] = await Promise.all([
-      page.waitForEvent('download'),
-      linkXml.nth(0).click(),
+      page.waitForEvent('download', { timeout: DOWNLOAD_TIMEOUT_MS }),
+      linkXml.nth(0).click({ timeout: DOWNLOAD_TIMEOUT_MS }),
     ]);
     await salvarDownloadDireto(downloadXml, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
   } catch (e) {
-    logger.error({ err: e }, 'Erro ao baixar XML');
+    const err = e as Error;
+    const isTimeout = err.name === 'TimeoutError' || /timeout/i.test(err.message);
+    if (isTimeout) {
+      logger.debug({ err: e }, 'Timeout ao baixar XML (arquivo ignorado, execução continua)');
+    } else {
+      logger.warn({ err: e }, 'Erro ao baixar XML');
+    }
   }
 
   await iconeAcoes.click();
@@ -195,12 +201,18 @@ async function baixarArquivosDaLinha(
       linkPdf = menuSuspenso.locator('a:has-text("DANFS-e")');
     }
     const [downloadPdf] = await Promise.all([
-      page.waitForEvent('download'),
-      linkPdf.nth(0).click(),
+      page.waitForEvent('download', { timeout: DOWNLOAD_TIMEOUT_MS }),
+      linkPdf.nth(0).click({ timeout: DOWNLOAD_TIMEOUT_MS }),
     ]);
     await salvarDownloadDireto(downloadPdf, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
   } catch (e) {
-    logger.error({ err: e }, 'Erro ao baixar DANFS-e');
+    const err = e as Error;
+    const isTimeout = err.name === 'TimeoutError' || /timeout/i.test(err.message);
+    if (isTimeout) {
+      logger.debug({ err: e }, 'Timeout ao baixar DANFS-e (arquivo ignorado, execução continua)');
+    } else {
+      logger.warn({ err: e }, 'Erro ao baixar DANFS-e');
+    }
   }
 
   await iconeAcoes.click();
@@ -212,6 +224,7 @@ async function baixarArquivosDaLinha(
  */
 export async function processarTabelaEmitidas(
   page: Page,
+  basePath: string,
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
   nomeEmpresa: string
@@ -238,11 +251,11 @@ export async function processarTabelaEmitidas(
         const { valida, cancelada } = await verificarNotaValida(linha);
         if (cancelada) qtdCanceladas++;
         if (valida) {
-          await baixarArquivosDaLinha(page, linha, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Emitidas');
+          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Emitidas');
           qtdBaixadas++;
         }
       } catch (e) {
-        logger.warn({ err: e }, `Erro ao processar linha ${i + 1}`);
+        logger.debug({ err: e }, `Erro ao processar linha ${i + 1}`);
       }
     }
 
@@ -260,6 +273,7 @@ export async function processarTabelaEmitidas(
  */
 export async function processarTabelaRecebidas(
   page: Page,
+  basePath: string,
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
   nomeEmpresa: string
@@ -286,11 +300,11 @@ export async function processarTabelaRecebidas(
         const { valida, cancelada } = await verificarNotaValida(linha);
         if (cancelada) qtdCanceladas++;
         if (valida) {
-          await baixarArquivosDaLinha(page, linha, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Recebidas');
+          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Recebidas');
           qtdBaixadas++;
         }
       } catch (e) {
-        logger.warn({ err: e }, `Erro ao processar linha ${i + 1}`);
+        logger.debug({ err: e }, `Erro ao processar linha ${i + 1}`);
       }
     }
 

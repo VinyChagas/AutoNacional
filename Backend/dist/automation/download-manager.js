@@ -63,7 +63,7 @@ let _downloadsBasePath = null;
  */
 function setDownloadsBasePath(basePath) {
     _downloadsBasePath = (0, path_resolve_1.resolveStoragePath)(basePath);
-    logger.info({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
+    logger.debug({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
 }
 /**
  * Obtém o caminho base para downloads.
@@ -197,7 +197,7 @@ async function salvarDownloadDireto(download, basePath, nomeContabilidade, mesEx
     await fs.mkdir(dirDestino, { recursive: true });
     const caminhoFinal = path.join(dirDestino, nomeArquivo);
     await download.saveAs(caminhoFinal);
-    logger.info({ caminho: caminhoFinal }, 'Arquivo salvo com sucesso');
+    logger.debug({ caminho: caminhoFinal }, 'Arquivo salvo com sucesso');
     return caminhoFinal;
 }
 /**
@@ -249,7 +249,7 @@ async function baixarArquivoDireto(page, seletorLink, basePath, nomeContabilidad
     const nomeArquivo = sanitizarNomeArquivo(`${nomeChave}${extensao}`);
     const caminhoFinal = path.join(pastaFinal, nomeArquivo);
     await fs.writeFile(caminhoFinal, content);
-    logger.info({ caminho: caminhoFinal, size: content.length }, 'Arquivo salvo com sucesso');
+    logger.debug({ caminho: caminhoFinal, size: content.length }, 'Arquivo salvo com sucesso');
     return caminhoFinal;
 }
 //# sourceMappingURL=download-manager.js.map

@@ -3,6 +3,7 @@
  * Service de orquestração de execuções de automação NFSe.
  *
  * Gerencia fila de execuções e coordena: playwright_nfse → processar_notas → salvamento.
+ * Padrão producer/worker: endpoint apenas enfileira; browser launch ocorre APENAS no worker.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -43,7 +44,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setCertificateLoader = setCertificateLoader;
 exports.obterCertificadoPorCnpj = obterCertificadoPorCnpj;
+exports.obterDelayEnfileiramento = obterDelayEnfileiramento;
+exports.configurarConcorrenciaParaBatch = configurarConcorrenciaParaBatch;
 exports.adicionarExecucao = adicionarExecucao;
+exports.obterStatusBatch = obterStatusBatch;
 exports.obterStatus = obterStatus;
 const p_queue_1 = __importDefault(require("p-queue"));
 const logger_1 = require("../infrastructure/logger");
@@ -55,6 +59,7 @@ const playwright_nfse_1 = require("../automation/playwright-nfse");
 const processar_notas_competencia_1 = require("../automation/processar-notas-competencia");
 const processar_notas_competencia_2 = require("../automation/processar-notas-competencia");
 const download_manager_1 = require("../automation/download-manager");
+const path_resolve_1 = require("../utils/path-resolve");
 const login_credencial_nfse_1 = require("../automation/login-credencial-nfse");
 const credenciaisRepo = __importStar(require("../repositories/credenciais"));
 const execution_events_service_1 = require("./execution-events.service");
@@ -110,9 +115,31 @@ async function obterCertificadoPorCnpj(cnpj) {
     }
     return certificateLoader(cnpj);
 }
+const BROWSER_LAUNCH_DELAY_MS_DEFAULT = 150;
 /**
- * Obtém o limite de concorrência das configurações.
+ * Obtém delay entre enfileiramentos (configurável, padrão 150ms).
  */
+async function obterDelayEnfileiramento() {
+    const config = await settingsRepo.obterConfiguracoes();
+    return config?.browserLaunchDelayMs ?? BROWSER_LAUNCH_DELAY_MS_DEFAULT;
+}
+/**
+ * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, cap, totalEmpresas).
+ * Se userConfigured for alto (ex: 60), aplica cap e loga aviso.
+ */
+async function configurarConcorrenciaParaBatch(totalEmpresas) {
+    const config = await settingsRepo.obterConfiguracoes();
+    const userConfigured = config?.defaultConcurrentBrowsers ?? 3;
+    const maxFromSettings = config?.maxConcurrentBrowsers ?? 5;
+    let limite = Math.min(userConfigured, maxFromSettings);
+    if (limite > config_1.MAX_CONCURRENCY_CAP) {
+        logger.warn({ userConfigured, maxFromSettings, cap: config_1.MAX_CONCURRENCY_CAP }, 'Concorrência configurada muito alta; aplicando cap para evitar sobrecarga');
+        limite = config_1.MAX_CONCURRENCY_CAP;
+    }
+    const concurrencyFinal = Math.min(limite, totalEmpresas);
+    fila.concurrency = concurrencyFinal;
+    return concurrencyFinal;
+}
 async function obterLimiteConcorrencia() {
     const config = await settingsRepo.obterConfiguracoes();
     if (config) {
@@ -170,13 +197,71 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
         resultadoFinal: null,
         tipoAutenticacao: tipoAuth,
     });
-    // Atualiza concorrência da fila com valor das configurações (Máx. e Padrão de navegadores)
-    const limite = await obterLimiteConcorrencia();
-    fila.concurrency = limite;
+    if (!batchId) {
+        fila.concurrency = Math.max(fila.concurrency, await obterLimiteConcorrencia());
+    }
     fila.add(async () => {
-        await executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo || 'ambas', headlessFinal, exec.id, certificado, tipoAuth);
+        try {
+            await executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo || 'ambas', headlessFinal, exec.id, certificado, tipoAuth);
+        }
+        catch (e) {
+            logger.error({ err: e, empresaId }, '[worker] Erro não tratado em executarFluxoCompleto');
+        }
     });
     return exec.id;
+}
+/**
+ * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).
+ * @param batchId - UUID do batch
+ * @param empresaIdsFallback - Se fornecido, para cada empresa_id não encontrado em memória, busca última execução no DB
+ */
+async function obterStatusBatch(batchId, empresaIdsFallback) {
+    const out = [];
+    const seenEmpresas = new Set();
+    for (const [, info] of execucoesAtivas) {
+        if (info.batchId === batchId) {
+            seenEmpresas.add(info.empresaId);
+            out.push({
+                empresa_id: String(info.empresaId),
+                cnpj: info.cnpj,
+                batch_id: info.batchId,
+                status: info.status,
+                etapa_atual: info.etapaAtual,
+                progresso: info.progresso,
+                logs: info.logs,
+                mensagem: info.mensagem,
+                qtd_notas_emitidas: info.qtdNotasEmitidas,
+                qtd_notas_recebidas: info.qtdNotasRecebidas,
+                qtd_notas_canceladas: info.qtdNotasCanceladas,
+                resultado_final: info.resultadoFinal,
+                tipo_autenticacao: info.tipoAutenticacao,
+            });
+        }
+    }
+    if (empresaIdsFallback && empresaIdsFallback.length > 0) {
+        for (const empId of empresaIdsFallback) {
+            if (seenEmpresas.has(empId))
+                continue;
+            const ultima = await execucoesRepo.obterUltimaPorEmpresa(empId);
+            if (ultima && (ultima.status === 'concluido' || ultima.status === 'falhou')) {
+                out.push({
+                    empresa_id: String(empId),
+                    cnpj: ultima.cnpj ?? '',
+                    batch_id: batchId,
+                    status: ultima.status,
+                    etapa_atual: ultima.etapaAtual,
+                    progresso: ultima.progresso,
+                    logs: [],
+                    mensagem: ultima.status === 'falhou' ? (ultima.mensagemErro ?? '') : (ultima.mensagem ?? ''),
+                    qtd_notas_emitidas: ultima.qtdNotasEmitidas,
+                    qtd_notas_recebidas: ultima.qtdNotasRecebidas,
+                    qtd_notas_canceladas: 0,
+                    resultado_final: ultima.resultadoFinal,
+                });
+            }
+        }
+    }
+    return out;
 }
 /**
  * Obtém o status de uma execução em andamento.
@@ -206,357 +291,441 @@ const fila = new p_queue_1.default({
     concurrency: 3,
     autoStart: true,
 });
+function logWorker(empresaId, msg) {
+    logger.debug({ empresaId }, `[worker] ${msg}`);
+}
+function logFinalize(execucaoDbId, msg) {
+    logger.debug({ execucaoDbId }, `[finalize] ${msg}`);
+}
+/** Status finais que indicam que a execução já foi finalizada no DB. */
+const STATUS_FINAIS_DB = new Set(['concluido', 'falhou']);
+/** IDs já finalizados (evita dupla chamada em finally + early return). */
+const finalizadosIds = new Set();
+/**
+ * Finalização idempotente: atualiza DB, emite SSE, remove de execucoesAtivas, fecha Playwright.
+ * Se já foi chamada para este execucaoId, skip (evita race e dupla emissão SSE).
+ */
+async function finalizarExecucao(params) {
+    const { execucaoId } = params;
+    if (finalizadosIds.has(execucaoId)) {
+        logFinalize(execucaoId, 'já finalizado, skip idempotente');
+        return;
+    }
+    finalizadosIds.add(execucaoId);
+    const { empresaId, cnpj, batchId, statusFinal, message, contagens, resultado_final, page, browser, startedAt, persistirMetrica, } = params;
+    const key = String(empresaId);
+    const info = execucoesAtivas.get(key);
+    const sseStatus = statusFinal === 'concluido' ? 'OK' : 'ERRO';
+    const msgResumo = message.length > 80 ? message.slice(0, 77) + '...' : message;
+    try {
+        const existente = await execucoesRepo.obterPorId(execucaoId);
+        if (existente && STATUS_FINAIS_DB.has(existente.status)) {
+            logFinalize(execucaoId, `já finalizado no DB (${existente.status}), garantindo consistência`);
+        }
+        else {
+            await execucoesRepo.atualizar(execucaoId, {
+                status: statusFinal,
+                etapaAtual: 'finalizacao',
+                progresso: statusFinal === 'concluido' ? 100 : 0,
+                mensagem: message,
+                mensagemErro: statusFinal === 'falhou' ? message.slice(0, 500) : undefined,
+                dataFim: new Date(),
+                qtdNotasEmitidas: contagens.emitidas,
+                qtdNotasRecebidas: contagens.recebidas,
+                resultadoFinal: resultado_final,
+            });
+            logFinalize(execucaoId, `DB UPDATED ${statusFinal}`);
+        }
+        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+            type: 'execution:finished',
+            empresa_id: key,
+            status: sseStatus,
+            message: statusFinal === 'falhou' ? msgResumo : undefined,
+            qtd_emitidas: contagens.emitidas,
+            qtd_recebidas: contagens.recebidas,
+            qtd_canceladas: contagens.canceladas,
+            resultado_final,
+        });
+        logFinalize(execucaoId, 'SSE FINISHED EMITTED');
+        persistirMetrica(sseStatus, statusFinal === 'falhou' ? (message?.slice(0, 200) ?? undefined) : undefined);
+        // Log único por empresa: sucesso ou falha (evita poluição com logs intermediários)
+        if (statusFinal === 'concluido') {
+            logger.info({ empresaId, cnpj, emitidas: contagens.emitidas, recebidas: contagens.recebidas }, 'Empresa concluída com sucesso');
+        }
+        else {
+            logger.error({ empresaId, cnpj, err: message }, 'Empresa falhou');
+        }
+    }
+    catch (e) {
+        logger.error({ err: e, execucaoId }, '[finalize] Erro ao atualizar DB/emitir SSE');
+    }
+    finally {
+        execucoesAtivas.delete(key);
+        logFinalize(execucaoId, 'REMOVED ACTIVE');
+        try {
+            if (page)
+                await page.close().catch(() => { });
+            if (browser)
+                await browser.close().catch(() => { });
+        }
+        catch {
+            /* ignore */
+        }
+    }
+}
 async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo, headless, execucaoDbId, certificadoFornecido, tipoAutenticacao = 'certificado') {
     const key = String(empresaId);
     const info = execucoesAtivas.get(key);
     if (!info)
         return;
+    logWorker(empresaId, 'START');
     const startedAt = new Date();
     info.startedAt = startedAt;
-    const competencia = competenciaFromDataInicio(dataInicio);
-    const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
-    const contabilidadeId = empresaComContab?.contabilidadeId ?? null;
-    const adicionarLog = (msg) => {
-        info.logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-        logger.info(`Empresa ${empresaId}: ${msg}`);
-    };
     const batchId = info.batchId;
-    const razaoSocial = await obterNomeEmpresa(cnpj);
-    const metodo = tipoAutenticacao === 'credenciais' ? 'CREDENCIAL' : 'CERTIFICADO';
-    const persistirMetrica = (status, erroResumo) => {
-        if (!batchId)
-            return;
-        const finishedAt = new Date();
-        const tempoSeg = Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000);
-        (0, automation_metrics_service_1.persistirExecution)({
-            batchId,
-            empresaId,
-            empresaCnpj: cnpj,
-            contabilidadeId,
-            competencia,
-            status,
-            loginMetodo: metodo,
-            qtdEmitidas: info.qtdNotasEmitidas || 0,
-            qtdRecebidas: info.qtdNotasRecebidas || 0,
-            qtdCanceladas: info.qtdNotasCanceladas || 0,
-            tempoExecucaoSegundos: tempoSeg,
-            erroResumo: erroResumo || null,
-            startedAt,
-            finishedAt,
-        }).catch(() => { });
-    };
-    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-        type: 'execution:started',
-        empresa_id: key,
-        cnpj,
-        razao_social: razaoSocial,
-        metodo,
-    });
-    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-        type: 'execution:stage',
-        empresa_id: key,
-        stage: 'abrir_navegador',
-        message: 'Abrindo navegador…',
-    });
-    info.status = 'em_execucao';
-    info.etapaAtual = 'autenticacao';
-    info.progresso = 10;
-    info.mensagem = 'Abrindo navegador…';
-    await execucoesRepo.atualizar(execucaoDbId, {
-        status: 'em_execucao',
-        etapaAtual: 'autenticacao',
-        dataInicio: new Date(),
-    });
-    let resultadoAuth;
-    if (tipoAutenticacao === 'credenciais') {
-        const credencial = await credenciaisRepo.obterPrimeiraPorEmpresa(empresaId);
-        if (!credencial) {
-            const err = `Nenhuma credencial encontrada para a empresa (CNPJ ${cnpj})`;
-            adicionarLog(`ERRO: ${err}`);
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:finished',
-                empresa_id: key,
-                status: 'ERRO',
-                message: err,
-            });
-            info.status = 'falhou';
-            info.mensagem = err;
-            await execucoesRepo.atualizar(execucaoDbId, {
-                status: 'falhou',
-                mensagemErro: err,
-                dataFim: new Date(),
-            });
-            persistirMetrica('ERRO', err.length > 200 ? err.slice(0, 197) + '...' : err);
-            execucoesAtivas.delete(key);
-            return;
-        }
-        const senha = credenciaisRepo.descriptografarSenha(credencial);
-        const documento = credencial.usuario || cnpj;
-        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-            type: 'execution:stage',
-            empresa_id: key,
-            stage: 'login',
-            message: 'Fazendo login…',
-        });
-        info.mensagem = 'Fazendo login…';
-        adicionarLog('Chamando autenticação via credencial...');
-        const config = await settingsRepo.obterConfiguracoes();
-        const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-        const viewport = resolveViewport(config);
-        resultadoAuth = await (0, login_credencial_nfse_1.abrirDashboardNfseComCredencial)(documento, senha, {
-            headless,
-            timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
-            viewport,
-        });
-    }
-    else {
-        let certificado;
-        if (certificadoFornecido) {
-            certificado = certificadoFornecido;
-        }
-        else if (certificateLoader) {
-            certificado = await certificateLoader(cnpj);
-        }
-        else {
-            const err = 'CertificateService não configurado. Execute a Etapa 5.2 da migração.';
-            adicionarLog(`ERRO: ${err}`);
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:finished',
-                empresa_id: key,
-                status: 'ERRO',
-                message: err,
-            });
-            info.status = 'falhou';
-            info.mensagem = err;
-            await execucoesRepo.atualizar(execucaoDbId, {
-                status: 'falhou',
-                mensagemErro: err,
-                dataFim: new Date(),
-            });
-            persistirMetrica('ERRO', err.length > 200 ? err.slice(0, 197) + '...' : err);
-            execucoesAtivas.delete(key);
-            return;
-        }
-        const config = await settingsRepo.obterConfiguracoes();
-        const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-        const viewport = resolveViewport(config);
-        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-            type: 'execution:stage',
-            empresa_id: key,
-            stage: 'login',
-            message: 'Fazendo login…',
-        });
-        info.mensagem = 'Fazendo login…';
-        adicionarLog('Chamando autenticação via certificado...');
-        resultadoAuth = await (0, playwright_nfse_1.abrirDashboardNfse)(certificado, {
-            headless,
-            timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
-            viewport,
-        });
-    }
+    let persistirMetrica = () => { };
     try {
-        const config = await settingsRepo.obterConfiguracoes();
-        if (!resultadoAuth.sucesso) {
-            throw new playwright_nfse_1.NFSeAutenticacaoError(resultadoAuth.mensagem || 'Falha na autenticação');
-        }
-        if (!resultadoAuth.page) {
-            throw new Error('Página do navegador não foi criada corretamente');
-        }
-        info.page = resultadoAuth.page;
-        info.browser = resultadoAuth.browser;
-        for (const logMsg of resultadoAuth.logs)
-            adicionarLog(logMsg);
-        info.progresso = 30;
-        info.mensagem = 'Autenticação concluída.';
+        const razaoSocial = await obterNomeEmpresa(cnpj);
+        const metodo = tipoAutenticacao === 'credenciais' ? 'CREDENCIAL' : 'CERTIFICADO';
         (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-            type: 'execution:stage',
+            type: 'execution:started',
             empresa_id: key,
-            stage: 'auth_ok',
-            message: 'Autenticação concluída.',
+            cnpj,
+            razao_social: razaoSocial,
+            metodo,
         });
-        if (config?.downloadsBasePath) {
-            (0, processar_notas_competencia_1.setDownloadsBasePath)(config.downloadsBasePath);
-        }
-        if (config?.minActionDelayMs) {
-            (0, processar_notas_competencia_1.setMinActionDelayMs)(config.minActionDelayMs);
-        }
-        const nomeEmpresa = await obterNomeEmpresa(cnpj);
+        const competencia = competenciaFromDataInicio(dataInicio);
         const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
-        const nomeContabilidade = empresaComContab?.contabilidade?.nomeContabilidade?.trim() ?? 'Sem contabilidade';
-        const agora = new Date();
-        const mesExecucaoExtenso = (0, download_manager_1.formatarMesExecucaoParaPasta)(agora.getFullYear(), agora.getMonth() + 1);
-        info.etapaAtual = 'processamento_emitidas';
-        info.progresso = 40;
-        adicionarLog(`Processando notas (${tipo})...`);
-        if (tipo === 'ambas' || tipo === 'emitidas') {
+        const contabilidadeId = empresaComContab?.contabilidadeId ?? null;
+        const adicionarLog = (msg) => {
+            info.logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+            logger.debug({ empresaId }, msg);
+        };
+        const onLoginPageReady = () => {
+            logWorker(empresaId, 'login page ready');
             (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:stage',
+                type: 'execution:login_ready',
                 empresa_id: key,
-                stage: 'acessar_emitidas',
-                message: 'Acessando notas emitidas…',
+                message: 'Tela de login carregada',
             });
-            info.mensagem = 'Acessando notas emitidas…';
-            const menuEmitidas = resultadoAuth.page.locator('li:nth-of-type(3) img').nth(0);
-            await menuEmitidas.click();
-            await resultadoAuth.page.waitForURL('**/Notas/Emitidas', { timeout: 15000 });
-            await resultadoAuth.page.waitForLoadState('networkidle', { timeout: 15000 });
-            await resultadoAuth.page.waitForTimeout(1000);
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:stage',
-                empresa_id: key,
-                stage: 'pesquisar_emitidas',
-                message: 'Pesquisando notas emitidas…',
-            });
-            info.mensagem = 'Pesquisando notas emitidas…';
-            await (0, processar_notas_competencia_2.preencherDatasEFiltrar)(resultadoAuth.page, dataInicio, dataFim);
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:stage',
-                empresa_id: key,
-                stage: 'baixar_emitidas',
-                message: 'Baixando notas emitidas…',
-            });
-            info.mensagem = 'Baixando notas emitidas…';
-            const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(resultadoAuth.page, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
-            info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
-            info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
-            if (resEmitidas.sem_registros) {
-                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                    type: 'execution:stage',
-                    empresa_id: key,
-                    stage: 'nenhuma_emitida',
-                    message: 'Nenhuma nota emitida encontrada — avançando…',
-                });
-                info.mensagem = 'Nenhuma nota emitida encontrada — avançando…';
-            }
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:counts',
-                empresa_id: key,
-                qtd_emitidas: info.qtdNotasEmitidas,
-                qtd_recebidas: info.qtdNotasRecebidas,
-                qtd_canceladas: info.qtdNotasCanceladas,
-            });
-        }
-        if (tipo === 'ambas' || tipo === 'recebidas') {
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:stage',
-                empresa_id: key,
-                stage: 'acessar_recebidas',
-                message: 'Acessando notas recebidas…',
-            });
-            info.mensagem = 'Acessando notas recebidas…';
-            const menuRecebidas = resultadoAuth.page.locator('li:nth-of-type(4) img').nth(0);
-            await menuRecebidas.click();
-            await resultadoAuth.page.waitForURL('**/Notas/Recebidas', { timeout: 15000 });
-            await resultadoAuth.page.waitForLoadState('networkidle', { timeout: 15000 });
-            await resultadoAuth.page.waitForTimeout(1000);
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:stage',
-                empresa_id: key,
-                stage: 'pesquisar_recebidas',
-                message: 'Pesquisando notas recebidas…',
-            });
-            info.mensagem = 'Pesquisando notas recebidas…';
-            await (0, processar_notas_competencia_2.preencherDatasEFiltrar)(resultadoAuth.page, dataInicio, dataFim);
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:stage',
-                empresa_id: key,
-                stage: 'baixar_recebidas',
-                message: 'Baixando notas recebidas…',
-            });
-            info.mensagem = 'Baixando notas recebidas…';
-            const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(resultadoAuth.page, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
-            info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
-            info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
-            if (resRecebidas.sem_registros) {
-                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                    type: 'execution:stage',
-                    empresa_id: key,
-                    stage: 'nenhuma_recebida',
-                    message: 'Nenhuma nota recebida encontrada…',
-                });
-                info.mensagem = 'Nenhuma nota recebida encontrada…';
-            }
-            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-                type: 'execution:counts',
-                empresa_id: key,
-                qtd_emitidas: info.qtdNotasEmitidas,
-                qtd_recebidas: info.qtdNotasRecebidas,
-                qtd_canceladas: info.qtdNotasCanceladas,
-            });
-        }
-        let resultadoFinal = 'SEM_MOVIMENTO';
-        if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
-            resultadoFinal = 'NFS_ENCONTRADAS';
-        }
-        else if (info.qtdNotasEmitidas > 0) {
-            resultadoFinal = 'NOTAS_EMITIDAS';
-        }
-        else if (info.qtdNotasRecebidas > 0) {
-            resultadoFinal = 'NOTAS_RECEBIDAS';
-        }
+        };
+        persistirMetrica = (status, erroResumo) => {
+            if (!batchId)
+                return;
+            const finishedAt = new Date();
+            const tempoSeg = Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000);
+            (0, automation_metrics_service_1.persistirExecution)({
+                batchId,
+                empresaId,
+                empresaCnpj: cnpj,
+                contabilidadeId,
+                competencia,
+                status,
+                loginMetodo: metodo,
+                qtdEmitidas: info.qtdNotasEmitidas || 0,
+                qtdRecebidas: info.qtdNotasRecebidas || 0,
+                qtdCanceladas: info.qtdNotasCanceladas || 0,
+                tempoExecucaoSegundos: tempoSeg,
+                erroResumo: erroResumo || null,
+                startedAt,
+                finishedAt,
+            }).catch(() => { });
+        };
         (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
             type: 'execution:stage',
             empresa_id: key,
-            stage: 'finalizando',
-            message: 'Finalizando…',
+            stage: 'abrir_navegador',
+            message: 'Abrindo navegador…',
         });
-        info.mensagem = 'Finalizando…';
-        info.status = 'concluido';
-        info.progresso = 100;
-        info.mensagem = 'Execução concluída com sucesso';
-        info.resultadoFinal = resultadoFinal;
-        adicionarLog('Execução concluída com sucesso');
-        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-            type: 'execution:finished',
-            empresa_id: key,
-            status: 'OK',
-            qtd_emitidas: info.qtdNotasEmitidas,
-            qtd_recebidas: info.qtdNotasRecebidas,
-            qtd_canceladas: info.qtdNotasCanceladas,
-        });
+        logWorker(empresaId, 'launching browser');
+        info.status = 'em_execucao';
+        info.etapaAtual = 'autenticacao';
+        info.progresso = 10;
+        info.mensagem = 'Abrindo navegador…';
         await execucoesRepo.atualizar(execucaoDbId, {
-            status: 'concluido',
-            etapaAtual: 'finalizacao',
-            progresso: 100,
-            mensagem: info.mensagem,
-            dataFim: new Date(),
-            qtdNotasEmitidas: info.qtdNotasEmitidas,
-            qtdNotasRecebidas: info.qtdNotasRecebidas,
-            resultadoFinal,
+            status: 'em_execucao',
+            etapaAtual: 'autenticacao',
+            dataInicio: new Date(),
         });
+        let resultadoAuth;
+        try {
+            if (tipoAutenticacao === 'credenciais') {
+                const credencial = await credenciaisRepo.obterPrimeiraPorEmpresa(empresaId);
+                if (!credencial) {
+                    const err = `Nenhuma credencial encontrada para a empresa (CNPJ ${cnpj})`;
+                    adicionarLog(`ERRO: ${err}`);
+                    info.status = 'falhou';
+                    info.mensagem = err;
+                    info.resultadoFinal = 'ERRO';
+                    return;
+                }
+                const senha = credenciaisRepo.descriptografarSenha(credencial);
+                const documento = credencial.usuario || cnpj;
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'login',
+                    message: 'Fazendo login…',
+                });
+                info.mensagem = 'Fazendo login…';
+                adicionarLog('Chamando autenticação via credencial...');
+                const config = await settingsRepo.obterConfiguracoes();
+                const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
+                const viewport = resolveViewport(config);
+                resultadoAuth = await (0, login_credencial_nfse_1.abrirDashboardNfseComCredencial)(documento, senha, {
+                    headless,
+                    timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
+                    viewport,
+                    onLoginPageReady,
+                });
+            }
+            else {
+                let certificado;
+                if (certificadoFornecido) {
+                    certificado = certificadoFornecido;
+                }
+                else if (certificateLoader) {
+                    certificado = await certificateLoader(cnpj);
+                }
+                else {
+                    const err = 'CertificateService não configurado. Execute a Etapa 5.2 da migração.';
+                    adicionarLog(`ERRO: ${err}`);
+                    info.status = 'falhou';
+                    info.mensagem = err;
+                    info.resultadoFinal = 'ERRO';
+                    return;
+                }
+                const config = await settingsRepo.obterConfiguracoes();
+                const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
+                const viewport = resolveViewport(config);
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'login',
+                    message: 'Fazendo login…',
+                });
+                info.mensagem = 'Fazendo login…';
+                adicionarLog('Chamando autenticação via certificado...');
+                resultadoAuth = await (0, playwright_nfse_1.abrirDashboardNfse)(certificado, {
+                    headless,
+                    timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
+                    viewport,
+                    onLoginPageReady,
+                });
+            }
+            logWorker(empresaId, 'browser launched');
+            const config = await settingsRepo.obterConfiguracoes();
+            if (!resultadoAuth.sucesso) {
+                throw new playwright_nfse_1.NFSeAutenticacaoError(resultadoAuth.mensagem || 'Falha na autenticação');
+            }
+            if (!resultadoAuth.page) {
+                throw new Error('Página do navegador não foi criada corretamente');
+            }
+            const auth = resultadoAuth;
+            const page = auth.page;
+            info.page = page;
+            info.browser = auth.browser;
+            for (const logMsg of auth.logs)
+                adicionarLog(logMsg);
+            info.progresso = 30;
+            info.mensagem = 'Autenticação concluída.';
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'auth_ok',
+                message: 'Autenticação concluída.',
+            });
+            if (config?.minActionDelayMs) {
+                (0, processar_notas_competencia_1.setMinActionDelayMs)(config.minActionDelayMs);
+            }
+            const basePathRaw = config?.downloadsBasePath ?? './downloads';
+            const basePath = (0, path_resolve_1.resolveStoragePath)(basePathRaw);
+            const nomeEmpresa = await obterNomeEmpresa(cnpj);
+            const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
+            const nomeContabilidade = empresaComContab?.contabilidade?.nomeContabilidade?.trim() ?? 'Sem contabilidade';
+            const agora = new Date();
+            const mesExecucaoExtenso = (0, download_manager_1.formatarMesExecucaoParaPasta)(agora.getFullYear(), agora.getMonth() + 1);
+            info.etapaAtual = 'processamento_emitidas';
+            info.progresso = 40;
+            adicionarLog(`Processando notas (${tipo})...`);
+            if (tipo === 'ambas' || tipo === 'emitidas') {
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'acessar_emitidas',
+                    message: 'Acessando notas emitidas…',
+                });
+                info.mensagem = 'Acessando notas emitidas…';
+                const menuEmitidas = page.locator('li:nth-of-type(3) img').nth(0);
+                await menuEmitidas.click();
+                await page.waitForURL('**/Notas/Emitidas', { timeout: 15000 });
+                await page.waitForLoadState('networkidle', { timeout: 15000 });
+                await page.waitForTimeout(1000);
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'pesquisar_emitidas',
+                    message: 'Pesquisando notas emitidas…',
+                });
+                info.mensagem = 'Pesquisando notas emitidas…';
+                await (0, processar_notas_competencia_2.preencherDatasEFiltrar)(page, dataInicio, dataFim);
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'baixar_emitidas',
+                    message: 'Baixando notas emitidas…',
+                });
+                info.mensagem = 'Baixando notas emitidas…';
+                const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
+                info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
+                info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
+                if (resEmitidas.sem_registros) {
+                    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                        type: 'execution:stage',
+                        empresa_id: key,
+                        stage: 'nenhuma_emitida',
+                        message: 'Nenhuma nota emitida encontrada — avançando…',
+                    });
+                    info.mensagem = 'Nenhuma nota emitida encontrada — avançando…';
+                }
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:counts',
+                    empresa_id: key,
+                    qtd_emitidas: info.qtdNotasEmitidas,
+                    qtd_recebidas: info.qtdNotasRecebidas,
+                    qtd_canceladas: info.qtdNotasCanceladas,
+                });
+            }
+            if (tipo === 'ambas' || tipo === 'recebidas') {
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'acessar_recebidas',
+                    message: 'Acessando notas recebidas…',
+                });
+                info.mensagem = 'Acessando notas recebidas…';
+                const menuRecebidas = page.locator('li:nth-of-type(4) img').nth(0);
+                await menuRecebidas.click();
+                await page.waitForURL('**/Notas/Recebidas', { timeout: 15000 });
+                await page.waitForLoadState('networkidle', { timeout: 15000 });
+                await page.waitForTimeout(1000);
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'pesquisar_recebidas',
+                    message: 'Pesquisando notas recebidas…',
+                });
+                info.mensagem = 'Pesquisando notas recebidas…';
+                await (0, processar_notas_competencia_2.preencherDatasEFiltrar)(page, dataInicio, dataFim);
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'baixar_recebidas',
+                    message: 'Baixando notas recebidas…',
+                });
+                info.mensagem = 'Baixando notas recebidas…';
+                const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
+                info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
+                info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
+                if (resRecebidas.sem_registros) {
+                    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                        type: 'execution:stage',
+                        empresa_id: key,
+                        stage: 'nenhuma_recebida',
+                        message: 'Nenhuma nota recebida encontrada…',
+                    });
+                    info.mensagem = 'Nenhuma nota recebida encontrada…';
+                }
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:counts',
+                    empresa_id: key,
+                    qtd_emitidas: info.qtdNotasEmitidas,
+                    qtd_recebidas: info.qtdNotasRecebidas,
+                    qtd_canceladas: info.qtdNotasCanceladas,
+                });
+            }
+            let resultadoFinal = 'SEM_MOVIMENTO';
+            if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
+                resultadoFinal = 'NFS_ENCONTRADAS';
+            }
+            else if (info.qtdNotasEmitidas > 0) {
+                resultadoFinal = 'NOTAS_EMITIDAS';
+            }
+            else if (info.qtdNotasRecebidas > 0) {
+                resultadoFinal = 'NOTAS_RECEBIDAS';
+            }
+            logWorker(empresaId, 'DOWNLOADS DONE');
+            (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                type: 'execution:stage',
+                empresa_id: key,
+                stage: 'finalizando',
+                message: 'Finalizando…',
+            });
+            info.mensagem = 'Finalizando…';
+            info.status = 'concluido';
+            info.progresso = 100;
+            info.mensagem = 'Execução concluída com sucesso';
+            info.resultadoFinal = resultadoFinal;
+            adicionarLog('Execução concluída com sucesso');
+        }
+        catch (e) {
+            const err = e;
+            const msg = err.message || 'Erro desconhecido';
+            adicionarLog(`ERRO: ${msg}`);
+            info.status = 'falhou';
+            info.mensagem = msg;
+            info.resultadoFinal = 'ERRO';
+        }
+        finally {
+            const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
+            const resultadoFinal = info.resultadoFinal ?? 'ERRO';
+            await finalizarExecucao({
+                execucaoId: execucaoDbId,
+                empresaId,
+                cnpj,
+                batchId,
+                statusFinal,
+                message: info.mensagem || (statusFinal === 'falhou' ? 'Erro desconhecido' : 'Concluído'),
+                contagens: {
+                    emitidas: info.qtdNotasEmitidas,
+                    recebidas: info.qtdNotasRecebidas,
+                    canceladas: info.qtdNotasCanceladas,
+                },
+                resultado_final: resultadoFinal,
+                page: info.page,
+                browser: info.browser,
+                startedAt,
+                persistirMetrica,
+            });
+        }
     }
-    catch (e) {
-        const err = e;
-        const msg = err.message || 'Erro desconhecido';
-        adicionarLog(`ERRO: ${msg}`);
-        const msgResumo = msg.length > 80 ? msg.slice(0, 77) + '...' : msg;
-        (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
-            type: 'execution:finished',
-            empresa_id: key,
-            status: 'ERRO',
-            message: msgResumo,
-        });
+    catch (outerErr) {
+        const err = outerErr;
+        logger.error({ err, empresaId, execucaoDbId }, '[worker] Erro antes do fluxo principal');
         info.status = 'falhou';
-        info.mensagem = msg;
-        await execucoesRepo.atualizar(execucaoDbId, {
-            status: 'falhou',
-            mensagemErro: msg.slice(0, 500),
-            dataFim: new Date(),
-        });
+        info.mensagem = err.message || 'Erro inesperado';
+        info.resultadoFinal = 'ERRO';
     }
     finally {
-        try {
-            if (info.page)
-                await info.page.close().catch(() => { });
-            if (info.browser)
-                await info.browser.close().catch(() => { });
-        }
-        catch {
-            /* ignore */
-        }
-        const statusFinal = info.status === 'concluido' ? 'OK' : 'ERRO';
-        persistirMetrica(statusFinal, statusFinal === 'ERRO' ? (info.mensagem?.slice(0, 200) ?? undefined) : undefined);
-        execucoesAtivas.delete(key);
+        const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
+        const resultadoFinal = info.resultadoFinal ?? 'ERRO';
+        await finalizarExecucao({
+            execucaoId: execucaoDbId,
+            empresaId,
+            cnpj,
+            batchId,
+            statusFinal,
+            message: info.mensagem || (statusFinal === 'falhou' ? 'Erro desconhecido' : 'Concluído'),
+            contagens: {
+                emitidas: info.qtdNotasEmitidas,
+                recebidas: info.qtdNotasRecebidas,
+                canceladas: info.qtdNotasCanceladas,
+            },
+            resultado_final: resultadoFinal,
+            page: info.page,
+            browser: info.browser,
+            startedAt,
+            persistirMetrica,
+        });
     }
 }
 //# sourceMappingURL=execution-service.js.map

@@ -45,7 +45,7 @@ router.post('/:cnpj/abrir', async (req: Request, res: Response) => {
 
     const resultado = await abrirDashboardNfse(certificado, {
       headless,
-      timeout: 30000,
+      timeout: 60000,
     });
 
     res.json({

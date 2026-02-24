@@ -31,6 +31,8 @@ export interface OpcoesContexto {
         width: number;
         height: number;
     };
+    /** Chamado quando a tela de login está pronta (após page.goto, antes do clique) */
+    onLoginPageReady?: () => void;
 }
 /**
  * Cria um contexto do navegador Chromium configurado para usar certificado A1.
@@ -54,5 +56,6 @@ export declare function abrirDashboardNfse(certificado: CertificadoEmMemoria, op
         width: number;
         height: number;
     };
+    onLoginPageReady?: () => void;
 }): Promise<ResultadoAutenticacao>;
 //# sourceMappingURL=playwright-nfse.d.ts.map

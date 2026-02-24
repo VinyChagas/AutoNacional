@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PORT = exports.QUEUE_TIMEOUT = exports.PLAYWRIGHT_HEADLESS = exports.PLAYWRIGHT_TIMEOUT = exports.CORS_ORIGINS = exports.INTERNAL_API_KEY = exports.SUPABASE_ISSUER = exports.SUPABASE_AUDIENCE = exports.SUPABASE_JWKS_URL = exports.SUPABASE_SERVICE_ROLE_KEY = exports.SUPABASE_URL = exports.APP_CRED_KEY = exports.DATABASE_URL = exports.CERT_STORAGE_BUCKET = exports.CRYPTO_KEY = exports.FERNET_KEY = exports.CERTIFICATES_DIR = exports.BACKEND_DIR = void 0;
+exports.PORT = exports.MAX_CONCURRENCY_CAP = exports.QUEUE_TIMEOUT = exports.PLAYWRIGHT_HEADLESS = exports.PLAYWRIGHT_TIMEOUT = exports.CORS_ORIGINS = exports.INTERNAL_API_KEY = exports.SUPABASE_ISSUER = exports.SUPABASE_AUDIENCE = exports.SUPABASE_JWKS_URL = exports.SUPABASE_SERVICE_ROLE_KEY = exports.SUPABASE_URL = exports.APP_CRED_KEY = exports.DATABASE_URL = exports.CERT_STORAGE_BUCKET = exports.CRYPTO_KEY = exports.FERNET_KEY = exports.CERTIFICATES_DIR = exports.BACKEND_DIR = void 0;
 const dotenv = __importStar(require("dotenv"));
 const path = __importStar(require("path"));
 // Carrega .env a partir do diretório do Backend ou pai
@@ -78,12 +78,14 @@ exports.CORS_ORIGINS = corsOriginsEnv
 // ============================================================================
 // Configurações de execução (Playwright)
 // ============================================================================
-exports.PLAYWRIGHT_TIMEOUT = parseInt(process.env.PLAYWRIGHT_TIMEOUT || '30000', 10);
+exports.PLAYWRIGHT_TIMEOUT = parseInt(process.env.PLAYWRIGHT_TIMEOUT || '60000', 10);
 exports.PLAYWRIGHT_HEADLESS = process.env.PLAYWRIGHT_HEADLESS?.toLowerCase() === 'true';
 // ============================================================================
 // Fila de execução
 // ============================================================================
 exports.QUEUE_TIMEOUT = parseInt(process.env.QUEUE_TIMEOUT || '60', 10);
+/** Cap máximo de concorrência em batch. User pode configurar 60+; este limita para evitar sobrecarga. */
+exports.MAX_CONCURRENCY_CAP = parseInt(process.env.MAX_CONCURRENCY_CAP || '8', 10);
 // ============================================================================
 // Servidor
 // ============================================================================
