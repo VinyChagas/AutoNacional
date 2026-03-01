@@ -124,18 +124,14 @@ async function obterDelayEnfileiramento() {
     return config?.browserLaunchDelayMs ?? BROWSER_LAUNCH_DELAY_MS_DEFAULT;
 }
 /**
- * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, cap, totalEmpresas).
- * Se userConfigured for alto (ex: 60), aplica cap e loga aviso.
+ * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, totalEmpresas).
+ * Respeita sempre a configuração do usuário (Máx. Navegadores Concorrentes e Padrão de Navegadores).
  */
 async function configurarConcorrenciaParaBatch(totalEmpresas) {
     const config = await settingsRepo.obterConfiguracoes();
     const userConfigured = config?.defaultConcurrentBrowsers ?? 3;
     const maxFromSettings = config?.maxConcurrentBrowsers ?? 5;
-    let limite = Math.min(userConfigured, maxFromSettings);
-    if (limite > config_1.MAX_CONCURRENCY_CAP) {
-        logger.warn({ userConfigured, maxFromSettings, cap: config_1.MAX_CONCURRENCY_CAP }, 'Concorrência configurada muito alta; aplicando cap para evitar sobrecarga');
-        limite = config_1.MAX_CONCURRENCY_CAP;
-    }
+    const limite = Math.min(userConfigured, maxFromSettings);
     const concurrencyFinal = Math.min(limite, totalEmpresas);
     fila.concurrency = concurrencyFinal;
     return concurrencyFinal;

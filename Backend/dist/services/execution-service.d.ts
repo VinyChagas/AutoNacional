@@ -21,8 +21,8 @@ export declare function obterCertificadoPorCnpj(cnpj: string): Promise<Certifica
  */
 export declare function obterDelayEnfileiramento(): Promise<number>;
 /**
- * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, cap, totalEmpresas).
- * Se userConfigured for alto (ex: 60), aplica cap e loga aviso.
+ * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, totalEmpresas).
+ * Respeita sempre a configuração do usuário (Máx. Navegadores Concorrentes e Padrão de Navegadores).
  */
 export declare function configurarConcorrenciaParaBatch(totalEmpresas: number): Promise<number>;
 /**

@@ -456,8 +456,14 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.execucoes.filter((e) => e.status === 'falhou').length;
   }
 
+  /** Empresas aguardando na fila (ainda não iniciaram) */
+  get filaRestante(): number {
+    return this.executionRows.filter((r) => r.status === 'FILA').length;
+  }
+
+  /** Empresas em execução (navegadores abertos) */
   get totalEmExecucao(): number {
-    return this.executionRows.filter((r) => r.status === 'EM_EXECUCAO' || r.status === 'FILA').length;
+    return this.executionRows.filter((r) => r.status === 'EM_EXECUCAO').length;
   }
 
   get percentualFinalizado(): number {
