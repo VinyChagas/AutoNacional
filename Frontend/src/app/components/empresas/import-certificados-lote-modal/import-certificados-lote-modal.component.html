@@ -117,7 +117,7 @@
               type="text"
               [(ngModel)]="busca"
               class="import-search"
-              placeholder="Buscar por CNPJ ou Razão Social"
+              placeholder="Buscar por arquivo, CNPJ ou Razão Social"
             />
           </div>
 
@@ -127,6 +127,7 @@
               <thead>
                 <tr>
                   <th>Status</th>
+                  <th>Arquivo</th>
                   <th>CNPJ</th>
                   <th>Senha</th>
                   <th class="th-actions">Ações</th>
@@ -146,22 +147,35 @@
                         {{ getStatusLabel(item.status) }}
                       </span>
                     </td>
+                    <td class="td-filename" title="{{ item.filename }}">
+                      {{ item.filename }}
+                    </td>
                     <td class="td-mono">
-                      {{ item.cnpj ? formatarCNPJ(item.cnpj) : item.filename }}
+                      {{ item.cnpj ? formatarCNPJ(item.cnpj) : '-' }}
                     </td>
                     <td>
                       <input
                         type="password"
                         [(ngModel)]="item.senha"
                         class="import-input import-input-senha"
-                        placeholder="Senha"
-                        [disabled]="item.status === 'IMPORTANDO'"
+                        [placeholder]="item.status === 'ERRO' ? 'Digite outra senha e clique em Retentar' : 'Senha'"
+                        [disabled]="item.status === 'IMPORTANDO' || !!item.validating"
                         autocomplete="off"
                       />
                     </td>
                     <td class="td-actions">
-                      @if (item.status === 'IMPORTANDO') {
+                      @if (item.status === 'IMPORTANDO' || !!item.validating) {
                         <span class="import-spinner"></span>
+                      } @else if (item.status === 'ERRO') {
+                        <button
+                          type="button"
+                          class="import-btn-retry"
+                          (click)="onRetentar(item)"
+                          [disabled]="!canRetentar(item)"
+                          title="Validar novamente com a senha digitada"
+                        >
+                          Retentar
+                        </button>
                       } @else if (item.status !== 'IMPORTADO') {
                         <button
                           type="button"
@@ -176,7 +190,7 @@
                   </tr>
                   @if (item.message) {
                     <tr class="import-row-message">
-                      <td colspan="4" class="td-error">{{ item.message }}</td>
+                      <td colspan="5" class="td-error">{{ item.message }}</td>
                     </tr>
                   }
                 }

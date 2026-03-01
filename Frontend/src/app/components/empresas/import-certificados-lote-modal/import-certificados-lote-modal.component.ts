@@ -120,7 +120,8 @@ export class ImportCertificadosLoteModalComponent implements OnChanges {
       list = list.filter(
         (i) =>
           (i.cnpj && i.cnpj.toLowerCase().includes(q)) ||
-          (i.razao_social && i.razao_social.toLowerCase().includes(q))
+          (i.razao_social && i.razao_social.toLowerCase().includes(q)) ||
+          (i.filename && i.filename.toLowerCase().includes(q))
       );
     }
 
@@ -278,6 +279,60 @@ export class ImportCertificadosLoteModalComponent implements OnChanges {
     } catch {
       return false;
     }
+  }
+
+  canRetentar(item: CertificadoLoteItem): boolean {
+    return item.status === 'ERRO' && (item.senha || '').trim().length >= 3;
+  }
+
+  onRetentar(item: CertificadoLoteItem): void {
+    if (item.status !== 'ERRO' || !this.canRetentar(item)) return;
+
+    const senha = (item.senha || '').trim();
+    item.validating = true;
+    item.message = undefined;
+    this.cdr.markForCheck();
+
+    this.empresasService.previewCertificados([item.file], senha).subscribe({
+      next: (r) => {
+        const si = r.items?.[0];
+        if (!si) {
+          item.validating = false;
+          item.message = 'Resposta inválida do servidor';
+          this.cdr.markForCheck();
+          return;
+        }
+
+        const validade = si.data_validade ?? null;
+        const isExpired = this.isValidadeVencida(validade);
+        let status: ItemStatus = 'VALIDO';
+        if (si.acao === 'DUPLICADO') status = 'DUPLICADO';
+        else if (si.acao === 'ERRO') status = 'ERRO';
+        else if (isExpired) status = 'VENCIDO';
+        else status = 'VALIDO';
+
+        Object.assign(item, {
+          cnpj: si.cnpj ?? '',
+          razao_social: si.razao_social ?? '',
+          validade,
+          isExpired,
+          senha,
+          status,
+          message: si.erro,
+          validating: false,
+        });
+        this.cdr.markForCheck();
+
+        if (status !== 'ERRO') {
+          this.toast.success(`Certificado ${item.filename} validado com sucesso`);
+        }
+      },
+      error: (err) => {
+        item.validating = false;
+        item.message = (err as Error)?.message || 'Erro ao validar';
+        this.cdr.markForCheck();
+      },
+    });
   }
 
   onImportar(item: CertificadoLoteItem): void {
