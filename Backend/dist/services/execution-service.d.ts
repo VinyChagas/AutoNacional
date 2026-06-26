@@ -30,7 +30,7 @@ export declare function configurarConcorrenciaParaBatch(totalEmpresas: number): 
  * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
  * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
-export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria, batchId?: string, tipoAutenticacao?: TipoAutenticacao): Promise<number>;
+export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria, batchId?: string, tipoAutenticacao?: TipoAutenticacao, baixarPdf?: boolean): Promise<number>;
 /**
  * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).
  * @param batchId - UUID do batch

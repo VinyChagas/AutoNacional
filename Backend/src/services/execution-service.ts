@@ -83,6 +83,7 @@ interface ExecucaoInfo {
   periodoFim: string;
   tipo: string;
   headless: boolean;
+  baixarPdf: boolean;
   execucaoDbId: number;
   batchId?: string;
   status: string;
@@ -187,7 +188,8 @@ export async function adicionarExecucao(
   headless?: boolean,
   certificado?: CertificadoEmMemoria,
   batchId?: string,
-  tipoAutenticacao?: TipoAutenticacao
+  tipoAutenticacao?: TipoAutenticacao,
+  baixarPdf: boolean = true
 ): Promise<number> {
   const config = await settingsRepo.obterConfiguracoes();
   const headlessFinal = headless ?? config?.headless ?? PLAYWRIGHT_HEADLESS;
@@ -210,6 +212,7 @@ export async function adicionarExecucao(
     periodoFim: dataFim,
     tipo: tipo || 'ambas',
     headless: headlessFinal,
+    baixarPdf,
     execucaoDbId: exec.id,
     batchId,
     status: 'pendente',
@@ -239,7 +242,8 @@ export async function adicionarExecucao(
       headlessFinal,
       exec.id,
       certificado,
-      tipoAuth
+      tipoAuth,
+      baixarPdf
     );
     } catch (e) {
       logger.error({ err: e, empresaId }, '[worker] Erro não tratado em executarFluxoCompleto');
@@ -466,7 +470,8 @@ async function executarFluxoCompleto(
   headless: boolean,
   execucaoDbId: number,
   certificadoFornecido?: CertificadoEmMemoria,
-  tipoAutenticacao: TipoAutenticacao = 'certificado'
+  tipoAutenticacao: TipoAutenticacao = 'certificado',
+  baixarPdf: boolean = true
 ): Promise<void> {
   const key = String(empresaId);
   const info = execucoesAtivas.get(key);
@@ -691,7 +696,8 @@ async function executarFluxoCompleto(
         basePath,
         nomeContabilidade,
         mesExecucaoExtenso,
-        nomeEmpresa
+        nomeEmpresa,
+        baixarPdf
       );
       info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
       info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
@@ -748,7 +754,8 @@ async function executarFluxoCompleto(
         basePath,
         nomeContabilidade,
         mesExecucaoExtenso,
-        nomeEmpresa
+        nomeEmpresa,
+        baixarPdf
       );
       info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
       info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;

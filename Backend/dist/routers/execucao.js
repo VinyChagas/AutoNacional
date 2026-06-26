@@ -108,6 +108,7 @@ router.post('/multiplas', async (req, res) => {
         const dataFim = body.dataFim;
         const tipo = body.tipo || 'ambas';
         const headless = body.headless ?? false;
+        const baixarPdf = body.baixarPdf ?? true;
         const contabilidadeId = body.contabilidade_id != null && body.contabilidade_id > 0 ? body.contabilidade_id : null;
         if (empresas.length === 0) {
             res.status(400).json({ detail: 'Lista de empresas não pode estar vazia' });
@@ -189,7 +190,7 @@ router.post('/multiplas', async (req, res) => {
             });
         }
         const primeiro = validos[0];
-        const execucaoId = await (0, execution_service_1.adicionarExecucao)(primeiro.empresaId, primeiro.cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, primeiro.tipoAuth);
+        const execucaoId = await (0, execution_service_1.adicionarExecucao)(primeiro.empresaId, primeiro.cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, primeiro.tipoAuth, baixarPdf);
         const status = (0, execution_service_1.obterStatus)(String(primeiro.empresaId));
         logger.debug(`[producer] enfileirou empresa ${primeiro.empresaId} (1/${validos.length})`);
         const execucoes = validos.map((v, idx) => {
@@ -228,7 +229,7 @@ router.post('/multiplas', async (req, res) => {
                 await (0, sleep_1.sleep)(delayMs);
                 const { empresaId, cnpj, tipoAuth } = validos[i];
                 try {
-                    await (0, execution_service_1.adicionarExecucao)(empresaId, cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, tipoAuth);
+                    await (0, execution_service_1.adicionarExecucao)(empresaId, cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, tipoAuth, baixarPdf);
                     logger.debug(`[producer] enfileirou empresa ${empresaId} (${i + 1}/${validos.length})`);
                 }
                 catch (e) {
@@ -285,6 +286,7 @@ router.post('/:empresa_id', async (req, res) => {
         const dataFim = String(req.query.dataFim || req.body?.dataFim || '');
         const tipo = String(req.query.tipo || req.body?.tipo || 'ambas');
         const headless = req.query.headless === 'true' || req.body?.headless === true;
+        const baixarPdf = !(req.query.baixarPdf === 'false' || req.body?.baixarPdf === false);
         if (!dataInicio || !dataFim) {
             res.status(400).json({
                 detail: 'dataInicio e dataFim são obrigatórios (formato DD/MM/YYYY)',
@@ -319,7 +321,7 @@ router.post('/:empresa_id', async (req, res) => {
             res.status(400).json({ detail: 'Empresa não possui CNPJ cadastrado' });
             return;
         }
-        const execucaoId = await (0, execution_service_1.adicionarExecucao)(empresa.id, cnpj, dataInicio, dataFim, tipo, headless);
+        const execucaoId = await (0, execution_service_1.adicionarExecucao)(empresa.id, cnpj, dataInicio, dataFim, tipo, headless, undefined, undefined, undefined, baixarPdf);
         const status = (0, execution_service_1.obterStatus)(String(empresa.id));
         res.status(202).json({
             id: execucaoId,

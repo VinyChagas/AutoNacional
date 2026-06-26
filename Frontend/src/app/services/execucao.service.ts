@@ -131,6 +131,7 @@ export interface MultiplasExecucoesRequest {
   dataFim: string;
   tipo: string;
   headless: boolean;
+  baixarPdf: boolean; // true = XML + PDF (DANFS-e); false = apenas XML
   contabilidade_id?: number | null;
 }
 

@@ -162,7 +162,7 @@ async function obterNomeEmpresa(cnpj) {
  * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
  * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
-async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, headless, certificado, batchId, tipoAutenticacao) {
+async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, headless, certificado, batchId, tipoAutenticacao, baixarPdf = true) {
     const config = await settingsRepo.obterConfiguracoes();
     const headlessFinal = headless ?? config?.headless ?? config_1.PLAYWRIGHT_HEADLESS;
     const exec = await execucoesRepo.criar({
@@ -180,6 +180,7 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
         periodoFim: dataFim,
         tipo: tipo || 'ambas',
         headless: headlessFinal,
+        baixarPdf,
         execucaoDbId: exec.id,
         batchId,
         status: 'pendente',
@@ -198,7 +199,7 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
     }
     fila.add(async () => {
         try {
-            await executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo || 'ambas', headlessFinal, exec.id, certificado, tipoAuth);
+            await executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo || 'ambas', headlessFinal, exec.id, certificado, tipoAuth, baixarPdf);
         }
         catch (e) {
             logger.error({ err: e, empresaId }, '[worker] Erro não tratado em executarFluxoCompleto');
@@ -369,7 +370,7 @@ async function finalizarExecucao(params) {
         }
     }
 }
-async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo, headless, execucaoDbId, certificadoFornecido, tipoAutenticacao = 'certificado') {
+async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo, headless, execucaoDbId, certificadoFornecido, tipoAutenticacao = 'certificado', baixarPdf = true) {
     const key = String(empresaId);
     const info = execucoesAtivas.get(key);
     if (!info)
@@ -571,7 +572,7 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                     message: 'Baixando notas emitidas…',
                 });
                 info.mensagem = 'Baixando notas emitidas…';
-                const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
+                const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, baixarPdf);
                 info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
                 info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
                 if (resEmitidas.sem_registros) {
@@ -619,7 +620,7 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                     message: 'Baixando notas recebidas…',
                 });
                 info.mensagem = 'Baixando notas recebidas…';
-                const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa);
+                const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, baixarPdf);
                 info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
                 info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
                 if (resRecebidas.sem_registros) {

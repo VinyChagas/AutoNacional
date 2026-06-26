@@ -87,6 +87,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       dataFim?: string;
       tipo?: string;
       headless?: boolean;
+      baixarPdf?: boolean;
       contabilidade_id?: number | null;
     };
     const empresas = body.empresas || [];
@@ -94,6 +95,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
     const dataFim = body.dataFim;
     const tipo = body.tipo || 'ambas';
     const headless = body.headless ?? false;
+    const baixarPdf = body.baixarPdf ?? true;
     const contabilidadeId = body.contabilidade_id != null && body.contabilidade_id > 0 ? body.contabilidade_id : null;
 
     if (empresas.length === 0) {
@@ -190,7 +192,8 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       headless,
       undefined,
       batchId,
-      primeiro.tipoAuth
+      primeiro.tipoAuth,
+      baixarPdf
     );
     const status = obterStatus(String(primeiro.empresaId));
 
@@ -243,7 +246,8 @@ router.post('/multiplas', async (req: Request, res: Response) => {
             headless,
             undefined,
             batchId,
-            tipoAuth
+            tipoAuth,
+            baixarPdf
           );
           logger.debug(`[producer] enfileirou empresa ${empresaId} (${i + 1}/${validos.length})`);
         } catch (e) {
@@ -302,6 +306,9 @@ router.post('/:empresa_id', async (req: Request, res: Response) => {
     const tipo = String(req.query.tipo || req.body?.tipo || 'ambas');
     const headless =
       req.query.headless === 'true' || req.body?.headless === true;
+    const baixarPdf = !(
+      req.query.baixarPdf === 'false' || req.body?.baixarPdf === false
+    );
 
     if (!dataInicio || !dataFim) {
       res.status(400).json({
@@ -346,7 +353,11 @@ router.post('/:empresa_id', async (req: Request, res: Response) => {
       dataInicio,
       dataFim,
       tipo,
-      headless
+      headless,
+      undefined,
+      undefined,
+      undefined,
+      baixarPdf
     );
 
     const status = obterStatus(String(empresa.id));

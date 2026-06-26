@@ -165,6 +165,12 @@
           </select>
         </div>
         <div class="field-group field-group-checkbox">
+          <label class="checkbox-wrap" title="Marcado: baixa XML + PDF (DANFS-e). Desmarcado: baixa somente o XML.">
+            <input type="checkbox" id="baixarPdf" [(ngModel)]="baixarPdf" class="checkbox-input" />
+            <span>Baixar PDF (DANFS-e)</span>
+          </label>
+        </div>
+        <div class="field-group field-group-checkbox">
           <label class="checkbox-wrap">
             <input type="checkbox" id="headless" [(ngModel)]="headlessMode" class="checkbox-input" />
             <span>Modo Headless</span>

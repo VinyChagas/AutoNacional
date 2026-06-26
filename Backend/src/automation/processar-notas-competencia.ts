@@ -132,9 +132,10 @@ async function verificarNotaValida(rowLocator: Locator): Promise<{ valida: boole
 }
 
 /**
- * Baixa XML e DANFS-e de uma linha da tabela.
+ * Baixa XML e (opcionalmente) DANFS-e de uma linha da tabela.
  * Usa nomeContabilidade e mesExecucaoExtenso para a estrutura de pastas (não a competência da nota).
  * basePath deve ser único por execução/empresa para evitar sobreposição em lote.
+ * @param baixarPdf - quando false, baixa apenas o XML (pula o DANFS-e/PDF).
  */
 async function baixarArquivosDaLinha(
   page: Page,
@@ -143,7 +144,8 @@ async function baixarArquivosDaLinha(
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
   nomeEmpresa: string,
-  tipoNota: 'Emitidas' | 'Recebidas'
+  tipoNota: 'Emitidas' | 'Recebidas',
+  baixarPdf: boolean = true
 ): Promise<void> {
   const colunaAcoesIdx = tipoNota === 'Emitidas' ? 6 : 5;
   const celulas = rowLocator.locator('td');
@@ -190,28 +192,30 @@ async function baixarArquivosDaLinha(
     }
   }
 
-  await iconeAcoes.click();
-  await page.waitForTimeout(_minActionDelayMs);
-  await iconeAcoes.click();
-  await menuSuspenso.waitFor({ state: 'visible', timeout: 3000 });
+  if (baixarPdf) {
+    await iconeAcoes.click();
+    await page.waitForTimeout(_minActionDelayMs);
+    await iconeAcoes.click();
+    await menuSuspenso.waitFor({ state: 'visible', timeout: 3000 });
 
-  try {
-    let linkPdf = page.getByRole('link', { name: 'Download DANFS-e' });
-    if ((await linkPdf.count()) === 0) {
-      linkPdf = menuSuspenso.locator('a:has-text("DANFS-e")');
-    }
-    const [downloadPdf] = await Promise.all([
-      page.waitForEvent('download', { timeout: DOWNLOAD_TIMEOUT_MS }),
-      linkPdf.nth(0).click({ timeout: DOWNLOAD_TIMEOUT_MS }),
-    ]);
-    await salvarDownloadDireto(downloadPdf, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
-  } catch (e) {
-    const err = e as Error;
-    const isTimeout = err.name === 'TimeoutError' || /timeout/i.test(err.message);
-    if (isTimeout) {
-      logger.debug({ err: e }, 'Timeout ao baixar DANFS-e (arquivo ignorado, execução continua)');
-    } else {
-      logger.warn({ err: e }, 'Erro ao baixar DANFS-e');
+    try {
+      let linkPdf = page.getByRole('link', { name: 'Download DANFS-e' });
+      if ((await linkPdf.count()) === 0) {
+        linkPdf = menuSuspenso.locator('a:has-text("DANFS-e")');
+      }
+      const [downloadPdf] = await Promise.all([
+        page.waitForEvent('download', { timeout: DOWNLOAD_TIMEOUT_MS }),
+        linkPdf.nth(0).click({ timeout: DOWNLOAD_TIMEOUT_MS }),
+      ]);
+      await salvarDownloadDireto(downloadPdf, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
+    } catch (e) {
+      const err = e as Error;
+      const isTimeout = err.name === 'TimeoutError' || /timeout/i.test(err.message);
+      if (isTimeout) {
+        logger.debug({ err: e }, 'Timeout ao baixar DANFS-e (arquivo ignorado, execução continua)');
+      } else {
+        logger.warn({ err: e }, 'Erro ao baixar DANFS-e');
+      }
     }
   }
 
@@ -227,7 +231,8 @@ export async function processarTabelaEmitidas(
   basePath: string,
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
-  nomeEmpresa: string
+  nomeEmpresa: string,
+  baixarPdf: boolean = true
 ): Promise<{ qtd_baixadas: number; qtd_canceladas: number; sem_registros: boolean; encontrou_notas: boolean }> {
   if (await verificarSemRegistros(page)) {
     return { qtd_baixadas: 0, qtd_canceladas: 0, sem_registros: true, encontrou_notas: false };
@@ -251,7 +256,7 @@ export async function processarTabelaEmitidas(
         const { valida, cancelada } = await verificarNotaValida(linha);
         if (cancelada) qtdCanceladas++;
         if (valida) {
-          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Emitidas');
+          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Emitidas', baixarPdf);
           qtdBaixadas++;
         }
       } catch (e) {
@@ -276,7 +281,8 @@ export async function processarTabelaRecebidas(
   basePath: string,
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
-  nomeEmpresa: string
+  nomeEmpresa: string,
+  baixarPdf: boolean = true
 ): Promise<{ qtd_baixadas: number; qtd_canceladas: number; sem_registros: boolean; encontrou_notas: boolean }> {
   if (await verificarSemRegistros(page)) {
     return { qtd_baixadas: 0, qtd_canceladas: 0, sem_registros: true, encontrou_notas: false };
@@ -300,7 +306,7 @@ export async function processarTabelaRecebidas(
         const { valida, cancelada } = await verificarNotaValida(linha);
         if (cancelada) qtdCanceladas++;
         if (valida) {
-          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Recebidas');
+          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Recebidas', baixarPdf);
           qtdBaixadas++;
         }
       } catch (e) {

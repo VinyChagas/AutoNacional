@@ -21,7 +21,7 @@ export declare function verificarSemRegistros(page: Page): Promise<boolean>;
  * Processa a tabela de notas emitidas.
  * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
-export declare function processarTabelaEmitidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string): Promise<{
+export declare function processarTabelaEmitidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string, baixarPdf?: boolean): Promise<{
     qtd_baixadas: number;
     qtd_canceladas: number;
     sem_registros: boolean;
@@ -31,7 +31,7 @@ export declare function processarTabelaEmitidas(page: Page, basePath: string, no
  * Processa a tabela de notas recebidas.
  * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
-export declare function processarTabelaRecebidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string): Promise<{
+export declare function processarTabelaRecebidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string, baixarPdf?: boolean): Promise<{
     qtd_baixadas: number;
     qtd_canceladas: number;
     sem_registros: boolean;

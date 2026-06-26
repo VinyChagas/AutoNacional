@@ -71,6 +71,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   dataInicio: string = ''; // Formato DD/MM/YYYY (ex: 01/12/2025)
   dataFim: string = ''; // Formato DD/MM/YYYY (ex: 31/12/2025)
   tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
+  baixarPdf = true; // true = XML + PDF (DANFS-e); false = apenas XML
 
   // Formata data enquanto o usuário digita (DD/MM/YYYY)
   formatarData(event: Event, tipo: 'inicio' | 'fim') {
@@ -750,6 +751,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         dataFim: this.dataFim,
         tipo: this.tipoNotas,
         headless: this.headlessMode,
+        baixarPdf: this.baixarPdf,
         contabilidade_id: this.contabilidadeSelecionada ?? undefined,
       };
 
