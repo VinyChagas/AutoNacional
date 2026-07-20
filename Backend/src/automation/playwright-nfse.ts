@@ -74,9 +74,18 @@ export async function criarContextoComCertificado(
     userAgent:
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     acceptDownloads: true,
+    // O login por certificado faz o handshake mTLS em certificado.nfse.gov.br,
+    // que é um subdomínio diferente de www.nfse.gov.br. É preciso registrar o
+    // certificado para AMBAS as origins, senão o IIS retorna 403 Forbidden ao
+    // navegar para o domínio de autenticação.
     clientCertificates: [
       {
         origin: 'https://www.nfse.gov.br',
+        pfx: certificado.pfx,
+        passphrase: certificado.passphrase,
+      },
+      {
+        origin: 'https://certificado.nfse.gov.br',
         pfx: certificado.pfx,
         passphrase: certificado.passphrase,
       },

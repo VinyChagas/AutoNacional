@@ -54,6 +54,23 @@ export declare function montarCaminhoCompleto(basePath: string, nomeContabilidad
  * Estrutura: {base}/{contabilidade}/{mes_extenso}-{ano}/{empresa}/{tipo}/
  */
 export declare function salvarDownloadDireto(download: Download, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, empresa: string, tipoNota: string, nomeArquivoPrefixo?: string): Promise<string>;
+export interface FileValidationResult {
+    valid: boolean;
+    path?: string;
+    reason?: string;
+    size?: number;
+}
+/**
+ * Valida arquivo baixado (existência, tamanho e assinatura mínima XML/PDF).
+ */
+export declare function validarArquivoBaixado(filePath: string, tipoArquivo: 'xml' | 'pdf'): Promise<FileValidationResult>;
+/** Remove arquivo inválido (best-effort) antes de retry. */
+export declare function removerArquivoInvalido(filePath: string): Promise<void>;
+/**
+ * Procura arquivo válido já existente na pasta destino (idempotência).
+ * Usa prefixo do número da nota e extensão esperada.
+ */
+export declare function localizarArquivoExistenteValido(basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, empresa: string, tipoNota: string, tipoArquivo: 'xml' | 'pdf', nomeArquivoPrefixo?: string): Promise<FileValidationResult>;
 /**
  * Baixa um arquivo diretamente via requisição HTTP usando a sessão autenticada.
  * Estratégia RECOMENDADA para downloads.

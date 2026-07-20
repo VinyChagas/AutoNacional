@@ -26,6 +26,7 @@ import nfseRouter from './routers/nfse';
 import metricsRouter from './routers/metrics';
 import { setCertificateLoader } from './services/execution-service';
 import { carregarCertificadoPorCnpj } from './services/certificate-loader';
+import { iniciarRelatorio2Captcha } from './automation/captcha-report';
 
 if (!process.stdin.isTTY) {
   process.stdin.resume();
@@ -87,6 +88,9 @@ async function bootstrap() {
   }
 
   setCertificateLoader(carregarCertificadoPorCnpj);
+
+  const reportPath = iniciarRelatorio2Captcha();
+  logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
 
   const server = app.listen(PORT, () => {
     logger.info(`AutoNacional API rodando em http://localhost:${PORT}`);

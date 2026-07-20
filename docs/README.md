@@ -50,6 +50,7 @@ O **AutoNacional** é uma plataforma completa para automação de processos cont
 | [FLUXOS.md](./FLUXOS.md)                             | Fluxos de negócio e automação                                |
 | [AUTOMACAO_NFSE.md](./AUTOMACAO_NFSE.md)             | Funcionamento completo da automação (individual e filas)     |
 | [DEPENDENCIAS.md](./DEPENDENCIAS.md)                 | Lista e descrição de todas as dependências                   |
+| [TELA_EMPRESAS.md](./TELA_EMPRESAS.md)                       | Documentação completa da tela de Empresas (UI + API) |
 | [CHECKLIST_TESTES_EMPRESAS.md](./CHECKLIST_TESTES_EMPRESAS.md) | Checklist de testes manuais da tela de Empresas    |
 
 ---

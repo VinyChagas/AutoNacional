@@ -691,13 +691,28 @@ async function executarFluxoCompleto(
         message: 'Baixando notas emitidas…',
       });
       info.mensagem = 'Baixando notas emitidas…';
+      const onCaptchaStage = (stage: string, message: string) => {
+        info.mensagem = message;
+        emitirEventoExecucao(batchId, {
+          type: 'execution:stage',
+          empresa_id: key,
+          stage,
+          message,
+        });
+      };
       const resEmitidas = await processarTabelaEmitidas(
         page,
         basePath,
         nomeContabilidade,
         mesExecucaoExtenso,
         nomeEmpresa,
-        baixarPdf
+        baixarPdf,
+        onCaptchaStage,
+        {
+          executionId: String(execucaoDbId ?? key),
+          empresaId: key,
+          batchId: batchId || undefined,
+        }
       );
       info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
       info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
@@ -749,13 +764,28 @@ async function executarFluxoCompleto(
         message: 'Baixando notas recebidas…',
       });
       info.mensagem = 'Baixando notas recebidas…';
+      const onCaptchaStage = (stage: string, message: string) => {
+        info.mensagem = message;
+        emitirEventoExecucao(batchId, {
+          type: 'execution:stage',
+          empresa_id: key,
+          stage,
+          message,
+        });
+      };
       const resRecebidas = await processarTabelaRecebidas(
         page,
         basePath,
         nomeContabilidade,
         mesExecucaoExtenso,
         nomeEmpresa,
-        baixarPdf
+        baixarPdf,
+        onCaptchaStage,
+        {
+          executionId: String(execucaoDbId ?? key),
+          empresaId: key,
+          batchId: batchId || undefined,
+        }
       );
       info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
       info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;

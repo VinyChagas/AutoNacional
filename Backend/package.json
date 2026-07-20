@@ -16,7 +16,9 @@
     "prisma:reset": "prisma migrate reset",
     "playwright:install": "playwright install chromium",
     "setup": "npm run prisma:generate && npm run prisma:push && npm run playwright:install",
-    "test:playwright": "npx ts-node src/automation/scripts/test-playwright.ts"
+    "test:playwright": "npx ts-node src/automation/scripts/test-playwright.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "autonacional",
@@ -43,7 +45,8 @@
     "prisma": "^6.19.3",
     "rimraf": "^6.1.3",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.4.0",

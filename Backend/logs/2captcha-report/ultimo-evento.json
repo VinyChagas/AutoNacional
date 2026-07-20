@@ -1,0 +1,9 @@
+{
+  "seq": 88,
+  "at": "2026-07-20T11:59:42.100Z",
+  "sessionId": "20260719-154242",
+  "type": "captcha_failed",
+  "tentativa": 11,
+  "etapa": "resolverHCaptcha",
+  "erro": "2captcha getTaskResult: ERROR_CAPTCHA_UNSOLVABLE — Workers could not solve the Captcha"
+}

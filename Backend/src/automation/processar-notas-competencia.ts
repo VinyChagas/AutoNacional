@@ -2,20 +2,50 @@
  * Automação para processar notas fiscais de uma competência no portal NFSe Nacional.
  *
  * Varredura de notas emitidas e recebidas, com download de XML e DANFS-e (PDF).
+ * hCaptcha: 2captcha (automático) com rqdata opcional; retry por operação (novo CAPTCHA);
+ * fallback manual somente após esgotar tentativas da operação.
  */
 
 import { Page, Locator } from 'playwright';
-import { setDownloadsBasePath, salvarDownloadDireto } from './download-manager';
+import { setDownloadsBasePath } from './download-manager';
 import { getLogger } from '../infrastructure/logger';
+import { resolverHCaptcha, captchaConfigurado, CaptchaError } from './captcha-solver';
+import {
+  reportCaptchaDetectado,
+  reportSolucaoSubmetidaNoSite,
+  reportCaptchaFalha,
+} from './captcha-report';
+import {
+  CAPTCHA_MANUAL_TIMEOUT_MS,
+  TWOCAPTCHA_RQDATA,
+} from '../infrastructure/config';
+import {
+  criarContextoOperacao,
+  executarDownloadNotaComRetry,
+  extrairIdentificadorDaLinha,
+  localizarNotaPorIdentificador,
+} from './download-operation';
 
 const logger = getLogger('processar-notas');
 
 export { setDownloadsBasePath };
 
-/** Timeout para waitForEvent('download') e click em downloads. 45-60s recomendado para lote. */
-const DOWNLOAD_TIMEOUT_MS = 50000;
+/** Callback opcional para emitir estágio SSE (ex.: aguardando captcha). */
+export type CaptchaStageCallback = (stage: string, message: string) => void;
+
+/** Botão "Confirmar" do modal de validação (hCaptcha). */
+const CAPTCHA_SUBMIT_SELECTOR = '#btnSubmitHCaptcha';
+/** Intervalo de polling do token h-captcha-response (modo manual). */
+const TOKEN_POLL_MS = 1000;
 
 let _minActionDelayMs = 500;
+
+/** IDs da execução atual (propagados pelo execution-service). */
+export interface ExecutionIds {
+  executionId: string;
+  empresaId: string;
+  batchId?: string;
+}
 
 export function setMinActionDelayMs(ms: number): void {
   _minActionDelayMs = ms;
@@ -23,6 +53,345 @@ export function setMinActionDelayMs(ms: number): void {
 
 export function getMinActionDelayMs(): number {
   return _minActionDelayMs;
+}
+
+function notificarCaptcha(
+  onCaptchaStage: CaptchaStageCallback | undefined,
+  stage: string,
+  message: string
+): void {
+  logger.info({ stage }, message);
+  try {
+    onCaptchaStage?.(stage, message);
+  } catch {
+    /* callback não deve derrubar o fluxo */
+  }
+}
+
+/** rqdata só com conteúdo real — nunca "" / null / c.req. */
+function normalizeRqdata(value?: string | null): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+interface DadosCaptcha {
+  sitekey: string;
+  pageurl: string;
+  /** Opcional: só presente quando houver valor real. */
+  rqdata?: string;
+}
+
+function urlValida(u: string | undefined | null): boolean {
+  return !!u && /^https?:\/\//i.test(u);
+}
+
+function sitekeyDoSrc(src: string | null | undefined): string | null {
+  if (!src) return null;
+  const m = /sitekey=([\w-]+)/i.exec(src);
+  return m ? m[1] : null;
+}
+
+/**
+ * Extrai rqdata do DOM se existir. Não usa c.req. Não exige getcaptcha postData.
+ */
+async function tentarExtrairRqdataOpcional(page: Page): Promise<string | undefined> {
+  const script = `(() => {
+    var el = document.querySelector('[data-rqdata]');
+    if (el) {
+      var v = el.getAttribute('data-rqdata');
+      if (v && String(v).trim()) return String(v).trim();
+    }
+    var iframes = document.querySelectorAll('iframe[src*="hcaptcha"]');
+    for (var i = 0; i < iframes.length; i++) {
+      var src = iframes[i].getAttribute('src') || '';
+      var m = src.match(/[?&#]rqdata=([^&]+)/i);
+      if (m) {
+        try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+      }
+    }
+    return null;
+  })()`;
+
+  for (const frame of page.frames()) {
+    try {
+      const v = await frame.evaluate(script);
+      const n = normalizeRqdata(typeof v === 'string' ? v : null);
+      if (n) return n;
+    } catch {
+      /* frame destacado */
+    }
+  }
+  return undefined;
+}
+
+async function capturarDadosCaptcha(page: Page): Promise<DadosCaptcha | null> {
+  const urlPrincipal = page.url();
+  let sitekey: string | null = null;
+  let pageurl = urlPrincipal;
+
+  for (const frame of page.frames()) {
+    try {
+      const el = frame.locator('[data-sitekey]').first();
+      if ((await el.count()) > 0) {
+        const sk = (await el.getAttribute('data-sitekey'))?.trim();
+        if (sk) {
+          sitekey = sk;
+          const frameUrl = frame.url();
+          pageurl = urlValida(frameUrl) ? frameUrl : urlPrincipal;
+          break;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!sitekey) {
+    for (const frame of page.frames()) {
+      try {
+        const iframe = frame.locator('iframe[src*="hcaptcha.com"]').first();
+        if ((await iframe.count()) > 0) {
+          const sk = sitekeyDoSrc(await iframe.getAttribute('src'));
+          if (sk) {
+            sitekey = sk;
+            const frameUrl = frame.url();
+            pageurl = urlValida(frameUrl) ? frameUrl : urlPrincipal;
+            break;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  if (!sitekey) return null;
+
+  // rqdata opcional: env override → DOM. Se não houver, omitir (não "" / null / c.req).
+  const rqdata =
+    normalizeRqdata(TWOCAPTCHA_RQDATA) ||
+    (await tentarExtrairRqdataOpcional(page));
+
+  if (rqdata) {
+    logger.info(
+      { rqdataLen: rqdata.length },
+      'rqdata encontrado — será enviado em enterprisePayload'
+    );
+  } else {
+    logger.info(
+      'rqdata não encontrado — task 2captcha será criada sem enterprisePayload'
+    );
+  }
+
+  return { sitekey, pageurl, ...(rqdata ? { rqdata } : {}) };
+}
+
+async function injetarTokenHCaptcha(page: Page, token: string): Promise<void> {
+  const script = `(() => {
+    var tk = ${JSON.stringify(token)};
+    var nomes = ['h-captcha-response', 'g-recaptcha-response'];
+    for (var i = 0; i < nomes.length; i++) {
+      var nome = nomes[i];
+      var campo = document.querySelector('textarea[name="' + nome + '"], input[name="' + nome + '"]');
+      if (!campo) {
+        campo = document.createElement('textarea');
+        campo.name = nome;
+        campo.style.display = 'none';
+        (document.querySelector('form') || document.body).appendChild(campo);
+      }
+      campo.value = tk;
+    }
+  })()`;
+  await page.evaluate(script);
+}
+
+async function resolverCaptchaAutomatico(
+  page: Page,
+  onCaptchaStage?: CaptchaStageCallback
+): Promise<void> {
+  if (!captchaConfigurado()) {
+    throw new CaptchaError(
+      'TWOCAPTCHA_API_KEY não configurada',
+      'ERROR_CONFIGURATION'
+    );
+  }
+
+  const dados = await capturarDadosCaptcha(page);
+  if (!dados) {
+    throw new CaptchaError(
+      'Não foi possível extrair o sitekey do hCaptcha',
+      'ERROR_CONFIGURATION'
+    );
+  }
+
+  let userAgent: string | undefined;
+  try {
+    userAgent = String(await page.evaluate('navigator.userAgent'));
+  } catch {
+    /* opcional */
+  }
+
+  reportCaptchaDetectado({
+    sitekey: dados.sitekey,
+    pageurl: dados.pageurl,
+    userAgent,
+    ...(dados.rqdata ? { rqdata: dados.rqdata } : {}),
+  });
+
+  notificarCaptcha(
+    onCaptchaStage,
+    'captcha_resolvendo',
+    'hCaptcha detectado — solicitando solução ao 2captcha'
+  );
+
+  logger.info(
+    {
+      sitekey: dados.sitekey,
+      pageurl: dados.pageurl,
+      hasRqdata: Boolean(dados.rqdata),
+    },
+    'hCaptcha detectado — solicitando solução ao 2captcha'
+  );
+
+  let token: string;
+  try {
+    token = await resolverHCaptcha(dados.sitekey, dados.pageurl, {
+      userAgent,
+      ...(dados.rqdata ? { rqdata: dados.rqdata } : {}),
+    });
+  } catch (e) {
+    reportCaptchaFalha({
+      etapa: 'resolverHCaptcha',
+      erro: (e as Error).message,
+    });
+    throw e;
+  }
+
+  try {
+    await injetarTokenHCaptcha(page, token);
+    const botaoConfirmar = page.locator(CAPTCHA_SUBMIT_SELECTOR);
+    await botaoConfirmar.click({ timeout: 15000 });
+    reportSolucaoSubmetidaNoSite({
+      pageurl: dados.pageurl,
+      camposInjetados: ['h-captcha-response', 'g-recaptcha-response'],
+      botaoConfirmacao: CAPTCHA_SUBMIT_SELECTOR,
+      sucesso: true,
+    });
+    notificarCaptcha(
+      onCaptchaStage,
+      'captcha_resolvido',
+      'Captcha resolvido automaticamente (2captcha)'
+    );
+    logger.debug('Modal de captcha confirmado (2captcha)');
+  } catch (e) {
+    reportSolucaoSubmetidaNoSite({
+      pageurl: dados.pageurl,
+      camposInjetados: ['h-captcha-response', 'g-recaptcha-response'],
+      botaoConfirmacao: CAPTCHA_SUBMIT_SELECTOR,
+      sucesso: false,
+      erro: (e as Error).message,
+    });
+    throw e;
+  }
+}
+
+async function tokenHCaptchaPreenchido(page: Page): Promise<boolean> {
+  const script = `(() => {
+    var sel = 'textarea[name="h-captcha-response"], textarea#h-captcha-response, textarea[name="g-recaptcha-response"]';
+    var els = document.querySelectorAll(sel);
+    for (var i = 0; i < els.length; i++) {
+      var v = els[i].value || '';
+      if (v.length > 20) return true;
+    }
+    return false;
+  })()`;
+
+  for (const frame of page.frames()) {
+    try {
+      if (await frame.evaluate(script)) return true;
+    } catch {
+      /* frame destacado */
+    }
+  }
+  return false;
+}
+
+/**
+ * Aguarda resolução MANUAL do hCaptcha:
+ * 1) detecta modal
+ * 2) mantém o navegador aberto
+ * 3) espera o usuário resolver (token preenchido e/ou modal fechado)
+ * 4) se o token existir e o Confirmar ainda estiver visível, clica para seguir
+ */
+async function aguardarResolucaoManual(
+  page: Page,
+  onCaptchaStage?: CaptchaStageCallback
+): Promise<void> {
+  const timeoutMs = CAPTCHA_MANUAL_TIMEOUT_MS;
+  notificarCaptcha(
+    onCaptchaStage,
+    'captcha_aguardando',
+    `Aguardando resolução MANUAL do hCaptcha no navegador (até ${Math.round(timeoutMs / 1000)}s). Resolva o desafio e confirme.`
+  );
+
+  const inicio = Date.now();
+  let tokenDetectado = false;
+
+  while (Date.now() - inicio < timeoutMs) {
+    const modalVisivel = await page
+      .locator(CAPTCHA_SUBMIT_SELECTOR)
+      .isVisible()
+      .catch(() => false);
+
+    if (!modalVisivel) {
+      notificarCaptcha(
+        onCaptchaStage,
+        'captcha_resolvido',
+        'Captcha resolvido — modal fechado, prosseguindo'
+      );
+      return;
+    }
+
+    if (!tokenDetectado && (await tokenHCaptchaPreenchido(page))) {
+      tokenDetectado = true;
+      notificarCaptcha(
+        onCaptchaStage,
+        'captcha_token_ok',
+        'Token h-captcha-response detectado — confirmando e prosseguindo'
+      );
+      try {
+        const botao = page.locator(CAPTCHA_SUBMIT_SELECTOR);
+        if (await botao.isVisible().catch(() => false)) {
+          await botao.click({ timeout: 10000 });
+        }
+      } catch (e) {
+        logger.debug(
+          { err: e },
+          'Falha ao clicar Confirmar após token (pode já ter sido clicado pelo usuário)'
+        );
+      }
+      try {
+        await page
+          .locator(CAPTCHA_SUBMIT_SELECTOR)
+          .waitFor({ state: 'hidden', timeout: 30000 });
+      } catch {
+        /* download pode já ter disparado */
+      }
+      notificarCaptcha(
+        onCaptchaStage,
+        'captcha_resolvido',
+        'Captcha resolvido — prosseguindo com o download'
+      );
+      return;
+    }
+
+    await page.waitForTimeout(TOKEN_POLL_MS);
+  }
+
+  throw new Error(
+    `Timeout aguardando resolução manual do hCaptcha (${Math.round(timeoutMs / 1000)}s)`
+  );
 }
 
 /**
@@ -133,9 +502,7 @@ async function verificarNotaValida(rowLocator: Locator): Promise<{ valida: boole
 
 /**
  * Baixa XML e (opcionalmente) DANFS-e de uma linha da tabela.
- * Usa nomeContabilidade e mesExecucaoExtenso para a estrutura de pastas (não a competência da nota).
- * basePath deve ser único por execução/empresa para evitar sobreposição em lote.
- * @param baixarPdf - quando false, baixa apenas o XML (pula o DANFS-e/PDF).
+ * Cada arquivo é uma operação independente com retry de CAPTCHA no nível da operação.
  */
 async function baixarArquivosDaLinha(
   page: Page,
@@ -145,81 +512,88 @@ async function baixarArquivosDaLinha(
   mesExecucaoExtenso: string,
   nomeEmpresa: string,
   tipoNota: 'Emitidas' | 'Recebidas',
-  baixarPdf: boolean = true
+  baixarPdf: boolean = true,
+  onCaptchaStage?: CaptchaStageCallback,
+  executionIds?: ExecutionIds,
+  indiceLinha?: number
 ): Promise<void> {
-  const colunaAcoesIdx = tipoNota === 'Emitidas' ? 6 : 5;
-  const celulas = rowLocator.locator('td');
-
-  let numeroNota: string | null = null;
-  for (const idx of [0, 1, 2, 3]) {
-    try {
-      const texto = (await celulas.nth(idx).innerText()).trim();
-      if (texto && /\d/.test(texto)) {
-        numeroNota = texto.replace(/[/\\]/g, '-').replace(/\s/g, '_').slice(0, 50);
-        break;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const colunaAcoes = celulas.nth(colunaAcoesIdx);
-  const iconeAcoes = colunaAcoes.locator('div a i, a i').nth(0);
-  await iconeAcoes.click();
-
-  const menuSuspenso = rowLocator.locator('.menu-suspenso-tabela');
-  await menuSuspenso.waitFor({ state: 'visible', timeout: 3000 });
-
+  const { chaveNfse, numeroNota } = await extrairIdentificadorDaLinha(rowLocator);
   const prefixo = numeroNota ? `${numeroNota}_` : undefined;
+  const execId =
+    executionIds?.executionId ||
+    `anon-${nomeEmpresa}-${Date.now()}`;
+  const empresaId = executionIds?.empresaId || '0';
+
+  const deps = {
+    onStage: onCaptchaStage,
+    resolverCaptchaAutomatico: (p: Page) => resolverCaptchaAutomatico(p, onCaptchaStage),
+    aguardarResolucaoManual: (p: Page) => aguardarResolucaoManual(p, onCaptchaStage),
+  };
+
+  const ctxXml = criarContextoOperacao({
+    executionId: execId,
+    empresaId,
+    batchId: executionIds?.batchId,
+    tipoNota,
+    tipoArquivo: 'xml',
+    chaveNfse,
+    numeroNota,
+    indiceLinhaOriginal: indiceLinha,
+    basePath,
+    nomeContabilidade,
+    mesExecucaoExtenso,
+    nomeEmpresa,
+    nomeArquivoPrefixo: prefixo,
+  });
 
   try {
-    let linkXml = page.getByRole('link', { name: 'Download XML' });
-    if ((await linkXml.count()) === 0) {
-      linkXml = menuSuspenso.locator('a:has-text("XML")');
+    const resXml = await executarDownloadNotaComRetry(page, rowLocator, ctxXml, deps);
+    if (!resXml.success) {
+      logger.warn({ err: resXml.error, chave: chaveNfse }, 'Falha ao baixar XML');
     }
-    const [downloadXml] = await Promise.all([
-      page.waitForEvent('download', { timeout: DOWNLOAD_TIMEOUT_MS }),
-      linkXml.nth(0).click({ timeout: DOWNLOAD_TIMEOUT_MS }),
-    ]);
-    await salvarDownloadDireto(downloadXml, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
   } catch (e) {
-    const err = e as Error;
-    const isTimeout = err.name === 'TimeoutError' || /timeout/i.test(err.message);
-    if (isTimeout) {
-      logger.debug({ err: e }, 'Timeout ao baixar XML (arquivo ignorado, execução continua)');
-    } else {
-      logger.warn({ err: e }, 'Erro ao baixar XML');
-    }
+    logger.warn({ err: e }, 'Erro ao baixar XML');
   }
 
-  if (baixarPdf) {
-    await iconeAcoes.click();
-    await page.waitForTimeout(_minActionDelayMs);
-    await iconeAcoes.click();
-    await menuSuspenso.waitFor({ state: 'visible', timeout: 3000 });
+  if (!baixarPdf) return;
 
-    try {
-      let linkPdf = page.getByRole('link', { name: 'Download DANFS-e' });
-      if ((await linkPdf.count()) === 0) {
-        linkPdf = menuSuspenso.locator('a:has-text("DANFS-e")');
-      }
-      const [downloadPdf] = await Promise.all([
-        page.waitForEvent('download', { timeout: DOWNLOAD_TIMEOUT_MS }),
-        linkPdf.nth(0).click({ timeout: DOWNLOAD_TIMEOUT_MS }),
-      ]);
-      await salvarDownloadDireto(downloadPdf, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, tipoNota, prefixo);
-    } catch (e) {
-      const err = e as Error;
-      const isTimeout = err.name === 'TimeoutError' || /timeout/i.test(err.message);
-      if (isTimeout) {
-        logger.debug({ err: e }, 'Timeout ao baixar DANFS-e (arquivo ignorado, execução continua)');
-      } else {
-        logger.warn({ err: e }, 'Erro ao baixar DANFS-e');
-      }
-    }
+  await page.waitForTimeout(_minActionDelayMs);
+
+  // Relocaliza a linha (DOM pode ter mudado após XML)
+  let rowPdf = rowLocator;
+  try {
+    rowPdf = await localizarNotaPorIdentificador(page, {
+      ...ctxXml,
+      tipoArquivo: 'pdf',
+    });
+  } catch {
+    rowPdf = rowLocator;
   }
 
-  await iconeAcoes.click();
+  const ctxPdf = criarContextoOperacao({
+    executionId: execId,
+    empresaId,
+    batchId: executionIds?.batchId,
+    tipoNota,
+    tipoArquivo: 'pdf',
+    chaveNfse,
+    numeroNota,
+    indiceLinhaOriginal: indiceLinha,
+    basePath,
+    nomeContabilidade,
+    mesExecucaoExtenso,
+    nomeEmpresa,
+    nomeArquivoPrefixo: prefixo,
+  });
+
+  try {
+    const resPdf = await executarDownloadNotaComRetry(page, rowPdf, ctxPdf, deps);
+    if (!resPdf.success) {
+      logger.warn({ err: resPdf.error, chave: chaveNfse }, 'Falha ao baixar DANFS-e');
+    }
+  } catch (e) {
+    logger.warn({ err: e }, 'Erro ao baixar DANFS-e');
+  }
 }
 
 /**
@@ -232,7 +606,9 @@ export async function processarTabelaEmitidas(
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
   nomeEmpresa: string,
-  baixarPdf: boolean = true
+  baixarPdf: boolean = true,
+  onCaptchaStage?: CaptchaStageCallback,
+  executionIds?: ExecutionIds
 ): Promise<{ qtd_baixadas: number; qtd_canceladas: number; sem_registros: boolean; encontrou_notas: boolean }> {
   if (await verificarSemRegistros(page)) {
     return { qtd_baixadas: 0, qtd_canceladas: 0, sem_registros: true, encontrou_notas: false };
@@ -256,7 +632,19 @@ export async function processarTabelaEmitidas(
         const { valida, cancelada } = await verificarNotaValida(linha);
         if (cancelada) qtdCanceladas++;
         if (valida) {
-          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Emitidas', baixarPdf);
+          await baixarArquivosDaLinha(
+            page,
+            linha,
+            basePath,
+            nomeContabilidade,
+            mesExecucaoExtenso,
+            nomeEmpresa,
+            'Emitidas',
+            baixarPdf,
+            onCaptchaStage,
+            executionIds,
+            i
+          );
           qtdBaixadas++;
         }
       } catch (e) {
@@ -282,7 +670,9 @@ export async function processarTabelaRecebidas(
   nomeContabilidade: string,
   mesExecucaoExtenso: string,
   nomeEmpresa: string,
-  baixarPdf: boolean = true
+  baixarPdf: boolean = true,
+  onCaptchaStage?: CaptchaStageCallback,
+  executionIds?: ExecutionIds
 ): Promise<{ qtd_baixadas: number; qtd_canceladas: number; sem_registros: boolean; encontrou_notas: boolean }> {
   if (await verificarSemRegistros(page)) {
     return { qtd_baixadas: 0, qtd_canceladas: 0, sem_registros: true, encontrou_notas: false };
@@ -306,7 +696,19 @@ export async function processarTabelaRecebidas(
         const { valida, cancelada } = await verificarNotaValida(linha);
         if (cancelada) qtdCanceladas++;
         if (valida) {
-          await baixarArquivosDaLinha(page, linha, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, 'Recebidas', baixarPdf);
+          await baixarArquivosDaLinha(
+            page,
+            linha,
+            basePath,
+            nomeContabilidade,
+            mesExecucaoExtenso,
+            nomeEmpresa,
+            'Recebidas',
+            baixarPdf,
+            onCaptchaStage,
+            executionIds,
+            i
+          );
           qtdBaixadas++;
         }
       } catch (e) {

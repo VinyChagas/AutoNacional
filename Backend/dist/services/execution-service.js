@@ -572,7 +572,20 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                     message: 'Baixando notas emitidas…',
                 });
                 info.mensagem = 'Baixando notas emitidas…';
-                const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, baixarPdf);
+                const onCaptchaStage = (stage, message) => {
+                    info.mensagem = message;
+                    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                        type: 'execution:stage',
+                        empresa_id: key,
+                        stage,
+                        message,
+                    });
+                };
+                const resEmitidas = await (0, processar_notas_competencia_2.processarTabelaEmitidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, baixarPdf, onCaptchaStage, {
+                    executionId: String(execucaoDbId ?? key),
+                    empresaId: key,
+                    batchId: batchId || undefined,
+                });
                 info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
                 info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
                 if (resEmitidas.sem_registros) {
@@ -620,7 +633,20 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                     message: 'Baixando notas recebidas…',
                 });
                 info.mensagem = 'Baixando notas recebidas…';
-                const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, baixarPdf);
+                const onCaptchaStage = (stage, message) => {
+                    info.mensagem = message;
+                    (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                        type: 'execution:stage',
+                        empresa_id: key,
+                        stage,
+                        message,
+                    });
+                };
+                const resRecebidas = await (0, processar_notas_competencia_2.processarTabelaRecebidas)(page, basePath, nomeContabilidade, mesExecucaoExtenso, nomeEmpresa, baixarPdf, onCaptchaStage, {
+                    executionId: String(execucaoDbId ?? key),
+                    empresaId: key,
+                    batchId: batchId || undefined,
+                });
                 info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
                 info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
                 if (resRecebidas.sem_registros) {

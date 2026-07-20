@@ -2,10 +2,20 @@
  * Automação para processar notas fiscais de uma competência no portal NFSe Nacional.
  *
  * Varredura de notas emitidas e recebidas, com download de XML e DANFS-e (PDF).
+ * hCaptcha: 2captcha (automático) com rqdata opcional; retry por operação (novo CAPTCHA);
+ * fallback manual somente após esgotar tentativas da operação.
  */
 import { Page } from 'playwright';
 import { setDownloadsBasePath } from './download-manager';
 export { setDownloadsBasePath };
+/** Callback opcional para emitir estágio SSE (ex.: aguardando captcha). */
+export type CaptchaStageCallback = (stage: string, message: string) => void;
+/** IDs da execução atual (propagados pelo execution-service). */
+export interface ExecutionIds {
+    executionId: string;
+    empresaId: string;
+    batchId?: string;
+}
 export declare function setMinActionDelayMs(ms: number): void;
 export declare function getMinActionDelayMs(): number;
 /**
@@ -21,7 +31,7 @@ export declare function verificarSemRegistros(page: Page): Promise<boolean>;
  * Processa a tabela de notas emitidas.
  * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
-export declare function processarTabelaEmitidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string, baixarPdf?: boolean): Promise<{
+export declare function processarTabelaEmitidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string, baixarPdf?: boolean, onCaptchaStage?: CaptchaStageCallback, executionIds?: ExecutionIds): Promise<{
     qtd_baixadas: number;
     qtd_canceladas: number;
     sem_registros: boolean;
@@ -31,7 +41,7 @@ export declare function processarTabelaEmitidas(page: Page, basePath: string, no
  * Processa a tabela de notas recebidas.
  * A pasta usa nomeContabilidade e mesExecucaoExtenso (mês da execução), não a competência da nota.
  */
-export declare function processarTabelaRecebidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string, baixarPdf?: boolean): Promise<{
+export declare function processarTabelaRecebidas(page: Page, basePath: string, nomeContabilidade: string, mesExecucaoExtenso: string, nomeEmpresa: string, baixarPdf?: boolean, onCaptchaStage?: CaptchaStageCallback, executionIds?: ExecutionIds): Promise<{
     qtd_baixadas: number;
     qtd_canceladas: number;
     sem_registros: boolean;

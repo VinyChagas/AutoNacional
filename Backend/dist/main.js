@@ -26,6 +26,7 @@ const nfse_1 = __importDefault(require("./routers/nfse"));
 const metrics_1 = __importDefault(require("./routers/metrics"));
 const execution_service_1 = require("./services/execution-service");
 const certificate_loader_1 = require("./services/certificate-loader");
+const captcha_report_1 = require("./automation/captcha-report");
 if (!process.stdin.isTTY) {
     process.stdin.resume();
 }
@@ -76,6 +77,8 @@ async function bootstrap() {
         logger.warn({ err }, 'Supabase Storage: bucket certificados não criado - cadastro de certificados pode falhar');
     }
     (0, execution_service_1.setCertificateLoader)(certificate_loader_1.carregarCertificadoPorCnpj);
+    const reportPath = (0, captcha_report_1.iniciarRelatorio2Captcha)();
+    logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
     const server = app.listen(config_1.PORT, () => {
         logger.info(`AutoNacional API rodando em http://localhost:${config_1.PORT}`);
     });
