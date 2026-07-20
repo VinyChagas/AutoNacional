@@ -1,7 +1,8 @@
 /**
  * Segmentos operacionais dos cards de resumo da tela de Empresas.
- * Fonte única para parse, validação e matching — alinhado ao summary.
+ * Matching alinhado ao EmpresaStatusService / summary.
  */
+import { type AutomationEligibility, type CertificateStatus, type StatusGeralDisplay } from './empresa-status';
 export declare const EMPRESA_SEGMENTS: readonly ["ALL", "CERT_EXPIRED", "CREDENTIAL_REVALIDATION_REQUIRED", "OPERATIONAL", "NOT_ELIGIBLE"];
 export type EmpresaSegment = (typeof EMPRESA_SEGMENTS)[number];
 export interface EmpresaSegmentInput {
@@ -10,19 +11,15 @@ export interface EmpresaSegmentInput {
     has_credenciais: boolean;
     cred_status: string | null;
     cred_ultimo_teste_em: Date | string | null;
-    status_geral: 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
+    /** Preferir snapshot; mantido para compatibilidade. */
+    certificate_status?: CertificateStatus;
+    automation_eligibility?: AutomationEligibility;
+    status_geral?: StatusGeralDisplay;
 }
 export declare function isEmpresaSegment(value: string): value is EmpresaSegment;
 export declare function parseEmpresaSegment(raw: string | undefined): EmpresaSegment;
-export declare function isCertValido(hasCert: boolean, certValidade: string | null): boolean;
-/**
- * Mesma regra do KPI "Credenciais para Validar" em obterSummary.
- */
-export declare function needsCredentialRevalidation(input: {
-    has_credenciais: boolean;
-    cred_status: string | null;
-    cred_ultimo_teste_em: Date | string | null;
-}): boolean;
+/** Reexport para consumidores que importavam de empresas-segment. */
+export { isCertValido, needsCredentialRevalidation } from './empresa-status';
 /**
  * Segmento ativo dos cards. Deve produzir o mesmo universo contado no summary.
  */

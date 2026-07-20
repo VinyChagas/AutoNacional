@@ -4,9 +4,16 @@
 import { prisma } from '../../../db/client';
 import { Prisma } from '@prisma/client';
 import {
-  isCertValido,
+  computeOperationalSnapshot,
+  isAutomationEligible,
+  type AutomationEligibility,
+  type CertificateStatus,
+  type CredentialRevalidationReason,
+  type CredentialStatus,
+  type StatusGeralDisplay,
+} from './empresa-status';
+import {
   matchesEmpresaSegment,
-  needsCredentialRevalidation,
   type EmpresaSegment,
 } from './empresas-segment';
 
@@ -17,37 +24,7 @@ function normCnpj(cnpj: string): string {
   return cnpj.replace(/[.\/\-\s]/g, '').trim();
 }
 
-function isCredValida(hasCred: boolean, credStatus: string | null): boolean {
-  if (!hasCred) return false;
-  return (credStatus ?? '').toUpperCase() === 'OK';
-}
-
-function calcularStatusGeral(
-  hasCert: boolean,
-  certValidade: string | null,
-  hasCred: boolean,
-  credStatus: string | null
-): { status: StatusGeral; motivo: string } {
-  const certValido = isCertValido(hasCert, certValidade);
-  const credValida = isCredValida(hasCred, credStatus);
-  const temMetodo = hasCert || hasCred;
-
-  if (!temMetodo) {
-    return { status: 'INOPERANTE', motivo: 'Sem certificado e sem credenciais' };
-  }
-  if (certValido || credValida) {
-    if (certValido && credValida) {
-      return { status: 'OPERACIONAL', motivo: 'Certificado válido e credenciais OK' };
-    }
-    return { status: 'OPERACIONAL', motivo: certValido ? 'Certificado válido' : 'Credenciais OK' };
-  }
-  const motivos: string[] = [];
-  if (hasCert && !certValido) motivos.push('Certificado vencido');
-  if (hasCred && !credValida) motivos.push('Credenciais inválidas');
-  return { status: 'PARCIAL', motivo: motivos.join(' e ') || 'Métodos cadastrados mas inválidos' };
-}
-
-export type StatusGeral = 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
+export type StatusGeral = StatusGeralDisplay;
 
 export interface EmpresaAgregada {
   id: number;
@@ -67,6 +44,15 @@ export interface EmpresaAgregada {
   cred_ultima_mensagem: string | null;
   status_geral: StatusGeral;
   status_geral_motivo?: string | null;
+  certificate_status: CertificateStatus;
+  credential_status: CredentialStatus;
+  credential_requires_revalidation: boolean;
+  credential_revalidation_reason: CredentialRevalidationReason;
+  automation_eligibility: AutomationEligibility;
+  issue_codes: string[];
+  issue_messages: string[];
+  recommended_action: string | null;
+  certificate_days_delta: number | null;
 }
 
 export interface EmpresaListagemParams {
@@ -200,7 +186,14 @@ export async function listarComAgregados(
       ? credData.ultimoTesteEm.toISOString()
       : null;
     const credUltimaMsg = credData?.ultimaMensagem ?? null;
-    const { status, motivo } = calcularStatusGeral(hasCert, certVal, hasCred, credStat);
+    const snap = computeOperationalSnapshot({
+      has_certificado: hasCert,
+      cert_validade: certVal,
+      has_credenciais: hasCred,
+      cred_status: credStat,
+      cred_ultimo_teste_em: credUltimoTeste,
+      cred_ultima_mensagem: credUltimaMsg,
+    });
     return {
       id: e.id,
       cnpj: e.cnpj,
@@ -217,8 +210,17 @@ export async function listarComAgregados(
       cred_status: credStat,
       cred_ultimo_teste_em: credUltimoTeste,
       cred_ultima_mensagem: credUltimaMsg,
-      status_geral: status,
-      status_geral_motivo: motivo,
+      status_geral: snap.status_geral,
+      status_geral_motivo: snap.status_geral_motivo,
+      certificate_status: snap.certificate_status,
+      credential_status: snap.credential_status,
+      credential_requires_revalidation: snap.credential_requires_revalidation,
+      credential_revalidation_reason: snap.credential_revalidation_reason,
+      automation_eligibility: snap.automation_eligibility,
+      issue_codes: snap.issue_codes,
+      issue_messages: snap.issue_messages,
+      recommended_action: snap.recommended_action,
+      certificate_days_delta: snap.certificate_days_delta,
     };
   });
 
@@ -243,6 +245,8 @@ export async function listarComAgregados(
           has_credenciais: i.has_credenciais,
           cred_status: i.cred_status,
           cred_ultimo_teste_em: i.cred_ultimo_teste_em,
+          certificate_status: i.certificate_status,
+          automation_eligibility: i.automation_eligibility,
           status_geral: i.status_geral,
         },
         segment
@@ -265,7 +269,14 @@ export async function listarComAgregados(
         case 'has_credenciais':
           return i.has_credenciais ? 1 : 0;
         case 'status_geral':
-          return { OPERACIONAL: 2, PARCIAL: 1, INOPERANTE: 0 }[i.status_geral] ?? 0;
+          return (
+            {
+              OPERACIONAL: 3,
+              ATENCAO: 2,
+              PARCIAL: 1,
+              INOPERANTE: 0,
+            }[i.status_geral] ?? 0
+          );
         default:
           return null;
       }
@@ -462,20 +473,20 @@ export async function obterSummary(
   let operacionais = 0;
 
   for (const i of items) {
-    if (i.hasCert && !isCertValido(true, i.certVal)) {
+    const snap = computeOperationalSnapshot({
+      has_certificado: i.hasCert,
+      cert_validade: i.certVal,
+      has_credenciais: i.hasCred,
+      cred_status: i.credStat,
+      cred_ultimo_teste_em: i.credUltimoTeste,
+    });
+    if (snap.certificate_status === 'EXPIRED') {
       certificados_vencidos++;
     }
-    if (
-      needsCredentialRevalidation({
-        has_credenciais: i.hasCred,
-        cred_status: i.credStat,
-        cred_ultimo_teste_em: i.credUltimoTeste,
-      })
-    ) {
+    if (snap.credential_requires_revalidation) {
       credenciais_para_validar++;
     }
-    const { status } = calcularStatusGeral(i.hasCert, i.certVal, i.hasCred, i.credStat);
-    if (status === 'OPERACIONAL') {
+    if (isAutomationEligible(snap.automation_eligibility)) {
       operacionais++;
     }
   }

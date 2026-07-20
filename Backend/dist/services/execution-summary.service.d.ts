@@ -1,11 +1,13 @@
-export type StatusGeral = 'OPERACIONAL' | 'ATENCAO' | 'PARCIAL' | 'INOPERANTE';
-export type LoginMetodo = 'CERTIFICADO' | 'CREDENCIAL' | null;
+import { type StatusGeralDisplay, type LoginMetodo } from '../modules/certificados/empresas/empresa-status';
+export type StatusGeral = StatusGeralDisplay;
+export type { LoginMetodo };
 export interface EmpresaExecucaoItem {
     empresa_id: number;
     cnpj: string;
     razao_social: string;
     status_geral: StatusGeral;
     login_metodo: LoginMetodo;
+    automation_eligibility?: string;
 }
 export interface ExecutionSummaryResponse {
     total_empresas: number;
@@ -24,7 +26,7 @@ export interface ExecutionSummaryResponse {
  */
 export declare function obterSummaryExecucao(contabilidadeId: number): Promise<ExecutionSummaryResponse>;
 /**
- * Lista apenas empresas aptas (OPERACIONAL ou ATENCAO) para carregar na fila de execução.
+ * Lista empresas com método utilizável para a fila (inclui PARCIAL / warning).
  */
 export declare function listarEmpresasAptas(contabilidadeId: number): Promise<EmpresaExecucaoItem[]>;
 //# sourceMappingURL=execution-summary.service.d.ts.map

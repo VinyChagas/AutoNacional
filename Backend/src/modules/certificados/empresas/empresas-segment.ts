@@ -1,7 +1,15 @@
 /**
  * Segmentos operacionais dos cards de resumo da tela de Empresas.
- * Fonte única para parse, validação e matching — alinhado ao summary.
+ * Matching alinhado ao EmpresaStatusService / summary.
  */
+import {
+  computeOperationalSnapshot,
+  isAutomationEligible,
+  needsCredentialRevalidation,
+  type AutomationEligibility,
+  type CertificateStatus,
+  type StatusGeralDisplay,
+} from './empresa-status';
 
 export const EMPRESA_SEGMENTS = [
   'ALL',
@@ -19,10 +27,11 @@ export interface EmpresaSegmentInput {
   has_credenciais: boolean;
   cred_status: string | null;
   cred_ultimo_teste_em: Date | string | null;
-  status_geral: 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
+  /** Preferir snapshot; mantido para compatibilidade. */
+  certificate_status?: CertificateStatus;
+  automation_eligibility?: AutomationEligibility;
+  status_geral?: StatusGeralDisplay;
 }
-
-const DIAS_REVALIDAR_CRED = 7;
 
 export function isEmpresaSegment(value: string): value is EmpresaSegment {
   return (EMPRESA_SEGMENTS as readonly string[]).includes(value);
@@ -34,56 +43,8 @@ export function parseEmpresaSegment(raw: string | undefined): EmpresaSegment {
   return isEmpresaSegment(normalized) ? normalized : 'ALL';
 }
 
-function parseDataValidade(val: string | null): Date | null {
-  if (!val?.trim()) return null;
-  const m = val.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-export function isCertValido(hasCert: boolean, certValidade: string | null): boolean {
-  if (!hasCert) return false;
-  const dt = parseDataValidade(certValidade);
-  if (!dt) return false;
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  return dt >= hoje;
-}
-
-/**
- * Mesma regra do KPI "Credenciais para Validar" em obterSummary.
- */
-export function needsCredentialRevalidation(input: {
-  has_credenciais: boolean;
-  cred_status: string | null;
-  cred_ultimo_teste_em: Date | string | null;
-}): boolean {
-  if (!input.has_credenciais) return false;
-
-  const status = (input.cred_status ?? '').toUpperCase();
-  if (
-    status === 'NAO_TESTADO' ||
-    status === 'INVALIDA' ||
-    status === 'ERRO_VALIDACAO'
-  ) {
-    return true;
-  }
-
-  const ultimo = input.cred_ultimo_teste_em;
-  if (!ultimo) return false;
-
-  const dt = ultimo instanceof Date ? ultimo : new Date(ultimo);
-  if (isNaN(dt.getTime())) return false;
-
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const limite = new Date(hoje.getTime() - DIAS_REVALIDAR_CRED * 24 * 60 * 60 * 1000);
-  return dt < limite;
-}
+/** Reexport para consumidores que importavam de empresas-segment. */
+export { isCertValido, needsCredentialRevalidation } from './empresa-status';
 
 /**
  * Segmento ativo dos cards. Deve produzir o mesmo universo contado no summary.
@@ -92,17 +53,33 @@ export function matchesEmpresaSegment(
   item: EmpresaSegmentInput,
   segment: EmpresaSegment
 ): boolean {
+  const snap =
+    item.certificate_status != null && item.automation_eligibility != null
+      ? {
+          certificate_status: item.certificate_status,
+          automation_eligibility: item.automation_eligibility,
+          credential_requires_revalidation: needsCredentialRevalidation(item),
+        }
+      : (() => {
+          const s = computeOperationalSnapshot(item);
+          return {
+            certificate_status: s.certificate_status,
+            automation_eligibility: s.automation_eligibility,
+            credential_requires_revalidation: s.credential_requires_revalidation,
+          };
+        })();
+
   switch (segment) {
     case 'ALL':
       return true;
     case 'CERT_EXPIRED':
-      return item.has_certificado && !isCertValido(true, item.cert_validade);
+      return snap.certificate_status === 'EXPIRED';
     case 'CREDENTIAL_REVALIDATION_REQUIRED':
-      return needsCredentialRevalidation(item);
+      return snap.credential_requires_revalidation;
     case 'OPERATIONAL':
-      return item.status_geral === 'OPERACIONAL';
+      return isAutomationEligible(snap.automation_eligibility);
     case 'NOT_ELIGIBLE':
-      return item.status_geral !== 'OPERACIONAL';
+      return snap.automation_eligibility === 'NOT_ELIGIBLE';
     default: {
       const _exhaustive: never = segment;
       return _exhaustive;

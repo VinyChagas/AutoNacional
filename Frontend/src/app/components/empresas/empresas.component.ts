@@ -22,9 +22,9 @@ import type {
 } from '../../models/empresas-unificado.model';
 import { toEmpresaRow } from '../../models/empresas-unificado.model';
 import {
-  computeCompanyStatusGeral,
+  displayStatusGeral,
+  displayStatusReason,
   getCertDisplayInfo as getCertDisplayInfoUtil,
-  computeStatusReason,
 } from './status.utils';
 import { EmpresaDrawerComponent, type EditorSavePayload } from './empresa-drawer/empresa-drawer.component';
 import { EmpresasCadastroComponent } from './empresas-cadastro/empresas-cadastro.component';
@@ -372,24 +372,30 @@ export class EmpresasComponent implements OnInit, OnDestroy {
 
   /** Retorna info de exibição do certificado (validade + dias restantes/vencidos) */
   getCertDisplayInfo(item: EmpresaListagemItem) {
-    const info = getCertDisplayInfoUtil(toEmpresaRow(item));
-    return info ? { label: info.label, diasText: info.diasText, vencido: info.vencido, certStatus: info.certStatus } : null;
+    const info = getCertDisplayInfoUtil(item);
+    return info
+      ? {
+          label: info.label,
+          diasText: info.diasText,
+          vencido: info.vencido,
+          certStatus: info.certStatus,
+        }
+      : null;
   }
 
   getStatusGeral(item: EmpresaListagemItem) {
-    return computeCompanyStatusGeral(toEmpresaRow(item));
+    return displayStatusGeral(item);
   }
 
   getStatusReason(item: EmpresaListagemItem) {
-    return computeStatusReason(toEmpresaRow(item));
+    return displayStatusReason(item);
   }
 
-  /** Retorna status geral e motivo juntos (evita múltiplos toEmpresaRow). */
+  /** Status e motivo vindos da API (sem recálculo local). */
   getStatusInfo(item: EmpresaListagemItem): { status: string; reason: string } {
-    const row = toEmpresaRow(item);
     return {
-      status: computeCompanyStatusGeral(row),
-      reason: computeStatusReason(row),
+      status: displayStatusGeral(item),
+      reason: displayStatusReason(item),
     };
   }
 

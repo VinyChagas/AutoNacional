@@ -4,79 +4,12 @@ exports.obterSummaryExecucao = obterSummaryExecucao;
 exports.listarEmpresasAptas = listarEmpresasAptas;
 /**
  * Service de resumo de empresas para a tela de Execução de Processos.
- * Calcula status_geral (OPERACIONAL, ATENCAO, PARCIAL, INOPERANTE) e login_metodo (CERTIFICADO, CREDENCIAL).
+ * Reutiliza EmpresaStatusService (mesma regra da listagem/summary).
  */
 const client_1 = require("../db/client");
-const DIAS_VENCENDO = 30;
-const DIAS_REVALIDAR_CRED = 7;
+const empresa_status_1 = require("../modules/certificados/empresas/empresa-status");
 function normCnpj(cnpj) {
     return cnpj.replace(/[.\/\-\s]/g, '').trim();
-}
-function parseDataValidade(val) {
-    if (!val?.trim())
-        return null;
-    const m = val.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) {
-        const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-        return isNaN(d.getTime()) ? null : d;
-    }
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-}
-function hojeSemHora() {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-}
-/** Cert válido = não vencido. Vencendo = dentro de 30 dias. */
-function getCertStatus(hasCert, certValidade) {
-    if (!hasCert)
-        return 'NONE';
-    const dt = parseDataValidade(certValidade);
-    if (!dt)
-        return 'NONE';
-    const hoje = hojeSemHora();
-    const hojeMais30 = new Date(hoje);
-    hojeMais30.setDate(hojeMais30.getDate() + DIAS_VENCENDO);
-    if (dt < hoje)
-        return 'VENCIDO';
-    if (dt >= hoje && dt <= hojeMais30)
-        return 'VENCENDO';
-    return 'VALIDO';
-}
-function needsRevalidateCred(credStatus, ultimoTeste) {
-    const s = (credStatus ?? '').toUpperCase();
-    if (['NAO_TESTADO', 'INVALIDA', 'ERRO_VALIDACAO'].includes(s))
-        return true;
-    if (s !== 'OK')
-        return false;
-    if (!ultimoTeste)
-        return true;
-    const hoje = hojeSemHora();
-    const dias = Math.floor((hoje.getTime() - ultimoTeste.getTime()) / (1000 * 60 * 60 * 24));
-    return dias > DIAS_REVALIDAR_CRED;
-}
-function calcularStatusGeral(certStatus, hasCred, credStatus, credNeedsRevalidate) {
-    if (certStatus === 'VALIDO')
-        return 'OPERACIONAL';
-    if (certStatus === 'VENCENDO')
-        return 'ATENCAO';
-    if (certStatus === 'VENCIDO' || certStatus === 'NONE') {
-        if (hasCred && credStatus === 'OK' && !credNeedsRevalidate)
-            return 'OPERACIONAL';
-        if (hasCred && (credStatus !== 'OK' || credNeedsRevalidate))
-            return 'PARCIAL';
-        return 'INOPERANTE';
-    }
-    return 'INOPERANTE';
-}
-function calcularLoginMetodo(hasCert, certStatus, hasCred) {
-    const certUsavel = hasCert && (certStatus === 'VALIDO' || certStatus === 'VENCENDO');
-    if (certUsavel)
-        return 'CERTIFICADO';
-    if (hasCred)
-        return 'CREDENCIAL';
-    return null;
 }
 /**
  * Obtém o resumo de empresas para execução por contabilidade.
@@ -101,6 +34,7 @@ async function obterSummaryExecucao(contabilidadeId) {
                 empresaId: true,
                 status: true,
                 ultimoTesteEm: true,
+                ultimaMensagem: true,
             },
             orderBy: [{ ultimoTesteEm: 'desc' }, { updatedAt: 'desc' }],
         }),
@@ -119,6 +53,7 @@ async function obterSummaryExecucao(contabilidadeId) {
             credPorEmpresa.set(cr.empresaId, {
                 status: cr.status,
                 ultimoTesteEm: cr.ultimoTesteEm,
+                ultimaMensagem: cr.ultimaMensagem ?? null,
             });
         }
     }
@@ -150,31 +85,36 @@ async function obterSummaryExecucao(contabilidadeId) {
         const razaoSocial = emp?.razaoSocial ?? cnpj;
         const hasCert = certPorCnpj.has(cnpj);
         const certVal = certPorCnpj.get(cnpj) ?? null;
-        const certStatus = getCertStatus(hasCert, certVal);
         const hasCred = emp ? credPorEmpresa.has(emp.id) : false;
         const credData = emp ? credPorEmpresa.get(emp.id) : undefined;
-        const credStatus = credData?.status ?? null;
-        const credNeeds = needsRevalidateCred(credStatus, credData?.ultimoTesteEm ?? null);
-        const statusGeral = calcularStatusGeral(certStatus, hasCred, credStatus, credNeeds);
-        const loginMetodo = calcularLoginMetodo(hasCert, certStatus, hasCred);
+        const snap = (0, empresa_status_1.computeOperationalSnapshot)({
+            has_certificado: hasCert,
+            cert_validade: certVal,
+            has_credenciais: hasCred,
+            cred_status: credData?.status ?? null,
+            cred_ultimo_teste_em: credData?.ultimoTesteEm ?? null,
+            cred_ultima_mensagem: credData?.ultimaMensagem ?? null,
+        });
         items.push({
             empresa_id: empresaId,
             cnpj,
             razao_social: razaoSocial,
-            status_geral: statusGeral,
-            login_metodo: loginMetodo,
+            status_geral: snap.status_geral,
+            login_metodo: snap.login_metodo,
+            automation_eligibility: snap.automation_eligibility,
         });
     }
-    const aptas = items.filter((i) => i.status_geral === 'OPERACIONAL' || i.status_geral === 'ATENCAO');
-    const inoperantes = items.filter((i) => i.status_geral === 'INOPERANTE');
+    const operacionais = items.filter((i) => i.status_geral === 'OPERACIONAL');
+    const atencao = items.filter((i) => i.status_geral === 'ATENCAO');
     const parciais = items.filter((i) => i.status_geral === 'PARCIAL');
-    const totalOperacional = items.filter((i) => i.status_geral === 'OPERACIONAL').length;
-    const totalAtencao = items.filter((i) => i.status_geral === 'ATENCAO').length;
+    const inoperantes = items.filter((i) => i.status_geral === 'INOPERANTE');
+    /** Lista “aptas” da UI de execução: operacional + atenção (sem parcial). */
+    const aptas = [...operacionais, ...atencao];
     return {
         total_empresas: items.length,
-        total_aptas: aptas.length,
-        total_operacional: totalOperacional,
-        total_atencao: totalAtencao,
+        total_aptas: aptas.length + parciais.length,
+        total_operacional: operacionais.length,
+        total_atencao: atencao.length,
         total_inoperante: inoperantes.length,
         total_parcial: parciais.length,
         aptas,
@@ -183,10 +123,10 @@ async function obterSummaryExecucao(contabilidadeId) {
     };
 }
 /**
- * Lista apenas empresas aptas (OPERACIONAL ou ATENCAO) para carregar na fila de execução.
+ * Lista empresas com método utilizável para a fila (inclui PARCIAL / warning).
  */
 async function listarEmpresasAptas(contabilidadeId) {
     const summary = await obterSummaryExecucao(contabilidadeId);
-    return summary.aptas;
+    return [...summary.aptas, ...summary.parciais];
 }
 //# sourceMappingURL=execution-summary.service.js.map

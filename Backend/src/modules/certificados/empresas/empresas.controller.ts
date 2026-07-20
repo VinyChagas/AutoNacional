@@ -28,6 +28,15 @@ function toListagemItem(row: {
   cred_ultima_mensagem?: string | null;
   status_geral: string;
   status_geral_motivo?: string | null;
+  certificate_status?: string;
+  credential_status?: string;
+  credential_requires_revalidation?: boolean;
+  credential_revalidation_reason?: string | null;
+  automation_eligibility?: string;
+  issue_codes?: string[];
+  issue_messages?: string[];
+  recommended_action?: string | null;
+  certificate_days_delta?: number | null;
 }) {
   return {
     id: String(row.id),
@@ -47,6 +56,15 @@ function toListagemItem(row: {
     cred_ultima_mensagem: row.cred_ultima_mensagem ?? null,
     status_geral: row.status_geral ?? null,
     status_geral_motivo: row.status_geral_motivo ?? null,
+    certificate_status: row.certificate_status ?? null,
+    credential_status: row.credential_status ?? null,
+    credential_requires_revalidation: Boolean(row.credential_requires_revalidation),
+    credential_revalidation_reason: row.credential_revalidation_reason ?? null,
+    automation_eligibility: row.automation_eligibility ?? null,
+    issue_codes: row.issue_codes ?? [],
+    issue_messages: row.issue_messages ?? [],
+    recommended_action: row.recommended_action ?? null,
+    certificate_days_delta: row.certificate_days_delta ?? null,
   };
 }
 

@@ -17,7 +17,6 @@ function baseItem(
     has_credenciais: false,
     cred_status: null,
     cred_ultimo_teste_em: null,
-    status_geral: 'INOPERANTE',
     ...overrides,
   };
 }
@@ -66,7 +65,7 @@ describe('isCertValido', () => {
     expect(isCertValido(true, '01/01/2020')).toBe(false);
   });
 
-  it('considera válido quando data é futura', () => {
+  it('considera válido quando data é futura (incluindo vencendo)', () => {
     expect(isCertValido(true, '31/12/2099')).toBe(true);
   });
 });
@@ -125,7 +124,6 @@ describe('matchesEmpresaSegment', () => {
         baseItem({
           has_certificado: true,
           cert_validade: '01/01/2020',
-          status_geral: 'PARCIAL',
         }),
         'CERT_EXPIRED'
       )
@@ -135,7 +133,6 @@ describe('matchesEmpresaSegment', () => {
         baseItem({
           has_certificado: true,
           cert_validade: '31/12/2099',
-          status_geral: 'OPERACIONAL',
         }),
         'CERT_EXPIRED'
       )
@@ -151,7 +148,6 @@ describe('matchesEmpresaSegment', () => {
         baseItem({
           has_credenciais: true,
           cred_status: 'NAO_TESTADO',
-          status_geral: 'PARCIAL',
         }),
         'CREDENTIAL_REVALIDATION_REQUIRED'
       )
@@ -162,35 +158,49 @@ describe('matchesEmpresaSegment', () => {
           has_credenciais: true,
           cred_status: 'OK',
           cred_ultimo_teste_em: new Date().toISOString(),
-          status_geral: 'OPERACIONAL',
         }),
         'CREDENTIAL_REVALIDATION_REQUIRED'
       )
     ).toBe(false);
   });
 
-  it('OPERATIONAL usa status_geral do backend', () => {
+  it('OPERATIONAL inclui aptas (ELIGIBLE e WITH_WARNING)', () => {
     expect(
       matchesEmpresaSegment(
-        baseItem({ status_geral: 'OPERACIONAL' }),
+        baseItem({
+          has_certificado: true,
+          cert_validade: '31/12/2099',
+        }),
         'OPERATIONAL'
       )
     ).toBe(true);
-    expect(
-      matchesEmpresaSegment(baseItem({ status_geral: 'PARCIAL' }), 'OPERATIONAL')
-    ).toBe(false);
-  });
-
-  it('NOT_ELIGIBLE exclui OPERACIONAL', () => {
+    // vencendo = WITH_WARNING = operacional para o card
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 5);
+    const dd = String(soon.getDate()).padStart(2, '0');
+    const mm = String(soon.getMonth() + 1).padStart(2, '0');
+    const yyyy = soon.getFullYear();
     expect(
       matchesEmpresaSegment(
-        baseItem({ status_geral: 'INOPERANTE' }),
-        'NOT_ELIGIBLE'
+        baseItem({
+          has_certificado: true,
+          cert_validade: `${dd}/${mm}/${yyyy}`,
+        }),
+        'OPERATIONAL'
       )
+    ).toBe(true);
+  });
+
+  it('NOT_ELIGIBLE exclui empresas com método utilizável', () => {
+    expect(
+      matchesEmpresaSegment(baseItem({}), 'NOT_ELIGIBLE')
     ).toBe(true);
     expect(
       matchesEmpresaSegment(
-        baseItem({ status_geral: 'OPERACIONAL' }),
+        baseItem({
+          has_certificado: true,
+          cert_validade: '31/12/2099',
+        }),
         'NOT_ELIGIBLE'
       )
     ).toBe(false);

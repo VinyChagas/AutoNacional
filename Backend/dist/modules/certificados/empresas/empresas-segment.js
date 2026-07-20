@@ -1,15 +1,14 @@
 "use strict";
-/**
- * Segmentos operacionais dos cards de resumo da tela de Empresas.
- * Fonte única para parse, validação e matching — alinhado ao summary.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.EMPRESA_SEGMENTS = void 0;
+exports.needsCredentialRevalidation = exports.isCertValido = exports.EMPRESA_SEGMENTS = void 0;
 exports.isEmpresaSegment = isEmpresaSegment;
 exports.parseEmpresaSegment = parseEmpresaSegment;
-exports.isCertValido = isCertValido;
-exports.needsCredentialRevalidation = needsCredentialRevalidation;
 exports.matchesEmpresaSegment = matchesEmpresaSegment;
+/**
+ * Segmentos operacionais dos cards de resumo da tela de Empresas.
+ * Matching alinhado ao EmpresaStatusService / summary.
+ */
+const empresa_status_1 = require("./empresa-status");
 exports.EMPRESA_SEGMENTS = [
     'ALL',
     'CERT_EXPIRED',
@@ -17,7 +16,6 @@ exports.EMPRESA_SEGMENTS = [
     'OPERATIONAL',
     'NOT_ELIGIBLE',
 ];
-const DIAS_REVALIDAR_CRED = 7;
 function isEmpresaSegment(value) {
     return exports.EMPRESA_SEGMENTS.includes(value);
 }
@@ -27,65 +25,39 @@ function parseEmpresaSegment(raw) {
     const normalized = raw.trim().toUpperCase();
     return isEmpresaSegment(normalized) ? normalized : 'ALL';
 }
-function parseDataValidade(val) {
-    if (!val?.trim())
-        return null;
-    const m = val.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) {
-        const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-        return isNaN(d.getTime()) ? null : d;
-    }
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-}
-function isCertValido(hasCert, certValidade) {
-    if (!hasCert)
-        return false;
-    const dt = parseDataValidade(certValidade);
-    if (!dt)
-        return false;
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    return dt >= hoje;
-}
-/**
- * Mesma regra do KPI "Credenciais para Validar" em obterSummary.
- */
-function needsCredentialRevalidation(input) {
-    if (!input.has_credenciais)
-        return false;
-    const status = (input.cred_status ?? '').toUpperCase();
-    if (status === 'NAO_TESTADO' ||
-        status === 'INVALIDA' ||
-        status === 'ERRO_VALIDACAO') {
-        return true;
-    }
-    const ultimo = input.cred_ultimo_teste_em;
-    if (!ultimo)
-        return false;
-    const dt = ultimo instanceof Date ? ultimo : new Date(ultimo);
-    if (isNaN(dt.getTime()))
-        return false;
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    const limite = new Date(hoje.getTime() - DIAS_REVALIDAR_CRED * 24 * 60 * 60 * 1000);
-    return dt < limite;
-}
+/** Reexport para consumidores que importavam de empresas-segment. */
+var empresa_status_2 = require("./empresa-status");
+Object.defineProperty(exports, "isCertValido", { enumerable: true, get: function () { return empresa_status_2.isCertValido; } });
+Object.defineProperty(exports, "needsCredentialRevalidation", { enumerable: true, get: function () { return empresa_status_2.needsCredentialRevalidation; } });
 /**
  * Segmento ativo dos cards. Deve produzir o mesmo universo contado no summary.
  */
 function matchesEmpresaSegment(item, segment) {
+    const snap = item.certificate_status != null && item.automation_eligibility != null
+        ? {
+            certificate_status: item.certificate_status,
+            automation_eligibility: item.automation_eligibility,
+            credential_requires_revalidation: (0, empresa_status_1.needsCredentialRevalidation)(item),
+        }
+        : (() => {
+            const s = (0, empresa_status_1.computeOperationalSnapshot)(item);
+            return {
+                certificate_status: s.certificate_status,
+                automation_eligibility: s.automation_eligibility,
+                credential_requires_revalidation: s.credential_requires_revalidation,
+            };
+        })();
     switch (segment) {
         case 'ALL':
             return true;
         case 'CERT_EXPIRED':
-            return item.has_certificado && !isCertValido(true, item.cert_validade);
+            return snap.certificate_status === 'EXPIRED';
         case 'CREDENTIAL_REVALIDATION_REQUIRED':
-            return needsCredentialRevalidation(item);
+            return snap.credential_requires_revalidation;
         case 'OPERATIONAL':
-            return item.status_geral === 'OPERACIONAL';
+            return (0, empresa_status_1.isAutomationEligible)(snap.automation_eligibility);
         case 'NOT_ELIGIBLE':
-            return item.status_geral !== 'OPERACIONAL';
+            return snap.automation_eligibility === 'NOT_ELIGIBLE';
         default: {
             const _exhaustive = segment;
             return _exhaustive;

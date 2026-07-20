@@ -1,5 +1,6 @@
+import { type AutomationEligibility, type CertificateStatus, type CredentialRevalidationReason, type CredentialStatus, type StatusGeralDisplay } from './empresa-status';
 import { type EmpresaSegment } from './empresas-segment';
-export type StatusGeral = 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
+export type StatusGeral = StatusGeralDisplay;
 export interface EmpresaAgregada {
     id: number;
     cnpj: string;
@@ -18,6 +19,15 @@ export interface EmpresaAgregada {
     cred_ultima_mensagem: string | null;
     status_geral: StatusGeral;
     status_geral_motivo?: string | null;
+    certificate_status: CertificateStatus;
+    credential_status: CredentialStatus;
+    credential_requires_revalidation: boolean;
+    credential_revalidation_reason: CredentialRevalidationReason;
+    automation_eligibility: AutomationEligibility;
+    issue_codes: string[];
+    issue_messages: string[];
+    recommended_action: string | null;
+    certificate_days_delta: number | null;
 }
 export interface EmpresaListagemParams {
     search?: string;
