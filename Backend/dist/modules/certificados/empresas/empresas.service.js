@@ -42,6 +42,7 @@ exports.obterSummary = obterSummary;
  * Serviço de empresas - regras de negócio e parse de parâmetros.
  */
 const repo = __importStar(require("./empresas.repo"));
+const empresas_segment_1 = require("./empresas-segment");
 const SORT_WHITELIST = [
     'cnpj',
     'razao_social',
@@ -67,6 +68,7 @@ function parseListarParams(query) {
         : undefined;
     const orderRaw = (query.order ?? '').toLowerCase();
     const order = orderRaw === 'asc' || orderRaw === 'desc' ? orderRaw : 'asc';
+    const segment = (0, empresas_segment_1.parseEmpresaSegment)(query.segment);
     return {
         search: query.search?.trim() || undefined,
         contabilidade_id: !isNaN(contabilidadeId) && contabilidadeId > 0 ? contabilidadeId : undefined,
@@ -75,6 +77,7 @@ function parseListarParams(query) {
         sem_cert: semCert,
         sem_cred: semCred,
         sem_metodo: semMetodo,
+        segment,
         page: isNaN(page) ? 1 : page,
         limit: isNaN(limit) ? 20 : limit,
         sort,

@@ -3,29 +3,18 @@
  */
 import { prisma } from '../../../db/client';
 import { Prisma } from '@prisma/client';
+import {
+  isCertValido,
+  matchesEmpresaSegment,
+  needsCredentialRevalidation,
+  type EmpresaSegment,
+} from './empresas-segment';
+
+/** Limite ao carregar o conjunto completo para filtros em memória (segment/chips). */
+const MEMORY_FILTER_MAX_TAKE = 50_000;
 
 function normCnpj(cnpj: string): string {
   return cnpj.replace(/[.\/\-\s]/g, '').trim();
-}
-
-function parseDataValidade(val: string | null): Date | null {
-  if (!val?.trim()) return null;
-  const m = val.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function isCertValido(hasCert: boolean, certValidade: string | null): boolean {
-  if (!hasCert) return false;
-  const dt = parseDataValidade(certValidade);
-  if (!dt) return false;
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  return dt >= hoje;
 }
 
 function isCredValida(hasCred: boolean, credStatus: string | null): boolean {
@@ -88,6 +77,8 @@ export interface EmpresaListagemParams {
   sem_cert?: boolean;
   sem_cred?: boolean;
   sem_metodo?: boolean;
+  /** Segmento operacional dos cards (ignorado pelo summary). */
+  segment?: EmpresaSegment;
   page?: number;
   limit?: number;
   sort?: 'cnpj' | 'razao_social' | 'contabilidade_nome' | 'cert_validade' | 'has_credenciais' | 'status_geral';
@@ -103,8 +94,8 @@ export interface EmpresaListagemResult {
 
 /**
  * Lista empresas com campos agregados.
- * Busca em lotes e aplica filtros has_cert/has_cred em memória quando necessário
- * (para manter compatibilidade com schema atual; com view seria mais eficiente).
+ * Filtros estruturais (chips) e segmento dos cards exigem agregação em memória;
+ * nesse caso o conjunto completo do escopo base é carregado, filtrado, contado e só então paginado.
  */
 export async function listarComAgregados(
   params: EmpresaListagemParams
@@ -112,6 +103,7 @@ export async function listarComAgregados(
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(100, Math.max(1, params.limit ?? 20));
   const skip = (page - 1) * limit;
+  const segment: EmpresaSegment = params.segment ?? 'ALL';
 
   const whereConditions: Prisma.EmpresaWhereInput[] = [];
 
@@ -134,19 +126,19 @@ export async function listarComAgregados(
   const where: Prisma.EmpresaWhereInput =
     whereConditions.length > 0 ? { AND: whereConditions } : {};
 
-  const needsHasFilter =
+  const needsMemoryFilter =
     params.has_cert != null ||
     params.has_cred != null ||
-    params.sem_cert ||
-    params.sem_cred ||
-    params.sem_metodo;
-  const takeSize = needsHasFilter ? limit * 5 : limit;
+    Boolean(params.sem_cert) ||
+    Boolean(params.sem_cred) ||
+    Boolean(params.sem_metodo) ||
+    segment !== 'ALL';
 
   const empresas = await prisma.empresa.findMany({
     where,
     orderBy: { razaoSocial: 'asc' },
-    skip: needsHasFilter ? 0 : skip,
-    take: takeSize,
+    skip: needsMemoryFilter ? 0 : skip,
+    take: needsMemoryFilter ? MEMORY_FILTER_MAX_TAKE : limit,
   });
 
   const cnps = empresas.map((e) => normCnpj(e.cnpj));
@@ -242,6 +234,22 @@ export async function listarComAgregados(
     if (params.sem_cred) items = items.filter((i) => !i.has_credenciais);
   }
 
+  if (segment !== 'ALL') {
+    items = items.filter((i) =>
+      matchesEmpresaSegment(
+        {
+          has_certificado: i.has_certificado,
+          cert_validade: i.cert_validade,
+          has_credenciais: i.has_credenciais,
+          cred_status: i.cred_status,
+          cred_ultimo_teste_em: i.cred_ultimo_teste_em,
+          status_geral: i.status_geral,
+        },
+        segment
+      )
+    );
+  }
+
   if (params.sort) {
     const ord = params.order === 'desc' ? -1 : 1;
     const toVal = (i: EmpresaAgregada): string | number | null => {
@@ -275,12 +283,12 @@ export async function listarComAgregados(
     });
   }
 
-  const totalFiltered = needsHasFilter ? items.length : total;
-  const paginatedItems = needsHasFilter ? items.slice(skip, skip + limit) : items;
+  const totalFiltered = needsMemoryFilter ? items.length : total;
+  const paginatedItems = needsMemoryFilter ? items.slice(skip, skip + limit) : items;
 
   return {
     items: paginatedItems,
-    total: needsHasFilter ? totalFiltered : total,
+    total: needsMemoryFilter ? totalFiltered : total,
     page,
     limit,
   };
@@ -426,10 +434,6 @@ export async function obterSummary(
     }
   }
 
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const seteDiasAtras = new Date(hoje.getTime() - 7 * 24 * 60 * 60 * 1000);
-
   let items: Array<{ hasCert: boolean; certVal: string | null; hasCred: boolean; credStat: string | null; credUltimoTeste: Date | null }> = [];
   for (const e of empresas) {
     const cn = normCnpj(e.cnpj);
@@ -461,17 +465,14 @@ export async function obterSummary(
     if (i.hasCert && !isCertValido(true, i.certVal)) {
       certificados_vencidos++;
     }
-    if (i.hasCred) {
-      const status = (i.credStat ?? '').toUpperCase();
-      const ultimoTeste = i.credUltimoTeste;
-      if (
-        status === 'NAO_TESTADO' ||
-        status === 'INVALIDA' ||
-        status === 'ERRO_VALIDACAO' ||
-        (ultimoTeste && ultimoTeste < seteDiasAtras)
-      ) {
-        credenciais_para_validar++;
-      }
+    if (
+      needsCredentialRevalidation({
+        has_credenciais: i.hasCred,
+        cred_status: i.credStat,
+        cred_ultimo_teste_em: i.credUltimoTeste,
+      })
+    ) {
+      credenciais_para_validar++;
     }
     const { status } = calcularStatusGeral(i.hasCert, i.certVal, i.hasCred, i.credStat);
     if (status === 'OPERACIONAL') {

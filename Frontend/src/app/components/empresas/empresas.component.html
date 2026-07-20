@@ -190,7 +190,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  @for (item of filteredEmpresas; track item.id) {
+                  @for (item of listaEmpresas; track item.id) {
                     <tr [class.row-expanded]="empresaSelecionada?.id === item.id">
                       <td class="td-checkbox">
                         <label class="checkbox-wrap">

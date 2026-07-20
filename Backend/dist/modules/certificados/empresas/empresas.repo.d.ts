@@ -1,3 +1,4 @@
+import { type EmpresaSegment } from './empresas-segment';
 export type StatusGeral = 'OPERACIONAL' | 'PARCIAL' | 'INOPERANTE';
 export interface EmpresaAgregada {
     id: number;
@@ -26,6 +27,8 @@ export interface EmpresaListagemParams {
     sem_cert?: boolean;
     sem_cred?: boolean;
     sem_metodo?: boolean;
+    /** Segmento operacional dos cards (ignorado pelo summary). */
+    segment?: EmpresaSegment;
     page?: number;
     limit?: number;
     sort?: 'cnpj' | 'razao_social' | 'contabilidade_nome' | 'cert_validade' | 'has_credenciais' | 'status_geral';
@@ -39,8 +42,8 @@ export interface EmpresaListagemResult {
 }
 /**
  * Lista empresas com campos agregados.
- * Busca em lotes e aplica filtros has_cert/has_cred em memória quando necessário
- * (para manter compatibilidade com schema atual; com view seria mais eficiente).
+ * Filtros estruturais (chips) e segmento dos cards exigem agregação em memória;
+ * nesse caso o conjunto completo do escopo base é carregado, filtrado, contado e só então paginado.
  */
 export declare function listarComAgregados(params: EmpresaListagemParams): Promise<EmpresaListagemResult>;
 export interface EmpresaDetalhada {

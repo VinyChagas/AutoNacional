@@ -47,6 +47,13 @@ export class EmpresasUnificadoService {
     sem_cert?: boolean;
     sem_cred?: boolean;
     sem_metodo?: boolean;
+    /** Segmento operacional dos cards (API). */
+    segment?:
+      | 'ALL'
+      | 'CERT_EXPIRED'
+      | 'CREDENTIAL_REVALIDATION_REQUIRED'
+      | 'OPERATIONAL'
+      | 'NOT_ELIGIBLE';
     page?: number;
     limit?: number;
     sort?: string;
@@ -76,6 +83,9 @@ export class EmpresasUnificadoService {
     }
     if (params.sem_metodo) {
       httpParams = httpParams.set('sem_metodo', 'true');
+    }
+    if (params.segment && params.segment !== 'ALL') {
+      httpParams = httpParams.set('segment', params.segment);
     }
     if (params.sort) {
       httpParams = httpParams.set('sort', params.sort);

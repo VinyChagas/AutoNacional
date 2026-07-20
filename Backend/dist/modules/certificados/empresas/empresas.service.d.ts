@@ -11,6 +11,7 @@ export interface ListarEmpresasQuery {
     sem_cert?: string;
     sem_cred?: string;
     sem_metodo?: string;
+    segment?: string;
     page?: string;
     limit?: string;
     sort?: string;

@@ -8,29 +8,11 @@ exports.obterPorIdComDetalhes = obterPorIdComDetalhes;
  * Repositório de empresas - listagem com agregados e detalhes.
  */
 const client_1 = require("../../../db/client");
+const empresas_segment_1 = require("./empresas-segment");
+/** Limite ao carregar o conjunto completo para filtros em memória (segment/chips). */
+const MEMORY_FILTER_MAX_TAKE = 50_000;
 function normCnpj(cnpj) {
     return cnpj.replace(/[.\/\-\s]/g, '').trim();
-}
-function parseDataValidade(val) {
-    if (!val?.trim())
-        return null;
-    const m = val.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) {
-        const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-        return isNaN(d.getTime()) ? null : d;
-    }
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-}
-function isCertValido(hasCert, certValidade) {
-    if (!hasCert)
-        return false;
-    const dt = parseDataValidade(certValidade);
-    if (!dt)
-        return false;
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    return dt >= hoje;
 }
 function isCredValida(hasCred, credStatus) {
     if (!hasCred)
@@ -38,7 +20,7 @@ function isCredValida(hasCred, credStatus) {
     return (credStatus ?? '').toUpperCase() === 'OK';
 }
 function calcularStatusGeral(hasCert, certValidade, hasCred, credStatus) {
-    const certValido = isCertValido(hasCert, certValidade);
+    const certValido = (0, empresas_segment_1.isCertValido)(hasCert, certValidade);
     const credValida = isCredValida(hasCred, credStatus);
     const temMetodo = hasCert || hasCred;
     if (!temMetodo) {
@@ -59,13 +41,14 @@ function calcularStatusGeral(hasCert, certValidade, hasCred, credStatus) {
 }
 /**
  * Lista empresas com campos agregados.
- * Busca em lotes e aplica filtros has_cert/has_cred em memória quando necessário
- * (para manter compatibilidade com schema atual; com view seria mais eficiente).
+ * Filtros estruturais (chips) e segmento dos cards exigem agregação em memória;
+ * nesse caso o conjunto completo do escopo base é carregado, filtrado, contado e só então paginado.
  */
 async function listarComAgregados(params) {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(100, Math.max(1, params.limit ?? 20));
     const skip = (page - 1) * limit;
+    const segment = params.segment ?? 'ALL';
     const whereConditions = [];
     if (params.contabilidade_id != null) {
         whereConditions.push({ contabilidadeId: params.contabilidade_id });
@@ -82,17 +65,17 @@ async function listarComAgregados(params) {
         });
     }
     const where = whereConditions.length > 0 ? { AND: whereConditions } : {};
-    const needsHasFilter = params.has_cert != null ||
+    const needsMemoryFilter = params.has_cert != null ||
         params.has_cred != null ||
-        params.sem_cert ||
-        params.sem_cred ||
-        params.sem_metodo;
-    const takeSize = needsHasFilter ? limit * 5 : limit;
+        Boolean(params.sem_cert) ||
+        Boolean(params.sem_cred) ||
+        Boolean(params.sem_metodo) ||
+        segment !== 'ALL';
     const empresas = await client_1.prisma.empresa.findMany({
         where,
         orderBy: { razaoSocial: 'asc' },
-        skip: needsHasFilter ? 0 : skip,
-        take: takeSize,
+        skip: needsMemoryFilter ? 0 : skip,
+        take: needsMemoryFilter ? MEMORY_FILTER_MAX_TAKE : limit,
     });
     const cnps = empresas.map((e) => normCnpj(e.cnpj));
     const ids = empresas.map((e) => e.id);
@@ -188,6 +171,16 @@ async function listarComAgregados(params) {
         if (params.sem_cred)
             items = items.filter((i) => !i.has_credenciais);
     }
+    if (segment !== 'ALL') {
+        items = items.filter((i) => (0, empresas_segment_1.matchesEmpresaSegment)({
+            has_certificado: i.has_certificado,
+            cert_validade: i.cert_validade,
+            has_credenciais: i.has_credenciais,
+            cred_status: i.cred_status,
+            cred_ultimo_teste_em: i.cred_ultimo_teste_em,
+            status_geral: i.status_geral,
+        }, segment));
+    }
     if (params.sort) {
         const ord = params.order === 'desc' ? -1 : 1;
         const toVal = (i) => {
@@ -225,11 +218,11 @@ async function listarComAgregados(params) {
             return cmp * ord;
         });
     }
-    const totalFiltered = needsHasFilter ? items.length : total;
-    const paginatedItems = needsHasFilter ? items.slice(skip, skip + limit) : items;
+    const totalFiltered = needsMemoryFilter ? items.length : total;
+    const paginatedItems = needsMemoryFilter ? items.slice(skip, skip + limit) : items;
     return {
         items: paginatedItems,
-        total: needsHasFilter ? totalFiltered : total,
+        total: needsMemoryFilter ? totalFiltered : total,
         page,
         limit,
     };
@@ -328,9 +321,6 @@ async function obterSummary(params) {
             });
         }
     }
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    const seteDiasAtras = new Date(hoje.getTime() - 7 * 24 * 60 * 60 * 1000);
     let items = [];
     for (const e of empresas) {
         const cn = normCnpj(e.cnpj);
@@ -363,18 +353,15 @@ async function obterSummary(params) {
     let credenciais_para_validar = 0;
     let operacionais = 0;
     for (const i of items) {
-        if (i.hasCert && !isCertValido(true, i.certVal)) {
+        if (i.hasCert && !(0, empresas_segment_1.isCertValido)(true, i.certVal)) {
             certificados_vencidos++;
         }
-        if (i.hasCred) {
-            const status = (i.credStat ?? '').toUpperCase();
-            const ultimoTeste = i.credUltimoTeste;
-            if (status === 'NAO_TESTADO' ||
-                status === 'INVALIDA' ||
-                status === 'ERRO_VALIDACAO' ||
-                (ultimoTeste && ultimoTeste < seteDiasAtras)) {
-                credenciais_para_validar++;
-            }
+        if ((0, empresas_segment_1.needsCredentialRevalidation)({
+            has_credenciais: i.hasCred,
+            cred_status: i.credStat,
+            cred_ultimo_teste_em: i.credUltimoTeste,
+        })) {
+            credenciais_para_validar++;
         }
         const { status } = calcularStatusGeral(i.hasCert, i.certVal, i.hasCred, i.credStat);
         if (status === 'OPERACIONAL') {

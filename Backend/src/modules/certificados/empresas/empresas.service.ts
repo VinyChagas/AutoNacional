@@ -3,6 +3,7 @@
  */
 import * as repo from './empresas.repo';
 import type { EmpresaListagemParams } from './empresas.repo';
+import { parseEmpresaSegment } from './empresas-segment';
 
 const SORT_WHITELIST = [
   'cnpj',
@@ -21,6 +22,7 @@ export interface ListarEmpresasQuery {
   sem_cert?: string;
   sem_cred?: string;
   sem_metodo?: string;
+  segment?: string;
   page?: string;
   limit?: string;
   sort?: string;
@@ -46,6 +48,7 @@ export function parseListarParams(query: ListarEmpresasQuery): EmpresaListagemPa
     : undefined;
   const orderRaw = (query.order ?? '').toLowerCase();
   const order = orderRaw === 'asc' || orderRaw === 'desc' ? orderRaw : 'asc';
+  const segment = parseEmpresaSegment(query.segment);
 
   return {
     search: query.search?.trim() || undefined,
@@ -54,11 +57,12 @@ export function parseListarParams(query: ListarEmpresasQuery): EmpresaListagemPa
     has_cred: hasCred,
     sem_cert: semCert,
     sem_cred: semCred,
-  sem_metodo: semMetodo,
-  page: isNaN(page) ? 1 : page,
-  limit: isNaN(limit) ? 20 : limit,
-  sort,
-  order,
+    sem_metodo: semMetodo,
+    segment,
+    page: isNaN(page) ? 1 : page,
+    limit: isNaN(limit) ? 20 : limit,
+    sort,
+    order,
   };
 }
 
