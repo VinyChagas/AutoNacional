@@ -35,6 +35,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSession = createSession;
 exports.getSessionFiles = getSessionFiles;
+exports.saveSessionMeta = saveSessionMeta;
+exports.loadSessionMeta = loadSessionMeta;
+exports.markIndicesProcessed = markIndicesProcessed;
 exports.destroySession = destroySession;
 exports.cleanupExpired = cleanupExpired;
 /**
@@ -48,6 +51,9 @@ const BASE = path.join(process.cwd(), 'temp', 'import-sessions');
 const TTL_MS = 60 * 60 * 1000; // 1 hora
 function sessionDir(sessionId) {
     return path.join(BASE, sessionId);
+}
+function metaPath(sessionId) {
+    return path.join(sessionDir(sessionId), 'meta.json');
 }
 function ensureBase() {
     if (!fs.existsSync(BASE)) {
@@ -63,6 +69,26 @@ function isExpired(dir) {
         return true;
     }
 }
+function touchSession(sessionId) {
+    const dir = sessionDir(sessionId);
+    try {
+        const now = new Date();
+        fs.utimesSync(dir, now, now);
+    }
+    catch {
+        // ignorar
+    }
+}
+function assertSessionAlive(sessionId) {
+    const dir = sessionDir(sessionId);
+    if (!fs.existsSync(dir)) {
+        throw new Error('Sessão de importação expirada ou inválida');
+    }
+    if (isExpired(dir)) {
+        destroySession(sessionId);
+        throw new Error('Sessão de importação expirada');
+    }
+}
 function createSession(files) {
     ensureBase();
     const sessionId = (0, crypto_1.randomUUID)();
@@ -74,17 +100,13 @@ function createSession(files) {
             fs.writeFileSync(path.join(dir, `${i}${ext}`), f.buffer);
         }
     });
+    saveSessionMeta(sessionId, { preview: [], processed: [] });
     return sessionId;
 }
 function getSessionFiles(sessionId) {
+    assertSessionAlive(sessionId);
+    touchSession(sessionId);
     const dir = sessionDir(sessionId);
-    if (!fs.existsSync(dir)) {
-        throw new Error('Sessão de importação expirada ou inválida');
-    }
-    if (isExpired(dir)) {
-        destroySession(sessionId);
-        throw new Error('Sessão de importação expirada');
-    }
     const files = [];
     const entries = fs.readdirSync(dir).sort((a, b) => {
         const na = parseInt(a.replace(/\D/g, ''), 10);
@@ -99,6 +121,36 @@ function getSessionFiles(sessionId) {
         }
     }
     return files;
+}
+function saveSessionMeta(sessionId, meta) {
+    assertSessionAlive(sessionId);
+    fs.writeFileSync(metaPath(sessionId), JSON.stringify(meta), 'utf8');
+    touchSession(sessionId);
+}
+function loadSessionMeta(sessionId) {
+    assertSessionAlive(sessionId);
+    const fp = metaPath(sessionId);
+    if (!fs.existsSync(fp)) {
+        return { preview: [], processed: [] };
+    }
+    try {
+        const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        return {
+            preview: Array.isArray(raw.preview) ? raw.preview : [],
+            processed: Array.isArray(raw.processed) ? raw.processed : [],
+        };
+    }
+    catch {
+        return { preview: [], processed: [] };
+    }
+}
+function markIndicesProcessed(sessionId, indices) {
+    const meta = loadSessionMeta(sessionId);
+    const set = new Set(meta.processed);
+    for (const i of indices)
+        set.add(i);
+    meta.processed = [...set].sort((a, b) => a - b);
+    saveSessionMeta(sessionId, meta);
 }
 function destroySession(sessionId) {
     const dir = sessionDir(sessionId);

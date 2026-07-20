@@ -195,29 +195,59 @@ export interface CadastroResult {
 }
 
 // Imports - Certificados
+export type PreviewCertAction =
+  | 'NEW'
+  | 'UPDATE_AVAILABLE'
+  | 'EXACT_DUPLICATE'
+  | 'OLDER_CERTIFICATE'
+  | 'EXPIRED_CERTIFICATE'
+  | 'INVALID_FILE'
+  | 'DOCUMENT_MISMATCH'
+  | 'ERROR';
+
+export type ConfirmCertAction = 'CREATE' | 'REPLACE_EXISTING' | 'SKIP';
+
+export interface PreviewCertificadosItem {
+  indice: number;
+  cnpj: string;
+  razao_social: string;
+  data_validade: string | null;
+  existe_empresa: boolean;
+  existe_certificado?: boolean;
+  action: PreviewCertAction;
+  can_confirm: boolean;
+  default_confirm_action: ConfirmCertAction;
+  message: string;
+  days_delta: number | null;
+  existing_cert_id: number | null;
+  existing_valid_until: string | null;
+  /** Legado */
+  acao?:
+    | 'IMPORTAR'
+    | 'ERRO'
+    | 'DUPLICADO'
+    | 'UPDATE_AVAILABLE'
+    | 'OLDER_CERTIFICATE'
+    | 'EXPIRED_CERTIFICATE';
+  erro?: string;
+}
+
 export interface PreviewCertificadosResponse {
   session_id: string;
-  items: Array<{
-    indice: number;
-    cnpj: string;
-    razao_social: string;
-    data_validade: string | null;
-    existe_empresa: boolean;
-    existe_certificado?: boolean;
-    acao: 'IMPORTAR' | 'ERRO' | 'DUPLICADO';
-    erro?: string;
-  }>;
+  items: PreviewCertificadosItem[];
 }
 
 export interface ConfirmarCertificadosPayload {
   session_id: string;
   senha: string;
-  itens: Array<{ indice: number }>;
+  itens: Array<{ indice: number; action: ConfirmCertAction }>;
   contabilidade_id?: number | null;
 }
 
 export interface ConfirmarCertificadosResponse {
   importados: number;
+  atualizados: number;
+  ignorados: number;
   erros: Array<{ indice: number; mensagem: string }>;
 }
 

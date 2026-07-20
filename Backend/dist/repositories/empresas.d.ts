@@ -16,6 +16,10 @@ export declare function criarEmpresa(data: {
     contabilidadeId?: number;
 }): Promise<Empresa>;
 export declare function atualizarEmpresa(empresaId: number, data: Partial<Pick<Empresa, 'razaoSocial' | 'regime' | 'contabilidadeId'>>): Promise<Empresa | null>;
+/**
+ * Exclui empresa + credenciais (cascade FK) + certificados (sem FK) + Storage.
+ * Certificados são buscados por empresaId e por CNPJ equivalente (legado).
+ */
 export declare function deletarEmpresa(empresaId: number): Promise<boolean>;
 export declare function verificarCnpjTemCertificado(cnpj: string): Promise<boolean>;
 //# sourceMappingURL=empresas.d.ts.map

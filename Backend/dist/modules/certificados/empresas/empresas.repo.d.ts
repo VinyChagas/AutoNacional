@@ -87,6 +87,7 @@ export interface EmpresaDetalhada {
 }
 /**
  * Exclui empresas em massa na ordem: credenciais → certificados_digitais → empresas.
+ * Também remove arquivos do Storage após a transação.
  * Ignora IDs inexistentes e retorna a quantidade efetivamente deletada.
  * Certificados são removidos por empresaId e também por cnpj (para registros legados sem empresaId).
  */

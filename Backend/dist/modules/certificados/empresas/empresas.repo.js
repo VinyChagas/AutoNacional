@@ -10,6 +10,7 @@ exports.obterPorIdComDetalhes = obterPorIdComDetalhes;
 const client_1 = require("../../../db/client");
 const empresa_status_1 = require("./empresa-status");
 const empresas_segment_1 = require("./empresas-segment");
+const certificado_storage_service_1 = require("../../../services/certificado-storage.service");
 /** Limite ao carregar o conjunto completo para filtros em memória (segment/chips). */
 const MEMORY_FILTER_MAX_TAKE = 50_000;
 function normCnpj(cnpj) {
@@ -235,6 +236,7 @@ async function listarComAgregados(params) {
 }
 /**
  * Exclui empresas em massa na ordem: credenciais → certificados_digitais → empresas.
+ * Também remove arquivos do Storage após a transação.
  * Ignora IDs inexistentes e retorna a quantidade efetivamente deletada.
  * Certificados são removidos por empresaId e também por cnpj (para registros legados sem empresaId).
  */
@@ -251,6 +253,16 @@ async function deletarEmMassa(ids) {
     if (empresaIds.length === 0)
         return 0;
     const empresaIdStrings = empresaIds.map(String);
+    const certs = await client_1.prisma.certificado.findMany({
+        where: {
+            OR: [
+                { empresaId: { in: empresaIdStrings } },
+                ...(cnps.length > 0 ? [{ cnpj: { in: cnps } }] : []),
+            ],
+        },
+        select: { id: true, arquivo: true },
+    });
+    const paths = certs.map((c) => c.arquivo);
     await client_1.prisma.$transaction(async (tx) => {
         await tx.credencial.deleteMany({ where: { empresaId: { in: empresaIds } } });
         await tx.certificado.deleteMany({
@@ -263,6 +275,7 @@ async function deletarEmMassa(ids) {
         });
         await tx.empresa.deleteMany({ where: { id: { in: empresaIds } } });
     });
+    await (0, certificado_storage_service_1.removerArquivosCertificado)(paths);
     return empresaIds.length;
 }
 /**

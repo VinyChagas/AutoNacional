@@ -58,16 +58,32 @@ export async function confirmarCertificados(
     jsonError(res, 'senha é obrigatória no confirmar', 400);
     return;
   }
-  const itens = itensRaw
-    .filter(
-      (x): x is Record<string, number> =>
-        x != null && typeof x === 'object' && 'indice' in x
-    )
-    .map((x) => ({ indice: Number(x.indice) }))
-    .filter((x) => !isNaN(x.indice));
+  const itens: Array<{
+    indice: number;
+    action: 'CREATE' | 'REPLACE_EXISTING' | 'SKIP';
+  }> = [];
+
+  for (const x of itensRaw) {
+    if (x == null || typeof x !== 'object' || !('indice' in x)) continue;
+    const row = x as Record<string, unknown>;
+    const indice = Number(row.indice);
+    if (isNaN(indice)) continue;
+    try {
+      const hasExplicit = 'action' in row && row.action != null && row.action !== '';
+      const action = certService.resolveConfirmAction(row.action, hasExplicit);
+      itens.push({ indice, action });
+    } catch (e) {
+      jsonError(res, (e as Error).message, 400);
+      return;
+    }
+  }
 
   if (itens.length === 0) {
-    jsonError(res, 'Envie ao menos um item em itens com { indice }', 400);
+    jsonError(
+      res,
+      'Envie ao menos um item em itens com { indice, action } (CREATE | REPLACE_EXISTING | SKIP)',
+      400
+    );
     return;
   }
 
@@ -84,7 +100,15 @@ export async function confirmarCertificados(
     jsonCreated(res, result, 'Importação de certificados concluída');
   } catch (e) {
     const msg = (e as Error).message;
-    if (msg.includes('expirada') || msg.includes('inválida')) {
+    if (
+      msg.includes('expirada') ||
+      msg.includes('inválida') ||
+      msg.includes('REPLACE_EXISTING') ||
+      msg.includes('CREATE') ||
+      msg.includes('substitu') ||
+      msg.includes('bloqueada') ||
+      msg.includes('idêntico')
+    ) {
       jsonError(res, msg, 400);
       return;
     }

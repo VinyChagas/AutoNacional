@@ -16,6 +16,7 @@ import {
   matchesEmpresaSegment,
   type EmpresaSegment,
 } from './empresas-segment';
+import { removerArquivosCertificado } from '../../../services/certificado-storage.service';
 
 /** Limite ao carregar o conjunto completo para filtros em memória (segment/chips). */
 const MEMORY_FILTER_MAX_TAKE = 50_000;
@@ -345,6 +346,7 @@ export interface EmpresaDetalhada {
 
 /**
  * Exclui empresas em massa na ordem: credenciais → certificados_digitais → empresas.
+ * Também remove arquivos do Storage após a transação.
  * Ignora IDs inexistentes e retorna a quantidade efetivamente deletada.
  * Certificados são removidos por empresaId e também por cnpj (para registros legados sem empresaId).
  */
@@ -361,6 +363,17 @@ export async function deletarEmMassa(ids: number[]): Promise<number> {
 
   const empresaIdStrings = empresaIds.map(String);
 
+  const certs = await prisma.certificado.findMany({
+    where: {
+      OR: [
+        { empresaId: { in: empresaIdStrings } },
+        ...(cnps.length > 0 ? [{ cnpj: { in: cnps } }] : []),
+      ],
+    },
+    select: { id: true, arquivo: true },
+  });
+  const paths = certs.map((c) => c.arquivo);
+
   await prisma.$transaction(async (tx) => {
     await tx.credencial.deleteMany({ where: { empresaId: { in: empresaIds } } });
     await tx.certificado.deleteMany({
@@ -373,6 +386,8 @@ export async function deletarEmMassa(ids: number[]): Promise<number> {
     });
     await tx.empresa.deleteMany({ where: { id: { in: empresaIds } } });
   });
+
+  await removerArquivosCertificado(paths);
 
   return empresaIds.length;
 }

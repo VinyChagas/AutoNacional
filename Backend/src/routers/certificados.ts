@@ -268,13 +268,29 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
-// DELETE /cnpj/:cnpj - Deletar por CNPJ (compatível com frontend)
+// DELETE /cnpj/:cnpj - Deletar TODOS os certificados do CNPJ + Storage
 router.delete('/cnpj/:cnpj', async (req: Request, res: Response) => {
   try {
     const cnpj = limparCnpj(String(req.params.cnpj ?? ''));
-    const ok = await repo.deletarPorCnpj(cnpj);
-    if (!ok) {
+    const result = await repo.removerTodosPorCnpj(cnpj);
+    if (!result) {
       res.status(404).json({ detail: `Certificado com CNPJ ${cnpj} não encontrado` });
+      return;
+    }
+    if (result.storage.failed.length > 0) {
+      logger.warn(
+        {
+          deletedCount: result.deletedCount,
+          storageFailed: result.storage.failed.length,
+        },
+        'Certificados removidos do banco; falha parcial na limpeza do Storage'
+      );
+      res.status(200).json({
+        deleted: result.deletedCount,
+        storage_cleanup_failed: result.storage.failed.length,
+        warning:
+          'Registros removidos do banco, mas alguns arquivos do Storage não puderam ser excluídos',
+      });
       return;
     }
     res.status(204).send();

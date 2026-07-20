@@ -16,7 +16,6 @@
       </div>
 
       <div class="import-modal-body">
-        <!-- Contabilidade vinculada (read-only) -->
         <div class="import-contab-info">
           <label class="import-label">Contabilidade</label>
           <span class="import-contab-badge">
@@ -24,7 +23,6 @@
           </span>
         </div>
 
-        <!-- Seleção de arquivos -->
         <div class="import-select-wrap">
           <input
             #fileInput
@@ -47,7 +45,6 @@
         </div>
 
         @if (items.length > 0) {
-          <!-- Senha padrão + botões -->
           <div class="import-preview-row">
             <div class="import-preview-senha">
               <label class="import-label">Senha padrão para pré-visualizar</label>
@@ -75,9 +72,17 @@
             >
               Aplicar senha para todos
             </button>
+            <button
+              type="button"
+              class="import-btn-batch"
+              (click)="onImportarElegiveis()"
+              [disabled]="!canImportarElegiveis"
+              title="Cadastrar novos e atualizar os elegíveis com confirmação"
+            >
+              {{ importingBatch ? 'Processando...' : 'Importar elegíveis' }}
+            </button>
           </div>
 
-          <!-- Filtros -->
           <div class="import-filters">
             <div class="import-chips">
               <button
@@ -91,27 +96,27 @@
               <button
                 type="button"
                 class="import-chip"
-                [class.import-chip-active]="filtroStatus === 'validos'"
-                (click)="filtroStatus = 'validos'"
+                [class.import-chip-active]="filtroStatus === 'elegiveis'"
+                (click)="filtroStatus = 'elegiveis'"
               >
-                Válidos ({{ validosCount }})
+                Elegíveis ({{ elegiveisCount }})
               </button>
               <button
                 type="button"
                 class="import-chip"
-                [class.import-chip-active]="filtroStatus === 'vencidos'"
-                (click)="filtroStatus = 'vencidos'"
+                [class.import-chip-active]="filtroStatus === 'bloqueados'"
+                (click)="filtroStatus = 'bloqueados'"
               >
-                Vencidos ({{ vencidosCount }})
+                Bloqueados ({{ bloqueadosCount }})
               </button>
             </div>
             <label class="import-toggle-wrap">
               <input
                 type="checkbox"
-                [(ngModel)]="ordenarValidosPrimeiro"
+                [(ngModel)]="ordenarElegiveisPrimeiro"
                 class="import-checkbox"
               />
-              <span>Ordenar: Válidos primeiro</span>
+              <span>Ordenar: Elegíveis primeiro</span>
             </label>
             <input
               type="text"
@@ -121,7 +126,6 @@
             />
           </div>
 
-          <!-- Tabela -->
           <div class="import-table-wrap">
             <table class="import-table">
               <thead>
@@ -129,6 +133,7 @@
                   <th>Status</th>
                   <th>Arquivo</th>
                   <th>CNPJ</th>
+                  <th>Validade</th>
                   <th>Senha</th>
                   <th class="th-actions">Ações</th>
                 </tr>
@@ -153,6 +158,18 @@
                     <td class="td-mono">
                       {{ item.cnpj ? formatarCNPJ(item.cnpj) : '-' }}
                     </td>
+                    <td class="td-validade">
+                      @if (item.validade) {
+                        <span>{{ item.validade }}</span>
+                        @if (item.existingValidade && item.status === 'ATUALIZAR') {
+                          <span class="td-validade-delta" title="Validade do certificado atual">
+                            (atual: {{ item.existingValidade }})
+                          </span>
+                        }
+                      } @else {
+                        <span>-</span>
+                      }
+                    </td>
                     <td>
                       <input
                         type="password"
@@ -176,21 +193,59 @@
                         >
                           Retentar
                         </button>
-                      } @else if (item.status !== 'IMPORTADO') {
+                      } @else if (item.status === 'NOVO') {
                         <button
                           type="button"
                           class="import-btn-import"
-                          (click)="onImportar(item)"
-                          [disabled]="!canImportar(item)"
+                          (click)="onCadastrar(item)"
+                          [disabled]="!canCadastrar(item)"
                         >
-                          Validar & Importar
+                          Cadastrar
+                        </button>
+                        <button
+                          type="button"
+                          class="import-btn-skip"
+                          (click)="onIgnorar(item)"
+                          [disabled]="!canIgnorar(item)"
+                        >
+                          Ignorar
+                        </button>
+                      } @else if (item.status === 'ATUALIZAR') {
+                        <button
+                          type="button"
+                          class="import-btn-update"
+                          (click)="onAtualizar(item)"
+                          [disabled]="!canAtualizar(item)"
+                        >
+                          Atualizar
+                        </button>
+                        <button
+                          type="button"
+                          class="import-btn-skip"
+                          (click)="onIgnorar(item)"
+                          [disabled]="!canIgnorar(item)"
+                        >
+                          Ignorar
+                        </button>
+                      } @else if (
+                        item.status === 'DUPLICADO' ||
+                        item.status === 'ANTIGO' ||
+                        item.status === 'VENCIDO'
+                      ) {
+                        <button
+                          type="button"
+                          class="import-btn-skip"
+                          (click)="onIgnorar(item)"
+                          [disabled]="!canIgnorar(item)"
+                        >
+                          Ignorar
                         </button>
                       }
                     </td>
                   </tr>
                   @if (item.message) {
                     <tr class="import-row-message">
-                      <td colspan="5" class="td-error">{{ item.message }}</td>
+                      <td colspan="6" class="td-error">{{ item.message }}</td>
                     </tr>
                   }
                 }

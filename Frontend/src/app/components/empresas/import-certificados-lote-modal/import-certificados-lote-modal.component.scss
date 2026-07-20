@@ -358,6 +358,14 @@ $radius: 14px;
     background: rgba(234, 179, 8, 0.2);
     color: #a16207;
   }
+  &.badge-atualizar {
+    background: rgba(59, 130, 246, 0.15);
+    color: #1d4ed8;
+  }
+  &.badge-antigo {
+    background: rgba(245, 158, 11, 0.18);
+    color: #b45309;
+  }
   &.badge-erro {
     background: rgba(107, 114, 128, 0.2);
     color: #6b7280;
@@ -373,6 +381,10 @@ $radius: 14px;
   &.badge-importado {
     background: rgba(34, 197, 94, 0.12);
     color: #16a34a;
+  }
+  &.badge-ignorado {
+    background: rgba(148, 163, 184, 0.2);
+    color: #64748b;
   }
 }
 
@@ -404,6 +416,88 @@ $radius: 14px;
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+}
+
+.import-btn-update {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  background: #1d4ed8;
+  color: white;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.import-btn-skip {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text-primary);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.import-btn-batch {
+  padding: 0.55rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 10px;
+  border: none;
+  background: #0f766e;
+  color: white;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    opacity: 0.92;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.td-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.td-validade {
+  font-size: 0.8rem;
+  white-space: nowrap;
+
+  .td-validade-delta {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.72rem;
   }
 }
 

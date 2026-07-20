@@ -76,12 +76,26 @@ async function confirmarCertificados(req, res) {
         (0, response_1.jsonError)(res, 'senha é obrigatória no confirmar', 400);
         return;
     }
-    const itens = itensRaw
-        .filter((x) => x != null && typeof x === 'object' && 'indice' in x)
-        .map((x) => ({ indice: Number(x.indice) }))
-        .filter((x) => !isNaN(x.indice));
+    const itens = [];
+    for (const x of itensRaw) {
+        if (x == null || typeof x !== 'object' || !('indice' in x))
+            continue;
+        const row = x;
+        const indice = Number(row.indice);
+        if (isNaN(indice))
+            continue;
+        try {
+            const hasExplicit = 'action' in row && row.action != null && row.action !== '';
+            const action = certService.resolveConfirmAction(row.action, hasExplicit);
+            itens.push({ indice, action });
+        }
+        catch (e) {
+            (0, response_1.jsonError)(res, e.message, 400);
+            return;
+        }
+    }
     if (itens.length === 0) {
-        (0, response_1.jsonError)(res, 'Envie ao menos um item em itens com { indice }', 400);
+        (0, response_1.jsonError)(res, 'Envie ao menos um item em itens com { indice, action } (CREATE | REPLACE_EXISTING | SKIP)', 400);
         return;
     }
     try {
@@ -97,7 +111,13 @@ async function confirmarCertificados(req, res) {
     }
     catch (e) {
         const msg = e.message;
-        if (msg.includes('expirada') || msg.includes('inválida')) {
+        if (msg.includes('expirada') ||
+            msg.includes('inválida') ||
+            msg.includes('REPLACE_EXISTING') ||
+            msg.includes('CREATE') ||
+            msg.includes('substitu') ||
+            msg.includes('bloqueada') ||
+            msg.includes('idêntico')) {
             (0, response_1.jsonError)(res, msg, 400);
             return;
         }
