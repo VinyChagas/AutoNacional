@@ -100,17 +100,40 @@
       <!-- 4) Ações -->
       <section class="actions">
         <div class="actions-left">
-          <button type="button" class="btn-ghost" (click)="onExportar()">
-            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-            </svg>
-            Exportar
-          </button>
+          <div class="dropdown-wrap" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="btn-ghost"
+              [disabled]="exportando"
+              (click)="onExportar()"
+            >
+              <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              {{ exportando ? 'Exportando...' : 'Exportar' }}
+              <svg class="dropdown-arrow" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            @if (exportOpen && !exportando) {
+              <div class="dropdown-menu">
+                <button type="button" (click)="onExportReport('NOT_ELIGIBLE')">
+                  Empresas não aptas
+                </button>
+                <button type="button" (click)="onExportReport('ALL_PENDING')">
+                  Todas as pendências
+                </button>
+                <button type="button" (click)="onExportReport('FILTERED')">
+                  Resultado filtrado
+                </button>
+              </div>
+            }
+          </div>
           <div class="dropdown-wrap" (click)="$event.stopPropagation()">
             <button
               type="button"
               class="btn-dropdown"
-              (click)="sortOpen = !sortOpen"
+              (click)="sortOpen = !sortOpen; exportOpen = false"
             >
               Ordenar: {{ sortLabel }}
               <svg class="dropdown-arrow" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">

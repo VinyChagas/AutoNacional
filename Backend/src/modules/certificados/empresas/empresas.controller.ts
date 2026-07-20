@@ -212,6 +212,28 @@ export async function summary(req: Request, res: Response): Promise<void> {
   jsonSuccess(res, data);
 }
 
+export async function exportar(req: Request, res: Response): Promise<void> {
+  const result = await service.exportarEmpresas(
+    req.query as service.ListarEmpresasQuery
+  );
+  if ('error' in result) {
+    jsonError(res, result.error, result.status);
+    return;
+  }
+
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${result.filename}"`
+  );
+  res.setHeader('X-Export-Total', String(result.total));
+  res.setHeader('X-Export-Report', result.report);
+  res.send(result.buffer);
+}
+
 export async function cadastroCredencial(req: Request, res: Response): Promise<void> {
   const body = req.body as Record<string, unknown>;
   const cnpj = typeof body.cnpj === 'string' ? body.cnpj.trim() : '';

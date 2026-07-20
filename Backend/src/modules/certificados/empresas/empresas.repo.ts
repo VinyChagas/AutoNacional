@@ -65,6 +65,8 @@ export interface EmpresaListagemParams {
   sem_metodo?: boolean;
   /** Segmento operacional dos cards (ignorado pelo summary). */
   segment?: EmpresaSegment;
+  /** Força carregar o conjunto completo (exportação). */
+  force_full_scan?: boolean;
   page?: number;
   limit?: number;
   sort?: 'cnpj' | 'razao_social' | 'contabilidade_nome' | 'cert_validade' | 'has_credenciais' | 'status_geral';
@@ -113,6 +115,7 @@ export async function listarComAgregados(
     whereConditions.length > 0 ? { AND: whereConditions } : {};
 
   const needsMemoryFilter =
+    Boolean(params.force_full_scan) ||
     params.has_cert != null ||
     params.has_cred != null ||
     Boolean(params.sem_cert) ||
@@ -120,11 +123,15 @@ export async function listarComAgregados(
     Boolean(params.sem_metodo) ||
     segment !== 'ALL';
 
+  const effectiveLimit = params.force_full_scan
+    ? MEMORY_FILTER_MAX_TAKE
+    : limit;
+
   const empresas = await prisma.empresa.findMany({
     where,
     orderBy: { razaoSocial: 'asc' },
     skip: needsMemoryFilter ? 0 : skip,
-    take: needsMemoryFilter ? MEMORY_FILTER_MAX_TAKE : limit,
+    take: needsMemoryFilter ? MEMORY_FILTER_MAX_TAKE : effectiveLimit,
   });
 
   const cnps = empresas.map((e) => normCnpj(e.cnpj));
@@ -295,13 +302,16 @@ export async function listarComAgregados(
   }
 
   const totalFiltered = needsMemoryFilter ? items.length : total;
-  const paginatedItems = needsMemoryFilter ? items.slice(skip, skip + limit) : items;
+  const pageLimit = params.force_full_scan ? Math.max(limit, items.length) : limit;
+  const paginatedItems = needsMemoryFilter
+    ? items.slice(skip, skip + pageLimit)
+    : items;
 
   return {
     items: paginatedItems,
     total: needsMemoryFilter ? totalFiltered : total,
     page,
-    limit,
+    limit: params.force_full_scan ? paginatedItems.length : limit,
   };
 }
 

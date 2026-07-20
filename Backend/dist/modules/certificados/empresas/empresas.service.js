@@ -38,11 +38,13 @@ exports.validarFiltrosConflitantes = validarFiltrosConflitantes;
 exports.listarEmpresas = listarEmpresas;
 exports.obterEmpresaPorId = obterEmpresaPorId;
 exports.obterSummary = obterSummary;
+exports.exportarEmpresas = exportarEmpresas;
 /**
  * Serviço de empresas - regras de negócio e parse de parâmetros.
  */
 const repo = __importStar(require("./empresas.repo"));
 const empresas_segment_1 = require("./empresas-segment");
+const empresas_export_1 = require("./empresas-export");
 const SORT_WHITELIST = [
     'cnpj',
     'razao_social',
@@ -105,5 +107,41 @@ async function obterEmpresaPorId(id) {
 }
 async function obterSummary(params) {
     return repo.obterSummary(params);
+}
+/**
+ * Exporta empresas em XLSX usando a mesma listagem/status da tela.
+ * - NOT_ELIGIBLE / ALL_PENDING: filtros-base (sem segment dos cards)
+ * - FILTERED: filtros-base + segment ativo
+ */
+async function exportarEmpresas(query) {
+    const report = (0, empresas_export_1.parseEmpresaExportReport)(query.report);
+    if (!report) {
+        return {
+            error: 'report é obrigatório e deve ser NOT_ELIGIBLE, ALL_PENDING ou FILTERED',
+            status: 400,
+        };
+    }
+    const format = (query.format ?? 'xlsx').toLowerCase();
+    if (format !== 'xlsx') {
+        return { error: 'format suportado: xlsx', status: 400 };
+    }
+    const params = parseListarParams(query);
+    const conflito = validarFiltrosConflitantes(params);
+    if (conflito) {
+        return { error: conflito, status: 400 };
+    }
+    const listParams = {
+        ...params,
+        segment: report === 'FILTERED' ? params.segment : 'ALL',
+        force_full_scan: true,
+        page: 1,
+        limit: 50_000,
+    };
+    const result = await repo.listarComAgregados(listParams);
+    const filtered = (0, empresas_export_1.filterEmpresasForReport)(result.items, report);
+    const generatedAt = new Date();
+    const buffer = (0, empresas_export_1.buildEmpresasWorkbookBuffer)(filtered, generatedAt);
+    const filename = (0, empresas_export_1.buildExportFilename)(report, generatedAt);
+    return { buffer, filename, report, total: filtered.length };
 }
 //# sourceMappingURL=empresas.service.js.map

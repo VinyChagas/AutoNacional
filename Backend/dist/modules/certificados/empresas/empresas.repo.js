@@ -41,17 +41,21 @@ async function listarComAgregados(params) {
         });
     }
     const where = whereConditions.length > 0 ? { AND: whereConditions } : {};
-    const needsMemoryFilter = params.has_cert != null ||
+    const needsMemoryFilter = Boolean(params.force_full_scan) ||
+        params.has_cert != null ||
         params.has_cred != null ||
         Boolean(params.sem_cert) ||
         Boolean(params.sem_cred) ||
         Boolean(params.sem_metodo) ||
         segment !== 'ALL';
+    const effectiveLimit = params.force_full_scan
+        ? MEMORY_FILTER_MAX_TAKE
+        : limit;
     const empresas = await client_1.prisma.empresa.findMany({
         where,
         orderBy: { razaoSocial: 'asc' },
         skip: needsMemoryFilter ? 0 : skip,
-        take: needsMemoryFilter ? MEMORY_FILTER_MAX_TAKE : limit,
+        take: needsMemoryFilter ? MEMORY_FILTER_MAX_TAKE : effectiveLimit,
     });
     const cnps = empresas.map((e) => normCnpj(e.cnpj));
     const ids = empresas.map((e) => e.id);
@@ -218,12 +222,15 @@ async function listarComAgregados(params) {
         });
     }
     const totalFiltered = needsMemoryFilter ? items.length : total;
-    const paginatedItems = needsMemoryFilter ? items.slice(skip, skip + limit) : items;
+    const pageLimit = params.force_full_scan ? Math.max(limit, items.length) : limit;
+    const paginatedItems = needsMemoryFilter
+        ? items.slice(skip, skip + pageLimit)
+        : items;
     return {
         items: paginatedItems,
         total: needsMemoryFilter ? totalFiltered : total,
         page,
-        limit,
+        limit: params.force_full_scan ? paginatedItems.length : limit,
     };
 }
 /**

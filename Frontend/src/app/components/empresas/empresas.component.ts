@@ -502,7 +502,57 @@ export class EmpresasComponent implements OnInit, OnDestroy {
   }
 
   onExportar(): void {
-    console.log('[Empresas] Exportar clicado');
+    this.exportOpen = !this.exportOpen;
+    this.sortOpen = false;
+    this.cdr.markForCheck();
+  }
+
+  exportOpen = false;
+  exportando = false;
+
+  onExportReport(
+    report: 'NOT_ELIGIBLE' | 'ALL_PENDING' | 'FILTERED'
+  ): void {
+    if (this.exportando) return;
+    this.exportOpen = false;
+    this.exportando = true;
+    this.cdr.markForCheck();
+
+    const listParams = this.buildListParams();
+    this.empresasService
+      .exportar({
+        report,
+        search: listParams.search,
+        contabilidade_id: listParams.contabilidade_id,
+        has_cert: listParams.has_cert,
+        has_cred: listParams.has_cred,
+        sem_cert: listParams.sem_cert,
+        sem_cred: listParams.sem_cred,
+        sem_metodo: listParams.sem_metodo,
+        segment: listParams.segment,
+        sort: listParams.sort,
+        order: listParams.order,
+      })
+      .subscribe({
+        next: ({ blob, filename }) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+          this.toast.success('Exportação concluída');
+          this.exportando = false;
+          this.cdr.markForCheck();
+        },
+        error: (err: unknown) => {
+          this.toast.error(
+            err instanceof Error ? err.message : 'Erro ao exportar'
+          );
+          this.exportando = false;
+          this.cdr.markForCheck();
+        },
+      });
   }
 
   onSortChange(label: string): void {
@@ -894,6 +944,10 @@ export class EmpresasComponent implements OnInit, OnDestroy {
     let changed = false;
     if (this.sortOpen) {
       this.sortOpen = false;
+      changed = true;
+    }
+    if (this.exportOpen) {
+      this.exportOpen = false;
       changed = true;
     }
     if (this.contabDropdownOpen) {

@@ -3,6 +3,7 @@
  */
 import * as repo from './empresas.repo';
 import type { EmpresaListagemParams } from './empresas.repo';
+import { type EmpresaExportReport } from './empresas-export';
 export interface ListarEmpresasQuery {
     search?: string;
     contabilidade_id?: string;
@@ -12,6 +13,8 @@ export interface ListarEmpresasQuery {
     sem_cred?: string;
     sem_metodo?: string;
     segment?: string;
+    report?: string;
+    format?: string;
     page?: string;
     limit?: string;
     sort?: string;
@@ -26,5 +29,20 @@ export declare function obterSummary(params: Pick<EmpresaListagemParams, 'search
     certificados_vencidos: number;
     credenciais_para_validar: number;
     operacionais: number;
+}>;
+export interface ExportEmpresasResult {
+    buffer: Buffer;
+    filename: string;
+    report: EmpresaExportReport;
+    total: number;
+}
+/**
+ * Exporta empresas em XLSX usando a mesma listagem/status da tela.
+ * - NOT_ELIGIBLE / ALL_PENDING: filtros-base (sem segment dos cards)
+ * - FILTERED: filtros-base + segment ativo
+ */
+export declare function exportarEmpresas(query: ListarEmpresasQuery): Promise<ExportEmpresasResult | {
+    error: string;
+    status: number;
 }>;
 //# sourceMappingURL=empresas.service.d.ts.map

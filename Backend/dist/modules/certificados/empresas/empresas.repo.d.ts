@@ -39,6 +39,8 @@ export interface EmpresaListagemParams {
     sem_metodo?: boolean;
     /** Segmento operacional dos cards (ignorado pelo summary). */
     segment?: EmpresaSegment;
+    /** Força carregar o conjunto completo (exportação). */
+    force_full_scan?: boolean;
     page?: number;
     limit?: number;
     sort?: 'cnpj' | 'razao_social' | 'contabilidade_nome' | 'cert_validade' | 'has_credenciais' | 'status_geral';

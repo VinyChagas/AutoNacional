@@ -40,6 +40,7 @@ exports.obterPorCnpj = obterPorCnpj;
 exports.cadastroCertificado = cadastroCertificado;
 exports.excluirEmMassa = excluirEmMassa;
 exports.summary = summary;
+exports.exportar = exportar;
 exports.cadastroCredencial = cadastroCredencial;
 const service = __importStar(require("./empresas.service"));
 const repo = __importStar(require("./empresas.repo"));
@@ -207,6 +208,18 @@ async function summary(req, res) {
     };
     const data = await service.obterSummary(summaryParams);
     (0, response_1.jsonSuccess)(res, data);
+}
+async function exportar(req, res) {
+    const result = await service.exportarEmpresas(req.query);
+    if ('error' in result) {
+        (0, response_1.jsonError)(res, result.error, result.status);
+        return;
+    }
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('X-Export-Total', String(result.total));
+    res.setHeader('X-Export-Report', result.report);
+    res.send(result.buffer);
 }
 async function cadastroCredencial(req, res) {
     const body = req.body;

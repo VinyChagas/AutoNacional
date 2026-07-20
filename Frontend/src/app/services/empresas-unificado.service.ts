@@ -308,6 +308,75 @@ export class EmpresasUnificadoService {
       );
   }
 
+  /**
+   * Exporta relatório Excel (todas as empresas do escopo, não só a página).
+   * Retorna o blob e o nome sugerido pelo Content-Disposition.
+   */
+  exportar(params: {
+    report: 'NOT_ELIGIBLE' | 'ALL_PENDING' | 'FILTERED';
+    search?: string;
+    contabilidade_id?: number | null;
+    has_cert?: boolean;
+    has_cred?: boolean;
+    sem_cert?: boolean;
+    sem_cred?: boolean;
+    sem_metodo?: boolean;
+    segment?:
+      | 'ALL'
+      | 'CERT_EXPIRED'
+      | 'CREDENTIAL_REVALIDATION_REQUIRED'
+      | 'OPERATIONAL'
+      | 'NOT_ELIGIBLE';
+    sort?: string;
+    order?: 'asc' | 'desc';
+  }): Observable<{ blob: Blob; filename: string }> {
+    let httpParams = new HttpParams()
+      .set('report', params.report)
+      .set('format', 'xlsx');
+    if (params.search?.trim()) {
+      httpParams = httpParams.set('search', params.search.trim());
+    }
+    if (params.contabilidade_id != null && params.contabilidade_id > 0) {
+      httpParams = httpParams.set(
+        'contabilidade_id',
+        String(params.contabilidade_id)
+      );
+    }
+    if (params.has_cert != null) {
+      httpParams = httpParams.set('has_cert', String(params.has_cert));
+    }
+    if (params.has_cred != null) {
+      httpParams = httpParams.set('has_cred', String(params.has_cred));
+    }
+    if (params.sem_cert) httpParams = httpParams.set('sem_cert', 'true');
+    if (params.sem_cred) httpParams = httpParams.set('sem_cred', 'true');
+    if (params.sem_metodo) httpParams = httpParams.set('sem_metodo', 'true');
+    if (params.segment && params.segment !== 'ALL') {
+      httpParams = httpParams.set('segment', params.segment);
+    }
+    if (params.sort) httpParams = httpParams.set('sort', params.sort);
+    if (params.order) httpParams = httpParams.set('order', params.order);
+
+    return this.http
+      .get(`${this.baseUrl}/empresas/export`, {
+        params: httpParams,
+        responseType: 'blob',
+        observe: 'response',
+      })
+      .pipe(
+        map((resp) => {
+          const disposition = resp.headers.get('Content-Disposition') ?? '';
+          const match = /filename="?([^";]+)"?/i.exec(disposition);
+          const filename =
+            match?.[1]?.trim() ||
+            `empresas_export_${params.report.toLowerCase()}.xlsx`;
+          const blob = resp.body ?? new Blob();
+          return { blob, filename };
+        }),
+        catchError(this.handleError)
+      );
+  }
+
   excluir(id: number | string): Observable<void> {
     return this.http
       .delete<void>(`${this.baseUrl}/empresas/${id}`)
