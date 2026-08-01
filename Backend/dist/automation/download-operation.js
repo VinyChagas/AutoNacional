@@ -93,6 +93,7 @@ function criarContextoOperacao(params) {
         executionId: params.executionId,
         empresaId: params.empresaId,
         batchId: params.batchId,
+        captchaMode: params.captchaMode,
         tipoNota: params.tipoNota,
         tipoArquivo: params.tipoArquivo,
         chaveNfse: params.chaveNfse,
@@ -367,6 +368,21 @@ async function tentarResolverCaptchaSeNecessario(page, downloadPromise, ctx, dep
     if (!apareceuCaptcha)
         return;
     atualizarOperacao(ctx, { status: 'captcha_detectado' });
+    // Modo do lote MANUAL → tratamento no navegador (Tab/Enter + token + Confirmar).
+    // Opcionalmente ainda aceita Central remota se deps.resolverCaptchaCentral estiver definido.
+    if (ctx.captchaMode === 'MANUAL') {
+        atualizarOperacao(ctx, { status: 'captcha_resolvendo' });
+        if (deps.resolverCaptchaCentral) {
+            notificar(deps, 'captcha_aguardando_central', `Aguardando resolução MANUAL na Central para ${ctx.tipoArquivo.toUpperCase()} desta nota`, ctx);
+            await deps.resolverCaptchaCentral(page);
+        }
+        else {
+            notificar(deps, 'captcha_aguardando', `Aguardando resolução MANUAL no navegador para ${ctx.tipoArquivo.toUpperCase()} desta nota`, ctx);
+            await deps.aguardarResolucaoManual(page);
+        }
+        atualizarOperacao(ctx, { status: 'captcha_enviando' });
+        return;
+    }
     const modo = config_1.CAPTCHA_MODE;
     const skipAuto = forceManual ||
         shouldSkipAutoForExecution(ctx.executionId) ||

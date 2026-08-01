@@ -534,6 +534,11 @@ $radius-pill: 9999px;
     color: var(--primary);
   }
 
+  &.status-captcha {
+    background: rgba(196, 123, 22, 0.16);
+    color: #8a5a10;
+  }
+
   &.status-fila {
     background: rgba(100, 116, 139, 0.12);
     color: #64748b;

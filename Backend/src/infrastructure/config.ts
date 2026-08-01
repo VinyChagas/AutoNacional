@@ -66,6 +66,17 @@ export const PLAYWRIGHT_TIMEOUT = parseInt(
 export const PLAYWRIGHT_HEADLESS =
   process.env.PLAYWRIGHT_HEADLESS?.toLowerCase() === 'true';
 
+/**
+ * Zoom inicial das páginas do Chromium (ex.: 0.8 = 80%).
+ * Ajuda a caber botões de login (Certificado) nas janelas compactas dos slots.
+ * Use 1 para 100%. Override: BROWSER_PAGE_ZOOM=0.8
+ */
+export const BROWSER_PAGE_ZOOM = (() => {
+  const raw = parseFloat(process.env.BROWSER_PAGE_ZOOM || '1.0');
+  if (!Number.isFinite(raw) || raw <= 0.25 || raw > 2) return 0.8;
+  return raw;
+})();
+
 // ============================================================================
 // 2captcha — resolução automática de hCaptcha
 // ============================================================================
@@ -111,6 +122,38 @@ export const CAPTCHA_MANUAL_TIMEOUT_MS = parseInt(
   process.env.CAPTCHA_MANUAL_TIMEOUT_MS || '420000',
   10
 );
+
+/**
+ * Timeout (ms) da Central Manual de Captchas (Socket.IO).
+ * Padrão: 2 minutos (120000). Independente do timeout no navegador Playwright.
+ */
+export const MANUAL_CAPTCHA_TIMEOUT_MS = parseInt(
+  process.env.MANUAL_CAPTCHA_TIMEOUT_MS || '120000',
+  10
+);
+
+/**
+ * Quando true e captchaMode=MANUAL, usa a Central por cliques remotos (Socket.IO).
+ * Padrão false: resolução MANUAL local no browser (Tab/Enter + token + Confirmar).
+ */
+export const CAPTCHA_MANUAL_USE_CENTRAL =
+  (process.env.CAPTCHA_MANUAL_USE_CENTRAL || 'false').toLowerCase() === 'true';
+
+/**
+ * Reserva slot visual e abre o Chromium já na posição/tamanho do slot
+ * (headless=false). A janela permanece no slot até o fechamento.
+ * Padrão: true.
+ */
+export const CAPTCHA_WINDOW_LAYOUT_ENABLED =
+  (process.env.CAPTCHA_WINDOW_LAYOUT_ENABLED || 'true').toLowerCase() !==
+  'false';
+
+/**
+ * Instrumentação detalhada da Central Manual / injeção hCaptcha.
+ * Quando false, evita logs verbosos e artefatos em disco.
+ */
+export const CAPTCHA_DEBUG =
+  (process.env.CAPTCHA_DEBUG || 'false').toLowerCase() === 'true';
 
 /** Proxy opcional para HCaptchaTask (API v2 com proxy). */
 export const TWOCAPTCHA_PROXY_TYPE = process.env.TWOCAPTCHA_PROXY_TYPE || '';

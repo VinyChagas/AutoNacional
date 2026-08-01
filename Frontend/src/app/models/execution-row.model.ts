@@ -2,7 +2,7 @@
  * Model para linha de execução na tela de Execução de Processos.
  * Cada empresa ocupa 1 linha na tabela unificada.
  */
-export type ExecutionRowStatus = 'FILA' | 'EM_EXECUCAO' | 'OK' | 'ERRO';
+export type ExecutionRowStatus = 'FILA' | 'EM_EXECUCAO' | 'AGUARDANDO_CAPTCHA' | 'OK' | 'ERRO';
 export type ExecutionRowMetodo = 'CERTIFICADO' | 'CREDENCIAL';
 
 export interface ExecutionRow {

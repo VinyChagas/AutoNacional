@@ -23,9 +23,13 @@ import {
   obterSummaryExecucao,
   listarEmpresasAptas,
 } from '../services/execution-summary.service';
+import { type CaptchaMode } from '../automation/captcha/types';
+import { z } from 'zod';
 
 const logger = getLogger('execucao');
 const router = Router({ mergeParams: true });
+
+const captchaModeSchema = z.enum(['TWO_CAPTCHA', 'MANUAL']);
 
 // GET /companies/summary?contabilidade_id=XXX - Antes de /:empresa_id
 router.get('/companies/summary', async (req: Request, res: Response) => {
@@ -89,6 +93,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       headless?: boolean;
       baixarPdf?: boolean;
       contabilidade_id?: number | null;
+      captchaMode?: string;
     };
     const empresas = body.empresas || [];
     const dataInicio = body.dataInicio;
@@ -97,6 +102,18 @@ router.post('/multiplas', async (req: Request, res: Response) => {
     const headless = body.headless ?? false;
     const baixarPdf = body.baixarPdf ?? true;
     const contabilidadeId = body.contabilidade_id != null && body.contabilidade_id > 0 ? body.contabilidade_id : null;
+
+    let captchaMode: CaptchaMode = 'TWO_CAPTCHA';
+    if (body.captchaMode != null && body.captchaMode !== '') {
+      const parsed = captchaModeSchema.safeParse(body.captchaMode);
+      if (!parsed.success) {
+        res.status(400).json({
+          detail: 'captchaMode inválido. Use TWO_CAPTCHA ou MANUAL',
+        });
+        return;
+      }
+      captchaMode = parsed.data;
+    }
 
     if (empresas.length === 0) {
       res.status(400).json({ detail: 'Lista de empresas não pode estar vazia' });
@@ -193,7 +210,8 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       undefined,
       batchId,
       primeiro.tipoAuth,
-      baixarPdf
+      baixarPdf,
+      captchaMode
     );
     const status = obterStatus(String(primeiro.empresaId));
 
@@ -230,6 +248,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       detalhes_erros: erros,
       concurrency_final: concurrencyFinal,
       delayMs,
+      captchaMode,
     });
 
     (async () => {
@@ -247,7 +266,8 @@ router.post('/multiplas', async (req: Request, res: Response) => {
             undefined,
             batchId,
             tipoAuth,
-            baixarPdf
+            baixarPdf,
+            captchaMode
           );
           logger.debug(`[producer] enfileirou empresa ${empresaId} (${i + 1}/${validos.length})`);
         } catch (e) {

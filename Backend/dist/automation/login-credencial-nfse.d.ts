@@ -2,10 +2,13 @@ import type { ResultadoAutenticacao } from './playwright-nfse';
 export interface OpcoesLoginCredencial {
     headless?: boolean;
     timeout?: number;
+    /** Viewport da página (tamanho do conteúdo — NÃO a resolução do monitor). */
     viewport?: {
         width: number;
         height: number;
     };
+    /** Args extras do Chromium (ex.: --window-size / --window-position do slot). */
+    launchArgs?: string[];
     onLoginPageReady?: () => void;
 }
 /**

@@ -14,6 +14,12 @@ export declare const INTERNAL_API_KEY: string;
 export declare const CORS_ORIGINS: string[];
 export declare const PLAYWRIGHT_TIMEOUT: number;
 export declare const PLAYWRIGHT_HEADLESS: boolean;
+/**
+ * Zoom inicial das páginas do Chromium (ex.: 0.8 = 80%).
+ * Ajuda a caber botões de login (Certificado) nas janelas compactas dos slots.
+ * Use 1 para 100%. Override: BROWSER_PAGE_ZOOM=0.8
+ */
+export declare const BROWSER_PAGE_ZOOM: number;
 /** Chave da API do 2captcha. */
 export declare const TWOCAPTCHA_API_KEY: string;
 /** 'v2' (createTask/getTaskResult) ou 'v1' (in.php/res.php). Padrão: v2. */
@@ -38,6 +44,27 @@ export declare const TWOCAPTCHA_RQDATA: string;
 export declare const CAPTCHA_MODE: string;
 /** Timeout (ms) da resolução manual no navegador. Padrão: 7 min. */
 export declare const CAPTCHA_MANUAL_TIMEOUT_MS: number;
+/**
+ * Timeout (ms) da Central Manual de Captchas (Socket.IO).
+ * Padrão: 2 minutos (120000). Independente do timeout no navegador Playwright.
+ */
+export declare const MANUAL_CAPTCHA_TIMEOUT_MS: number;
+/**
+ * Quando true e captchaMode=MANUAL, usa a Central por cliques remotos (Socket.IO).
+ * Padrão false: resolução MANUAL local no browser (Tab/Enter + token + Confirmar).
+ */
+export declare const CAPTCHA_MANUAL_USE_CENTRAL: boolean;
+/**
+ * Reserva slot visual e abre o Chromium já na posição/tamanho do slot
+ * (headless=false). A janela permanece no slot até o fechamento.
+ * Padrão: true.
+ */
+export declare const CAPTCHA_WINDOW_LAYOUT_ENABLED: boolean;
+/**
+ * Instrumentação detalhada da Central Manual / injeção hCaptcha.
+ * Quando false, evita logs verbosos e artefatos em disco.
+ */
+export declare const CAPTCHA_DEBUG: boolean;
 /** Proxy opcional para HCaptchaTask (API v2 com proxy). */
 export declare const TWOCAPTCHA_PROXY_TYPE: string;
 export declare const TWOCAPTCHA_PROXY_ADDRESS: string;

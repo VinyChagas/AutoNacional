@@ -72,6 +72,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   dataFim: string = ''; // Formato DD/MM/YYYY (ex: 31/12/2025)
   tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
   baixarPdf = true; // true = XML + PDF (DANFS-e); false = apenas XML
+  /** Modo de resolução de captcha do lote (padrão: 2Captcha). */
+  captchaMode: 'TWO_CAPTCHA' | 'MANUAL' = 'TWO_CAPTCHA';
 
   // Formata data enquanto o usuário digita (DD/MM/YYYY)
   formatarData(event: Event, tipo: 'inicio' | 'fim') {
@@ -265,10 +267,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  /** Ordenação: EM_EXECUCAO primeiro, depois FILA, OK, ERRO */
+  /** Ordenação: EM_EXECUCAO / AGUARDANDO_CAPTCHA primeiro, depois FILA, OK, ERRO */
   private ordemStatus(a: ExecutionRowStatus): number {
     const ord: Record<ExecutionRowStatus, number> = {
       EM_EXECUCAO: 0,
+      AGUARDANDO_CAPTCHA: 0,
       FILA: 1,
       OK: 2,
       ERRO: 3,
@@ -386,7 +389,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   // Getter para verificar se há execuções em andamento
   get temExecucoesEmAndamento(): boolean {
-    return this.executionRows.some((r) => r.status === 'EM_EXECUCAO' || (r.status === 'FILA' && r.mensagem !== 'Aguardando início...')) ||
+    return this.executionRows.some((r) => r.status === 'EM_EXECUCAO' || r.status === 'AGUARDANDO_CAPTCHA' || (r.status === 'FILA' && r.mensagem !== 'Aguardando início...')) ||
       this.execucoes.some((e) => e.status === 'executando' || (e.status === 'fila' && e.mensagem !== 'Aguardando início...'));
   }
 
@@ -462,9 +465,21 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return this.executionRows.filter((r) => r.status === 'FILA').length;
   }
 
-  /** Empresas em execução (navegadores abertos) */
+  /** Empresas em execução (navegadores abertos), inclui aguardando captcha */
   get totalEmExecucao(): number {
-    return this.executionRows.filter((r) => r.status === 'EM_EXECUCAO').length;
+    return this.executionRows.filter(
+      (r) => r.status === 'EM_EXECUCAO' || r.status === 'AGUARDANDO_CAPTCHA'
+    ).length;
+  }
+
+  get podeAbrirCentralCaptchas(): boolean {
+    return this.captchaMode === 'MANUAL' && !!this.batchId;
+  }
+
+  abrirCentralCaptchas(): void {
+    if (!this.podeAbrirCentralCaptchas || !this.batchId) return;
+    const url = `${window.location.origin}/execucao/captchas/${encodeURIComponent(this.batchId)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   get percentualFinalizado(): number {
@@ -753,6 +768,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         headless: this.headlessMode,
         baixarPdf: this.baixarPdf,
         contabilidade_id: this.contabilidadeSelecionada ?? undefined,
+        captchaMode: this.captchaMode,
       };
 
       console.log('[Iniciar] Enviando requisição ao backend:', JSON.stringify(request, null, 2));
@@ -803,7 +819,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.executionRows = this.executionRows.map((row) => {
         const exec = this.execucoes.find((e) => String(e.empresa_id) === String(row.empresa_id) || e.cnpj === row.cnpj);
         if (exec) {
-          const statusRow: ExecutionRowStatus = exec.status === 'executando' ? 'EM_EXECUCAO' : exec.status === 'fila' ? 'FILA' : exec.status === 'finalizado' ? 'OK' : exec.status === 'falhou' ? 'ERRO' : 'FILA';
+      const statusRow: ExecutionRowStatus =
+          exec.status === 'executando'
+            ? 'EM_EXECUCAO'
+            : exec.status === 'fila'
+              ? 'FILA'
+              : exec.status === 'finalizado'
+                ? 'OK'
+                : exec.status === 'falhou'
+                  ? 'ERRO'
+                  : 'FILA';
           return {
             ...row,
             status: statusRow,
@@ -899,7 +924,19 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       );
       if (execIdx >= 0 && rowIdx >= 0) {
         const statusMap = this.mapearStatusBackendParaFrontend(String(s.status ?? ''));
-        const statusRow: ExecutionRowStatus = statusMap === 'executando' ? 'EM_EXECUCAO' : statusMap === 'fila' ? 'FILA' : statusMap === 'finalizado' ? 'OK' : statusMap === 'falhou' ? 'ERRO' : 'FILA';
+        let statusRow: ExecutionRowStatus =
+          statusMap === 'executando' ? 'EM_EXECUCAO' : statusMap === 'fila' ? 'FILA' : statusMap === 'finalizado' ? 'OK' : statusMap === 'falhou' ? 'ERRO' : 'FILA';
+        const msg = s.mensagem ?? '';
+        const etapa = s.etapa_atual ?? '';
+        if (
+          statusRow === 'EM_EXECUCAO' &&
+          (etapa === 'captcha_aguardando_central' ||
+            etapa === 'captcha_aguardando' ||
+            etapa === 'captcha_fallback_manual' ||
+            msg.toLowerCase().includes('aguardando resolução manual'))
+        ) {
+          statusRow = 'AGUARDANDO_CAPTCHA';
+        }
         const qtdE = s.qtd_notas_emitidas ?? 0;
         const qtdR = s.qtd_notas_recebidas ?? 0;
         const qtdC = s.qtd_notas_canceladas ?? 0;
@@ -1059,7 +1096,17 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     if (ev.type === 'execution:started') {
       next = { status: 'EM_EXECUCAO', mensagem: 'Abrindo navegador…', razao_social: ev.razao_social || row.razao_social, metodo: ev.metodo };
     } else if (ev.type === 'execution:stage') {
-      next = { status: 'EM_EXECUCAO', mensagem: ev.message };
+      const isAguardandoCaptcha =
+        ev.stage === 'captcha_aguardando_central' ||
+        ev.stage === 'captcha_aguardando' ||
+        ev.stage === 'captcha_fallback_manual' ||
+        (ev.message || '').toLowerCase().includes('aguardando resolução manual');
+      next = {
+        status: isAguardandoCaptcha ? 'AGUARDANDO_CAPTCHA' : 'EM_EXECUCAO',
+        mensagem: isAguardandoCaptcha
+          ? (ev.message || 'Aguardando resolução manual do hCaptcha')
+          : ev.message,
+      };
     } else if (ev.type === 'execution:counts') {
       next = {
         qtd_emitidas: ev.qtd_emitidas,

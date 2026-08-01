@@ -116,12 +116,13 @@
                 }
               </div>
               <div class="field-row">
-                <label class="field-label">Viewport</label>
+                <label class="field-label">Resolução do monitor</label>
                 <select formControlName="viewportPreset" class="field-input field-select">
                   @for (opt of viewportOptions; track opt.value) {
                     <option [value]="opt.value">{{ opt.label }}</option>
                   }
                 </select>
+                <span class="helper">Usada no viewport do navegador e no layout lado a lado dos CAPTCHAs manuais</span>
                 @if (viewportPreset === 'CUSTOM') {
                   <div class="custom-viewport">
                     <input type="number" formControlName="viewportWidth" placeholder="Largura" class="field-input" />

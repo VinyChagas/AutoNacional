@@ -8,6 +8,7 @@ exports.abrirDashboardNfseComCredencial = abrirDashboardNfseComCredencial;
  */
 const playwright_1 = require("playwright");
 const logger_1 = require("../infrastructure/logger");
+const playwright_config_1 = require("./playwright-config");
 const playwright_nfse_1 = require("./playwright-nfse");
 const logger = (0, logger_1.getLogger)('login-credencial-nfse');
 const BASE_URL = 'https://www.nfse.gov.br/EmissorNacional/';
@@ -19,7 +20,13 @@ const BASE_URL = 'https://www.nfse.gov.br/EmissorNacional/';
 async function abrirDashboardNfseComCredencial(documento, senha, opcoes = {}) {
     const headless = opcoes.headless ?? true;
     const timeout = opcoes.timeout ?? 120000;
-    const viewport = opcoes.viewport ?? { width: 1920, height: 1080 };
+    // Fallback de conteúdo — nunca usar resolução Full HD do monitor aqui
+    const viewport = opcoes.viewport ?? { width: 769, height: 680 };
+    const launchArgs = [
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        ...(opcoes.launchArgs ?? []),
+    ];
     const docLimpo = documento.replace(/[.\/\-\s]/g, '');
     const isCpf = docLimpo.length === 11;
     const isCnpj = docLimpo.length === 14;
@@ -39,7 +46,7 @@ async function abrirDashboardNfseComCredencial(documento, senha, opcoes = {}) {
         log('Lançando navegador...');
         browser = await playwright_1.chromium.launch({
             headless,
-            args: ['--disable-web-security', '--disable-features=IsolateOrigins,site-per-process'],
+            args: launchArgs,
         });
         context = await browser.newContext({
             ignoreHTTPSErrors: true,
@@ -47,6 +54,7 @@ async function abrirDashboardNfseComCredencial(documento, senha, opcoes = {}) {
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
             acceptDownloads: true,
         });
+        await (0, playwright_config_1.aplicarZoomPaginaNoContexto)(context);
         page = await context.newPage();
         page.setDefaultTimeout(timeout);
         log('Página criada');

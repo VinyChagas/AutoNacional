@@ -92,6 +92,19 @@
           </svg>
           Iniciar
         </button>
+        @if (podeAbrirCentralCaptchas) {
+          <button
+            type="button"
+            class="btn-secondary"
+            (click)="abrirCentralCaptchas()"
+            title="Abre a Central Manual de Captchas em nova guia"
+          >
+            <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+            </svg>
+            Abrir Central de Captchas
+          </button>
+        }
         <button
           type="button"
           class="btn-secondary"
@@ -175,6 +188,13 @@
             <input type="checkbox" id="headless" [(ngModel)]="headlessMode" class="checkbox-input" />
             <span>Modo Headless</span>
           </label>
+        </div>
+        <div class="field-group field-group-captcha">
+          <label for="captchaMode">Modo de resolução de captcha</label>
+          <select id="captchaMode" [(ngModel)]="captchaMode" class="input-select" [disabled]="temExecucoesEmAndamento">
+            <option value="TWO_CAPTCHA">Automático — 2Captcha</option>
+            <option value="MANUAL">Manual — Central de Captchas</option>
+          </select>
         </div>
       </div>
     </section>
@@ -260,14 +280,19 @@
                         {{ row.metodo === 'CERTIFICADO' ? 'Certificado' : 'Credencial' }}
                       </span>
                     </td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO') && row.qtd_emitidas === 0 ? '—' : row.qtd_emitidas }}</td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO') && row.qtd_recebidas === 0 ? '—' : row.qtd_recebidas }}</td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO') && row.qtd_canceladas === 0 ? '—' : row.qtd_canceladas }}</td>
+                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_emitidas === 0 ? '—' : row.qtd_emitidas }}</td>
+                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_recebidas === 0 ? '—' : row.qtd_recebidas }}</td>
+                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_canceladas === 0 ? '—' : row.qtd_canceladas }}</td>
                     <td>
                       @if (row.status === 'EM_EXECUCAO') {
                         <span class="status-badge status-executando">
                           <span class="spinner-sm"></span>
                           Executando
+                        </span>
+                      } @else if (row.status === 'AGUARDANDO_CAPTCHA') {
+                        <span class="status-badge status-captcha">
+                          <span class="spinner-sm"></span>
+                          Aguardando captcha
                         </span>
                       } @else if (row.status === 'FILA') {
                         <span class="status-badge status-fila">Fila</span>

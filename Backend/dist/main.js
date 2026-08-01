@@ -5,9 +5,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const http_1 = __importDefault(require("http"));
 require("./config/env"); // Valida env quando USE_SUPABASE=true
 const config_1 = require("./infrastructure/config");
 const logger_1 = require("./infrastructure/logger");
+const socket_1 = require("./infrastructure/socket");
 const client_1 = require("./db/client");
 const init_1 = require("./db/init");
 const supabase_1 = require("./config/supabase");
@@ -79,11 +81,13 @@ async function bootstrap() {
     (0, execution_service_1.setCertificateLoader)(certificate_loader_1.carregarCertificadoPorCnpj);
     const reportPath = (0, captcha_report_1.iniciarRelatorio2Captcha)();
     logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
-    const server = app.listen(config_1.PORT, () => {
+    const httpServer = http_1.default.createServer(app);
+    (0, socket_1.initSocketIo)(httpServer);
+    httpServer.listen(config_1.PORT, () => {
         logger.info(`AutoNacional API rodando em http://localhost:${config_1.PORT}`);
     });
     // Mantém o processo ativo (evita exit em alguns ambientes)
-    server.ref();
+    httpServer.ref();
 }
 bootstrap().catch((err) => {
     logger.error({ err }, 'Erro fatal no bootstrap');

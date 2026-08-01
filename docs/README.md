@@ -49,6 +49,9 @@ O **AutoNacional** é uma plataforma completa para automação de processos cont
 | [VARIAVEIS_AMBIENTE.md](./VARIAVEIS_AMBIENTE.md)     | Referência de variáveis de ambiente                          |
 | [FLUXOS.md](./FLUXOS.md)                             | Fluxos de negócio e automação                                |
 | [AUTOMACAO_NFSE.md](./AUTOMACAO_NFSE.md)             | Funcionamento completo da automação (individual e filas)     |
+| [TELA_EXECUCAO_E_AUTOMACAO.md](./TELA_EXECUCAO_E_AUTOMACAO.md) | Tela Execução + correlação com `Backend/src/automation` |
+| [CENTRAL_CAPTCHAS.md](./CENTRAL_CAPTCHAS.md)             | Central Manual de Captchas (Socket.IO + providers)       |
+| [DIAGNOSTICO_CENTRAL_CAPTCHA.md](./DIAGNOSTICO_CENTRAL_CAPTCHA.md) | Diagnóstico da falha do token manual + instrumentação |
 | [DEPENDENCIAS.md](./DEPENDENCIAS.md)                 | Lista e descrição de todas as dependências                   |
 | [TELA_EMPRESAS.md](./TELA_EMPRESAS.md)                       | Documentação completa da tela de Empresas (UI + API) |
 | [CHECKLIST_TESTES_EMPRESAS.md](./CHECKLIST_TESTES_EMPRESAS.md) | Checklist de testes manuais da tela de Empresas    |

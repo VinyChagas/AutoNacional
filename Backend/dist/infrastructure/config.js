@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PORT = exports.MAX_CONCURRENCY_CAP = exports.QUEUE_TIMEOUT = exports.CAPTCHA_RETRYABLE_ERROR_CODES = exports.CAPTCHA_CONSECUTIVE_FAILURE_LIMIT = exports.CAPTCHA_OPERATION_FALLBACK_MANUAL = exports.CAPTCHA_NOTE_RELOCATION_TIMEOUT_MS = exports.CAPTCHA_NEW_CHALLENGE_TIMEOUT_MS = exports.CAPTCHA_MODAL_CLOSE_TIMEOUT_MS = exports.CAPTCHA_OPERATION_RETRY_DELAY_MS = exports.CAPTCHA_OPERATION_MAX_ATTEMPTS = exports.TWOCAPTCHA_PROXY_PASSWORD = exports.TWOCAPTCHA_PROXY_LOGIN = exports.TWOCAPTCHA_PROXY_PORT = exports.TWOCAPTCHA_PROXY_ADDRESS = exports.TWOCAPTCHA_PROXY_TYPE = exports.CAPTCHA_MANUAL_TIMEOUT_MS = exports.CAPTCHA_MODE = exports.TWOCAPTCHA_RQDATA = exports.CAPTCHA_IS_INVISIBLE = exports.CAPTCHA_SOLVE_TIMEOUT_MS = exports.TWOCAPTCHA_API_VERSION = exports.TWOCAPTCHA_API_KEY = exports.PLAYWRIGHT_HEADLESS = exports.PLAYWRIGHT_TIMEOUT = exports.CORS_ORIGINS = exports.INTERNAL_API_KEY = exports.SUPABASE_ISSUER = exports.SUPABASE_AUDIENCE = exports.SUPABASE_JWKS_URL = exports.SUPABASE_SERVICE_ROLE_KEY = exports.SUPABASE_URL = exports.APP_CRED_KEY = exports.DATABASE_URL = exports.CERT_STORAGE_BUCKET = exports.CRYPTO_KEY = exports.FERNET_KEY = exports.CERTIFICATES_DIR = exports.BACKEND_DIR = void 0;
+exports.PORT = exports.MAX_CONCURRENCY_CAP = exports.QUEUE_TIMEOUT = exports.CAPTCHA_RETRYABLE_ERROR_CODES = exports.CAPTCHA_CONSECUTIVE_FAILURE_LIMIT = exports.CAPTCHA_OPERATION_FALLBACK_MANUAL = exports.CAPTCHA_NOTE_RELOCATION_TIMEOUT_MS = exports.CAPTCHA_NEW_CHALLENGE_TIMEOUT_MS = exports.CAPTCHA_MODAL_CLOSE_TIMEOUT_MS = exports.CAPTCHA_OPERATION_RETRY_DELAY_MS = exports.CAPTCHA_OPERATION_MAX_ATTEMPTS = exports.TWOCAPTCHA_PROXY_PASSWORD = exports.TWOCAPTCHA_PROXY_LOGIN = exports.TWOCAPTCHA_PROXY_PORT = exports.TWOCAPTCHA_PROXY_ADDRESS = exports.TWOCAPTCHA_PROXY_TYPE = exports.CAPTCHA_DEBUG = exports.CAPTCHA_WINDOW_LAYOUT_ENABLED = exports.CAPTCHA_MANUAL_USE_CENTRAL = exports.MANUAL_CAPTCHA_TIMEOUT_MS = exports.CAPTCHA_MANUAL_TIMEOUT_MS = exports.CAPTCHA_MODE = exports.TWOCAPTCHA_RQDATA = exports.CAPTCHA_IS_INVISIBLE = exports.CAPTCHA_SOLVE_TIMEOUT_MS = exports.TWOCAPTCHA_API_VERSION = exports.TWOCAPTCHA_API_KEY = exports.BROWSER_PAGE_ZOOM = exports.PLAYWRIGHT_HEADLESS = exports.PLAYWRIGHT_TIMEOUT = exports.CORS_ORIGINS = exports.INTERNAL_API_KEY = exports.SUPABASE_ISSUER = exports.SUPABASE_AUDIENCE = exports.SUPABASE_JWKS_URL = exports.SUPABASE_SERVICE_ROLE_KEY = exports.SUPABASE_URL = exports.APP_CRED_KEY = exports.DATABASE_URL = exports.CERT_STORAGE_BUCKET = exports.CRYPTO_KEY = exports.FERNET_KEY = exports.CERTIFICATES_DIR = exports.BACKEND_DIR = void 0;
 const dotenv = __importStar(require("dotenv"));
 const path = __importStar(require("path"));
 // Carrega .env a partir do diretório do Backend ou pai
@@ -80,6 +80,17 @@ exports.CORS_ORIGINS = corsOriginsEnv
 // ============================================================================
 exports.PLAYWRIGHT_TIMEOUT = parseInt(process.env.PLAYWRIGHT_TIMEOUT || '60000', 10);
 exports.PLAYWRIGHT_HEADLESS = process.env.PLAYWRIGHT_HEADLESS?.toLowerCase() === 'true';
+/**
+ * Zoom inicial das páginas do Chromium (ex.: 0.8 = 80%).
+ * Ajuda a caber botões de login (Certificado) nas janelas compactas dos slots.
+ * Use 1 para 100%. Override: BROWSER_PAGE_ZOOM=0.8
+ */
+exports.BROWSER_PAGE_ZOOM = (() => {
+    const raw = parseFloat(process.env.BROWSER_PAGE_ZOOM || '1.0');
+    if (!Number.isFinite(raw) || raw <= 0.25 || raw > 2)
+        return 0.8;
+    return raw;
+})();
 // ============================================================================
 // 2captcha — resolução automática de hCaptcha
 // ============================================================================
@@ -107,6 +118,28 @@ exports.TWOCAPTCHA_RQDATA = process.env.TWOCAPTCHA_RQDATA || '';
 exports.CAPTCHA_MODE = (process.env.CAPTCHA_MODE || 'auto_manual').toLowerCase();
 /** Timeout (ms) da resolução manual no navegador. Padrão: 7 min. */
 exports.CAPTCHA_MANUAL_TIMEOUT_MS = parseInt(process.env.CAPTCHA_MANUAL_TIMEOUT_MS || '420000', 10);
+/**
+ * Timeout (ms) da Central Manual de Captchas (Socket.IO).
+ * Padrão: 2 minutos (120000). Independente do timeout no navegador Playwright.
+ */
+exports.MANUAL_CAPTCHA_TIMEOUT_MS = parseInt(process.env.MANUAL_CAPTCHA_TIMEOUT_MS || '120000', 10);
+/**
+ * Quando true e captchaMode=MANUAL, usa a Central por cliques remotos (Socket.IO).
+ * Padrão false: resolução MANUAL local no browser (Tab/Enter + token + Confirmar).
+ */
+exports.CAPTCHA_MANUAL_USE_CENTRAL = (process.env.CAPTCHA_MANUAL_USE_CENTRAL || 'false').toLowerCase() === 'true';
+/**
+ * Reserva slot visual e abre o Chromium já na posição/tamanho do slot
+ * (headless=false). A janela permanece no slot até o fechamento.
+ * Padrão: true.
+ */
+exports.CAPTCHA_WINDOW_LAYOUT_ENABLED = (process.env.CAPTCHA_WINDOW_LAYOUT_ENABLED || 'true').toLowerCase() !==
+    'false';
+/**
+ * Instrumentação detalhada da Central Manual / injeção hCaptcha.
+ * Quando false, evita logs verbosos e artefatos em disco.
+ */
+exports.CAPTCHA_DEBUG = (process.env.CAPTCHA_DEBUG || 'false').toLowerCase() === 'true';
 /** Proxy opcional para HCaptchaTask (API v2 com proxy). */
 exports.TWOCAPTCHA_PROXY_TYPE = process.env.TWOCAPTCHA_PROXY_TYPE || '';
 exports.TWOCAPTCHA_PROXY_ADDRESS = process.env.TWOCAPTCHA_PROXY_ADDRESS || '';

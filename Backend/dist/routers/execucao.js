@@ -48,8 +48,10 @@ const execution_events_service_1 = require("../services/execution-events.service
 const automation_metrics_service_1 = require("../services/automation-metrics.service");
 const execucoesRepo = __importStar(require("../repositories/execucoes"));
 const execution_summary_service_1 = require("../services/execution-summary.service");
+const zod_1 = require("zod");
 const logger = (0, logger_1.getLogger)('execucao');
 const router = (0, express_1.Router)({ mergeParams: true });
+const captchaModeSchema = zod_1.z.enum(['TWO_CAPTCHA', 'MANUAL']);
 // GET /companies/summary?contabilidade_id=XXX - Antes de /:empresa_id
 router.get('/companies/summary', async (req, res) => {
     try {
@@ -110,6 +112,17 @@ router.post('/multiplas', async (req, res) => {
         const headless = body.headless ?? false;
         const baixarPdf = body.baixarPdf ?? true;
         const contabilidadeId = body.contabilidade_id != null && body.contabilidade_id > 0 ? body.contabilidade_id : null;
+        let captchaMode = 'TWO_CAPTCHA';
+        if (body.captchaMode != null && body.captchaMode !== '') {
+            const parsed = captchaModeSchema.safeParse(body.captchaMode);
+            if (!parsed.success) {
+                res.status(400).json({
+                    detail: 'captchaMode inválido. Use TWO_CAPTCHA ou MANUAL',
+                });
+                return;
+            }
+            captchaMode = parsed.data;
+        }
         if (empresas.length === 0) {
             res.status(400).json({ detail: 'Lista de empresas não pode estar vazia' });
             return;
@@ -190,7 +203,7 @@ router.post('/multiplas', async (req, res) => {
             });
         }
         const primeiro = validos[0];
-        const execucaoId = await (0, execution_service_1.adicionarExecucao)(primeiro.empresaId, primeiro.cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, primeiro.tipoAuth, baixarPdf);
+        const execucaoId = await (0, execution_service_1.adicionarExecucao)(primeiro.empresaId, primeiro.cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, primeiro.tipoAuth, baixarPdf, captchaMode);
         const status = (0, execution_service_1.obterStatus)(String(primeiro.empresaId));
         logger.debug(`[producer] enfileirou empresa ${primeiro.empresaId} (1/${validos.length})`);
         const execucoes = validos.map((v, idx) => {
@@ -223,13 +236,14 @@ router.post('/multiplas', async (req, res) => {
             detalhes_erros: erros,
             concurrency_final: concurrencyFinal,
             delayMs,
+            captchaMode,
         });
         (async () => {
             for (let i = 1; i < validos.length; i++) {
                 await (0, sleep_1.sleep)(delayMs);
                 const { empresaId, cnpj, tipoAuth } = validos[i];
                 try {
-                    await (0, execution_service_1.adicionarExecucao)(empresaId, cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, tipoAuth, baixarPdf);
+                    await (0, execution_service_1.adicionarExecucao)(empresaId, cnpj, dataInicio, dataFim, tipo, headless, undefined, batchId, tipoAuth, baixarPdf, captchaMode);
                     logger.debug(`[producer] enfileirou empresa ${empresaId} (${i + 1}/${validos.length})`);
                 }
                 catch (e) {

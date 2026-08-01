@@ -5,4 +5,5 @@
 export const environment = {
   production: true,
   apiUrl: '/api', // Relativo quando frontend e backend estão no mesmo domínio
+  captchaDebug: false,
 };

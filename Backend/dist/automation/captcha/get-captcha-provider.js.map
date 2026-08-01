@@ -1,0 +1,1 @@
+{"version":3,"file":"get-captcha-provider.js","sourceRoot":"","sources":["../../../src/automation/captcha/get-captcha-provider.ts"],"names":[],"mappings":";;AAQA,gDAKC;AAZD,iEAA4D;AAC5D,uEAAkE;AAElE;;;GAGG;AACH,SAAgB,kBAAkB,CAAC,IAAiB;IAClD,IAAI,IAAI,KAAK,QAAQ,EAAE,CAAC;QACtB,OAAO,+CAAqB,CAAC;IAC/B,CAAC;IACD,OAAO,yCAAkB,CAAC;AAC5B,CAAC"}

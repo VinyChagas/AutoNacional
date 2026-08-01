@@ -1,8 +1,10 @@
 import express from 'express';
 import cors from 'cors';
+import http from 'http';
 import './config/env'; // Valida env quando USE_SUPABASE=true
 import { CORS_ORIGINS, PORT } from './infrastructure/config';
 import { getLogger } from './infrastructure/logger';
+import { initSocketIo } from './infrastructure/socket';
 import { initDb } from './db/client';
 import { seedDefaultSettings } from './db/init';
 import { ensureCertificadosBucket } from './config/supabase';
@@ -92,12 +94,15 @@ async function bootstrap() {
   const reportPath = iniciarRelatorio2Captcha();
   logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
 
-  const server = app.listen(PORT, () => {
+  const httpServer = http.createServer(app);
+  initSocketIo(httpServer);
+
+  httpServer.listen(PORT, () => {
     logger.info(`AutoNacional API rodando em http://localhost:${PORT}`);
   });
 
   // Mantém o processo ativo (evita exit em alguns ambientes)
-  server.ref();
+  httpServer.ref();
 }
 
 bootstrap().catch((err) => {

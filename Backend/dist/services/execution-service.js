@@ -64,6 +64,9 @@ const login_credencial_nfse_1 = require("../automation/login-credencial-nfse");
 const credenciaisRepo = __importStar(require("../repositories/credenciais"));
 const execution_events_service_1 = require("./execution-events.service");
 const automation_metrics_service_1 = require("./automation-metrics.service");
+const manual_captcha_service_1 = require("./manual-captcha.service");
+const captcha_window_manager_1 = require("../automation/captcha-window-manager");
+const config_2 = require("../infrastructure/config");
 const logger = (0, logger_1.getLogger)('execution-service');
 /** DD/MM/YYYY -> YYYY-MM */
 function competenciaFromDataInicio(dataInicio) {
@@ -72,25 +75,6 @@ function competenciaFromDataInicio(dataInicio) {
         return `${m[3]}-${m[2]}`;
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-/** Resolve viewport a partir das settings */
-function resolveViewport(config) {
-    if (config?.viewportPreset === 'CUSTOM' &&
-        config?.viewportWidth &&
-        config?.viewportHeight) {
-        return { width: config.viewportWidth, height: config.viewportHeight };
-    }
-    switch (config?.viewportPreset) {
-        case 'DESKTOP_1366x768':
-            return { width: 1366, height: 768 };
-        case 'HD':
-            return { width: 1280, height: 720 };
-        case 'QHD':
-            return { width: 2560, height: 1440 };
-        case 'FULLHD':
-        default:
-            return { width: 1920, height: 1080 };
-    }
 }
 const RESULTADOS = [
     'SEM_MOVIMENTO',
@@ -124,28 +108,45 @@ async function obterDelayEnfileiramento() {
     return config?.browserLaunchDelayMs ?? BROWSER_LAUNCH_DELAY_MS_DEFAULT;
 }
 /**
- * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, totalEmpresas).
- * Respeita sempre a configuração do usuário (Máx. Navegadores Concorrentes e Padrão de Navegadores).
+ * Calcula e aplica concurrency_final =
+ * min(padrão, máximo das settings, slots visuais, totalEmpresas).
+ *
+ * Assim, com 10 na fila e 8 slots/navegadores, só 8 rodam; as demais
+ * esperam na PQueue até um navegador finalizar e liberar o slot.
  */
 async function configurarConcorrenciaParaBatch(totalEmpresas) {
     const config = await settingsRepo.obterConfiguracoes();
     const userConfigured = config?.defaultConcurrentBrowsers ?? 3;
     const maxFromSettings = config?.maxConcurrentBrowsers ?? 5;
-    const limite = Math.min(userConfigured, maxFromSettings);
-    const concurrencyFinal = Math.min(limite, totalEmpresas);
+    let limite = Math.min(userConfigured, maxFromSettings);
+    if (config_2.CAPTCHA_WINDOW_LAYOUT_ENABLED) {
+        const visualSlots = await (0, captcha_window_manager_1.getVisualSlotCapacityFromSettings)();
+        limite = Math.min(limite, visualSlots);
+    }
+    const concurrencyFinal = Math.max(1, Math.min(limite, totalEmpresas));
     fila.concurrency = concurrencyFinal;
+    logger.info({
+        totalEmpresas,
+        defaultConcurrentBrowsers: userConfigured,
+        maxConcurrentBrowsers: maxFromSettings,
+        concurrencyFinal,
+    }, 'Concorrência do lote aplicada (settings + slots visuais)');
     return concurrencyFinal;
 }
 async function obterLimiteConcorrencia() {
     const config = await settingsRepo.obterConfiguracoes();
+    let limite = 3;
     if (config) {
-        let limite = config.defaultConcurrentBrowsers ?? 3;
+        limite = config.defaultConcurrentBrowsers ?? 3;
         if (config.maxConcurrentBrowsers && limite > config.maxConcurrentBrowsers) {
             limite = config.maxConcurrentBrowsers;
         }
-        return limite;
     }
-    return 3;
+    if (config_2.CAPTCHA_WINDOW_LAYOUT_ENABLED) {
+        const visualSlots = await (0, captcha_window_manager_1.getVisualSlotCapacityFromSettings)();
+        limite = Math.min(limite, visualSlots);
+    }
+    return Math.max(1, limite);
 }
 /**
  * Obtém o nome da empresa para estrutura de pastas.
@@ -162,9 +163,12 @@ async function obterNomeEmpresa(cnpj) {
  * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
  * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
-async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, headless, certificado, batchId, tipoAutenticacao, baixarPdf = true) {
+async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, headless, certificado, batchId, tipoAutenticacao, baixarPdf = true, captchaMode = 'TWO_CAPTCHA') {
     const config = await settingsRepo.obterConfiguracoes();
-    const headlessFinal = headless ?? config?.headless ?? config_1.PLAYWRIGHT_HEADLESS;
+    // Modo MANUAL exige navegador visível para o operador resolver o hCaptcha.
+    const headlessFinal = captchaMode === 'MANUAL'
+        ? false
+        : headless ?? config?.headless ?? config_1.PLAYWRIGHT_HEADLESS;
     const exec = await execucoesRepo.criar({
         empresaId,
         cnpj,
@@ -181,6 +185,7 @@ async function adicionarExecucao(empresaId, cnpj, dataInicio, dataFim, tipo, hea
         tipo: tipo || 'ambas',
         headless: headlessFinal,
         baixarPdf,
+        captchaMode,
         execucaoDbId: exec.id,
         batchId,
         status: 'pendente',
@@ -309,9 +314,12 @@ async function finalizarExecucao(params) {
         return;
     }
     finalizadosIds.add(execucaoId);
-    const { empresaId, cnpj, batchId, statusFinal, message, contagens, resultado_final, page, browser, startedAt, persistirMetrica, } = params;
+    // Cancela captchas manuais pendentes desta execução (Central)
+    (0, manual_captcha_service_1.cancelByExecution)(String(execucaoId), 'execution_finished');
+    const { empresaId, cnpj, batchId, statusFinal, message, contagens, resultado_final, page, browser, windowSlot, startedAt, persistirMetrica, } = params;
     const key = String(empresaId);
     const info = execucoesAtivas.get(key);
+    const slotToRelease = windowSlot ?? info?.windowSlot;
     const sseStatus = statusFinal === 'concluido' ? 'OK' : 'ERRO';
     const msgResumo = message.length > 80 ? message.slice(0, 77) + '...' : message;
     try {
@@ -367,6 +375,17 @@ async function finalizarExecucao(params) {
         }
         catch {
             /* ignore */
+        }
+        finally {
+            // Libera o slot visual somente após o navegador ser fechado
+            try {
+                slotToRelease?.release();
+            }
+            catch {
+                /* ignore */
+            }
+            if (info)
+                info.windowSlot = undefined;
         }
     }
 }
@@ -445,6 +464,22 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
         });
         let resultadoAuth;
         try {
+            // Reserva slot visual ANTES do Chromium (headless não usa layout)
+            const useWindowLayout = !headless && config_2.CAPTCHA_WINDOW_LAYOUT_ENABLED;
+            if (useWindowLayout) {
+                (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
+                    type: 'execution:stage',
+                    empresa_id: key,
+                    stage: 'reservando_janela',
+                    message: 'Reservando posição da janela…',
+                });
+                info.mensagem = 'Reservando posição da janela…';
+                info.windowSlot = await captcha_window_manager_1.captchaWindowManager.reserveSlot(String(execucaoDbId), { enabled: true });
+                adicionarLog(`Slot visual ${info.windowSlot.slotId}: ${info.windowSlot.width}×${info.windowSlot.height} @ (${info.windowSlot.left},${info.windowSlot.top})`);
+            }
+            const windowSlot = info.windowSlot;
+            const viewport = windowSlot?.viewport;
+            const launchArgs = windowSlot?.launchArgs;
             if (tipoAutenticacao === 'credenciais') {
                 const credencial = await credenciaisRepo.obterPrimeiraPorEmpresa(empresaId);
                 if (!credencial) {
@@ -467,11 +502,11 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                 adicionarLog('Chamando autenticação via credencial...');
                 const config = await settingsRepo.obterConfiguracoes();
                 const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-                const viewport = resolveViewport(config);
                 resultadoAuth = await (0, login_credencial_nfse_1.abrirDashboardNfseComCredencial)(documento, senha, {
                     headless,
                     timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
-                    viewport,
+                    ...(viewport ? { viewport } : {}),
+                    ...(launchArgs ? { launchArgs } : {}),
                     onLoginPageReady,
                 });
             }
@@ -493,7 +528,6 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                 }
                 const config = await settingsRepo.obterConfiguracoes();
                 const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-                const viewport = resolveViewport(config);
                 (0, execution_events_service_1.emitirEventoExecucao)(batchId, {
                     type: 'execution:stage',
                     empresa_id: key,
@@ -505,7 +539,8 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                 resultadoAuth = await (0, playwright_nfse_1.abrirDashboardNfse)(certificado, {
                     headless,
                     timeout: timeout || config_1.PLAYWRIGHT_TIMEOUT,
-                    viewport,
+                    ...(viewport ? { viewport } : {}),
+                    ...(launchArgs ? { launchArgs } : {}),
                     onLoginPageReady,
                 });
             }
@@ -585,6 +620,9 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                     executionId: String(execucaoDbId ?? key),
                     empresaId: key,
                     batchId: batchId || undefined,
+                    captchaMode: info.captchaMode || 'TWO_CAPTCHA',
+                    empresaNome: nomeEmpresa,
+                    cnpj,
                 });
                 info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
                 info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
@@ -646,6 +684,9 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                     executionId: String(execucaoDbId ?? key),
                     empresaId: key,
                     batchId: batchId || undefined,
+                    captchaMode: info.captchaMode || 'TWO_CAPTCHA',
+                    empresaNome: nomeEmpresa,
+                    cnpj,
                 });
                 info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
                 info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
@@ -716,6 +757,7 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
                 resultado_final: resultadoFinal,
                 page: info.page,
                 browser: info.browser,
+                windowSlot: info.windowSlot,
                 startedAt,
                 persistirMetrica,
             });
@@ -746,6 +788,7 @@ async function executarFluxoCompleto(empresaId, cnpj, dataInicio, dataFim, tipo,
             resultado_final: resultadoFinal,
             page: info.page,
             browser: info.browser,
+            windowSlot: info.windowSlot,
             startedAt,
             persistirMetrica,
         });

@@ -5,6 +5,7 @@
  * Padrão producer/worker: endpoint apenas enfileira; browser launch ocorre APENAS no worker.
  */
 import type { CertificadoEmMemoria } from '../automation/playwright-nfse';
+import type { CaptchaMode } from '../automation/captcha/types';
 type TipoAutenticacao = 'certificado' | 'credenciais';
 type CertificateLoader = (cnpj: string) => Promise<CertificadoEmMemoria>;
 /**
@@ -21,8 +22,11 @@ export declare function obterCertificadoPorCnpj(cnpj: string): Promise<Certifica
  */
 export declare function obterDelayEnfileiramento(): Promise<number>;
 /**
- * Calcula e aplica concurrency_final = min(userConfigured, maxConcurrent, totalEmpresas).
- * Respeita sempre a configuração do usuário (Máx. Navegadores Concorrentes e Padrão de Navegadores).
+ * Calcula e aplica concurrency_final =
+ * min(padrão, máximo das settings, slots visuais, totalEmpresas).
+ *
+ * Assim, com 10 na fila e 8 slots/navegadores, só 8 rodam; as demais
+ * esperam na PQueue até um navegador finalizar e liberar o slot.
  */
 export declare function configurarConcorrenciaParaBatch(totalEmpresas: number): Promise<number>;
 /**
@@ -30,7 +34,7 @@ export declare function configurarConcorrenciaParaBatch(totalEmpresas: number): 
  * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
  * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
-export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria, batchId?: string, tipoAutenticacao?: TipoAutenticacao, baixarPdf?: boolean): Promise<number>;
+export declare function adicionarExecucao(empresaId: number, cnpj: string, dataInicio: string, dataFim: string, tipo: string, headless?: boolean, certificado?: CertificadoEmMemoria, batchId?: string, tipoAutenticacao?: TipoAutenticacao, baixarPdf?: boolean, captchaMode?: CaptchaMode): Promise<number>;
 /**
  * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).
  * @param batchId - UUID do batch

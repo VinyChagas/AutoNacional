@@ -3,13 +3,13 @@
  *
  * Varredura de notas emitidas e recebidas, com download de XML e DANFS-e (PDF).
  * hCaptcha: 2captcha (automático) com rqdata opcional; retry por operação (novo CAPTCHA);
- * fallback manual somente após esgotar tentativas da operação.
+ * modo MANUAL / fallback: Tab/Enter no browser → token legítimo → #btnSubmitHCaptcha.
  */
 
 import { Page, Locator } from 'playwright';
 import { setDownloadsBasePath } from './download-manager';
 import { getLogger } from '../infrastructure/logger';
-import { resolverHCaptcha, captchaConfigurado, CaptchaError } from './captcha-solver';
+import { captchaConfigurado, CaptchaError } from './captcha-solver';
 import {
   reportCaptchaDetectado,
   reportSolucaoSubmetidaNoSite,
@@ -17,7 +17,7 @@ import {
 } from './captcha-report';
 import {
   CAPTCHA_MANUAL_TIMEOUT_MS,
-  TWOCAPTCHA_RQDATA,
+  CAPTCHA_MANUAL_USE_CENTRAL,
 } from '../infrastructure/config';
 import {
   criarContextoOperacao,
@@ -25,6 +25,27 @@ import {
   extrairIdentificadorDaLinha,
   localizarNotaPorIdentificador,
 } from './download-operation';
+import {
+  CAPTCHA_SUBMIT_SELECTOR,
+  capturarDadosCaptcha,
+  aplicarTokenCaptchaNaPagina,
+} from './hcaptcha-page';
+import { getCaptchaProvider } from './captcha/get-captcha-provider';
+import type { CaptchaMode } from './captcha/types';
+import { resolverCaptchaPorCliquesRemotos } from './manual-captcha-remote';
+import {
+  tratarHCaptchaManual,
+  type CaptchaContexto,
+} from './hcaptcha-manual-handler';
+import {
+  newAttemptId,
+  captureOriginalPageSnapshot,
+  initAttemptReport,
+  ensureDebugDir,
+  captureDebugScreenshot,
+  finalizeAttemptReport,
+  writeDiagnosticJson,
+} from './captcha-diagnostic';
 
 const logger = getLogger('processar-notas');
 
@@ -33,11 +54,6 @@ export { setDownloadsBasePath };
 /** Callback opcional para emitir estágio SSE (ex.: aguardando captcha). */
 export type CaptchaStageCallback = (stage: string, message: string) => void;
 
-/** Botão "Confirmar" do modal de validação (hCaptcha). */
-const CAPTCHA_SUBMIT_SELECTOR = '#btnSubmitHCaptcha';
-/** Intervalo de polling do token h-captcha-response (modo manual). */
-const TOKEN_POLL_MS = 1000;
-
 let _minActionDelayMs = 500;
 
 /** IDs da execução atual (propagados pelo execution-service). */
@@ -45,6 +61,10 @@ export interface ExecutionIds {
   executionId: string;
   empresaId: string;
   batchId?: string;
+  /** Modo de captcha do lote (TWO_CAPTCHA | MANUAL). */
+  captchaMode?: CaptchaMode;
+  empresaNome?: string;
+  cnpj?: string;
 }
 
 export function setMinActionDelayMs(ms: number): void {
@@ -66,144 +86,6 @@ function notificarCaptcha(
   } catch {
     /* callback não deve derrubar o fluxo */
   }
-}
-
-/** rqdata só com conteúdo real — nunca "" / null / c.req. */
-function normalizeRqdata(value?: string | null): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-interface DadosCaptcha {
-  sitekey: string;
-  pageurl: string;
-  /** Opcional: só presente quando houver valor real. */
-  rqdata?: string;
-}
-
-function urlValida(u: string | undefined | null): boolean {
-  return !!u && /^https?:\/\//i.test(u);
-}
-
-function sitekeyDoSrc(src: string | null | undefined): string | null {
-  if (!src) return null;
-  const m = /sitekey=([\w-]+)/i.exec(src);
-  return m ? m[1] : null;
-}
-
-/**
- * Extrai rqdata do DOM se existir. Não usa c.req. Não exige getcaptcha postData.
- */
-async function tentarExtrairRqdataOpcional(page: Page): Promise<string | undefined> {
-  const script = `(() => {
-    var el = document.querySelector('[data-rqdata]');
-    if (el) {
-      var v = el.getAttribute('data-rqdata');
-      if (v && String(v).trim()) return String(v).trim();
-    }
-    var iframes = document.querySelectorAll('iframe[src*="hcaptcha"]');
-    for (var i = 0; i < iframes.length; i++) {
-      var src = iframes[i].getAttribute('src') || '';
-      var m = src.match(/[?&#]rqdata=([^&]+)/i);
-      if (m) {
-        try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
-      }
-    }
-    return null;
-  })()`;
-
-  for (const frame of page.frames()) {
-    try {
-      const v = await frame.evaluate(script);
-      const n = normalizeRqdata(typeof v === 'string' ? v : null);
-      if (n) return n;
-    } catch {
-      /* frame destacado */
-    }
-  }
-  return undefined;
-}
-
-async function capturarDadosCaptcha(page: Page): Promise<DadosCaptcha | null> {
-  const urlPrincipal = page.url();
-  let sitekey: string | null = null;
-  let pageurl = urlPrincipal;
-
-  for (const frame of page.frames()) {
-    try {
-      const el = frame.locator('[data-sitekey]').first();
-      if ((await el.count()) > 0) {
-        const sk = (await el.getAttribute('data-sitekey'))?.trim();
-        if (sk) {
-          sitekey = sk;
-          const frameUrl = frame.url();
-          pageurl = urlValida(frameUrl) ? frameUrl : urlPrincipal;
-          break;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (!sitekey) {
-    for (const frame of page.frames()) {
-      try {
-        const iframe = frame.locator('iframe[src*="hcaptcha.com"]').first();
-        if ((await iframe.count()) > 0) {
-          const sk = sitekeyDoSrc(await iframe.getAttribute('src'));
-          if (sk) {
-            sitekey = sk;
-            const frameUrl = frame.url();
-            pageurl = urlValida(frameUrl) ? frameUrl : urlPrincipal;
-            break;
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  if (!sitekey) return null;
-
-  // rqdata opcional: env override → DOM. Se não houver, omitir (não "" / null / c.req).
-  const rqdata =
-    normalizeRqdata(TWOCAPTCHA_RQDATA) ||
-    (await tentarExtrairRqdataOpcional(page));
-
-  if (rqdata) {
-    logger.info(
-      { rqdataLen: rqdata.length },
-      'rqdata encontrado — será enviado em enterprisePayload'
-    );
-  } else {
-    logger.info(
-      'rqdata não encontrado — task 2captcha será criada sem enterprisePayload'
-    );
-  }
-
-  return { sitekey, pageurl, ...(rqdata ? { rqdata } : {}) };
-}
-
-async function injetarTokenHCaptcha(page: Page, token: string): Promise<void> {
-  const script = `(() => {
-    var tk = ${JSON.stringify(token)};
-    var nomes = ['h-captcha-response', 'g-recaptcha-response'];
-    for (var i = 0; i < nomes.length; i++) {
-      var nome = nomes[i];
-      var campo = document.querySelector('textarea[name="' + nome + '"], input[name="' + nome + '"]');
-      if (!campo) {
-        campo = document.createElement('textarea');
-        campo.name = nome;
-        campo.style.display = 'none';
-        (document.querySelector('form') || document.body).appendChild(campo);
-      }
-      campo.value = tk;
-    }
-  })()`;
-  await page.evaluate(script);
 }
 
 async function resolverCaptchaAutomatico(
@@ -256,10 +138,24 @@ async function resolverCaptchaAutomatico(
 
   let token: string;
   try {
-    token = await resolverHCaptcha(dados.sitekey, dados.pageurl, {
+    const solution = await getCaptchaProvider('TWO_CAPTCHA').solve({
+      batchId: '',
+      executionId: '',
+      empresaId: '',
+      empresaNome: '',
+      cnpj: '',
+      siteKey: dados.sitekey,
+      pageUrl: dados.pageurl,
       userAgent,
       ...(dados.rqdata ? { rqdata: dados.rqdata } : {}),
     });
+    if (solution.status !== 'RESOLVED' || !solution.token) {
+      throw new CaptchaError(
+        solution.reason || '2Captcha não retornou token',
+        'ERROR_CAPTCHA_UNSOLVABLE'
+      );
+    }
+    token = solution.token;
   } catch (e) {
     reportCaptchaFalha({
       etapa: 'resolverHCaptcha',
@@ -269,9 +165,11 @@ async function resolverCaptchaAutomatico(
   }
 
   try {
-    await injetarTokenHCaptcha(page, token);
-    const botaoConfirmar = page.locator(CAPTCHA_SUBMIT_SELECTOR);
-    await botaoConfirmar.click({ timeout: 15000 });
+    logger.info(
+      { evento: 'manual_captcha_injection_started', provider: 'TWO_CAPTCHA' },
+      'Injetando token 2Captcha na página'
+    );
+    await aplicarTokenCaptchaNaPagina(page, token);
     reportSolucaoSubmetidaNoSite({
       pageurl: dados.pageurl,
       camposInjetados: ['h-captcha-response', 'g-recaptcha-response'],
@@ -296,101 +194,219 @@ async function resolverCaptchaAutomatico(
   }
 }
 
-async function tokenHCaptchaPreenchido(page: Page): Promise<boolean> {
-  const script = `(() => {
-    var sel = 'textarea[name="h-captcha-response"], textarea#h-captcha-response, textarea[name="g-recaptcha-response"]';
-    var els = document.querySelectorAll(sel);
-    for (var i = 0; i < els.length; i++) {
-      var v = els[i].value || '';
-      if (v.length > 20) return true;
-    }
-    return false;
-  })()`;
-
-  for (const frame of page.frames()) {
-    try {
-      if (await frame.evaluate(script)) return true;
-    } catch {
-      /* frame destacado */
-    }
+/**
+ * Resolve hCaptcha via Central Manual por cliques remotos:
+ * screenshot do Playwright → operador clica na Central → mouse no browser.
+ * TIMEOUT / SKIPPED → CaptchaError retryable para regenerar o desafio.
+ */
+async function resolverCaptchaCentral(
+  page: Page,
+  executionIds: ExecutionIds,
+  onCaptchaStage?: CaptchaStageCallback
+): Promise<void> {
+  const attemptId = newAttemptId();
+  const dados = await capturarDadosCaptcha(page);
+  if (!dados) {
+    throw new CaptchaError(
+      'Não foi possível extrair o sitekey do hCaptcha',
+      'ERROR_CONFIGURATION'
+    );
   }
-  return false;
+
+  if (!executionIds.batchId) {
+    throw new CaptchaError(
+      'batchId obrigatório para Central Manual de Captchas',
+      'ERROR_CONFIGURATION'
+    );
+  }
+
+  let userAgent: string | undefined;
+  try {
+    userAgent = String(await page.evaluate('navigator.userAgent'));
+  } catch {
+    /* opcional */
+  }
+
+  const snapshot = await captureOriginalPageSnapshot(page, {
+    batchId: executionIds.batchId,
+    executionId: executionIds.executionId,
+    attemptId,
+  });
+  snapshot.siteKey = dados.sitekey;
+  snapshot.rqdata = dados.rqdata || snapshot.rqdata;
+  snapshot.action = dados.action || snapshot.action;
+  snapshot.callbackName = dados.callbackName || snapshot.callbackName;
+  snapshot.pageUrl = dados.pageurl;
+
+  initAttemptReport({
+    batchId: executionIds.batchId,
+    executionId: executionIds.executionId,
+    empresaId: executionIds.empresaId,
+    captchaId: 'pending',
+    attemptId,
+    snapshot,
+  });
+  await ensureDebugDir(executionIds.batchId, executionIds.executionId, attemptId);
+  await captureDebugScreenshot(page, attemptId, '01-original-detected');
+
+  reportCaptchaDetectado({
+    sitekey: dados.sitekey,
+    pageurl: dados.pageurl,
+    userAgent,
+    ...(dados.rqdata ? { rqdata: dados.rqdata } : {}),
+  });
+
+  notificarCaptcha(
+    onCaptchaStage,
+    'captcha_aguardando_central',
+    'Aguardando cliques na Central de Captchas (print remoto)'
+  );
+
+  logger.info(
+    {
+      evento: 'manual_captcha_remote_started',
+      batchId: executionIds.batchId,
+      executionId: executionIds.executionId,
+      empresaId: executionIds.empresaId,
+      attemptId,
+      pageurl: dados.pageurl,
+    },
+    'Iniciando resolução MANUAL por screenshot + cliques remotos'
+  );
+
+  const solution = await resolverCaptchaPorCliquesRemotos(page, {
+    batchId: executionIds.batchId,
+    executionId: executionIds.executionId,
+    empresaId: executionIds.empresaId,
+    empresaNome: executionIds.empresaNome || executionIds.empresaId,
+    cnpj: executionIds.cnpj || '',
+    siteKey: dados.sitekey,
+    pageUrl: dados.pageurl,
+    userAgent,
+    attemptId,
+    ...(dados.rqdata ? { rqdata: dados.rqdata } : {}),
+    ...(dados.action ? { action: dados.action } : {}),
+    ...(dados.callbackName ? { callbackName: dados.callbackName } : {}),
+  });
+
+  if (solution.status === 'SKIPPED' || solution.status === 'TIMEOUT') {
+    finalizeAttemptReport(
+      attemptId,
+      solution.status === 'SKIPPED' ? 'SKIPPED' : 'TIMEOUT',
+      solution.status === 'SKIPPED' ? 'Operador pulou o desafio' : 'Timeout na Central'
+    );
+    await writeDiagnosticJson(attemptId);
+    throw new CaptchaError(
+      solution.status === 'SKIPPED'
+        ? 'Captcha pulado na Central Manual — gerando nova tentativa'
+        : 'Timeout na Central Manual — gerando nova tentativa',
+      'ERROR_CAPTCHA_UNSOLVABLE'
+    );
+  }
+
+  if (solution.status === 'CANCELLED') {
+    finalizeAttemptReport(attemptId, 'CANCELLED', solution.reason || 'cancelado');
+    await writeDiagnosticJson(attemptId);
+    throw new CaptchaError(
+      solution.reason || 'Captcha cancelado (execução/lote finalizado)',
+      'ERROR_CONFIGURATION'
+    );
+  }
+
+  if (solution.status !== 'RESOLVED') {
+    finalizeAttemptReport(attemptId, 'ERROR', 'Status inesperado na Central');
+    await writeDiagnosticJson(attemptId);
+    throw new CaptchaError(
+      'Central Manual não concluiu o desafio',
+      'ERROR_CAPTCHA_UNSOLVABLE'
+    );
+  }
+
+  // remote_click: o desafio já foi resolvido no browser do Playwright
+  const modalAindaVisivel = await page
+    .locator(CAPTCHA_SUBMIT_SELECTOR)
+    .isVisible()
+    .catch(() => false);
+
+  if (modalAindaVisivel) {
+    finalizeAttemptReport(
+      attemptId,
+      'MODAL_REMAINED_OPEN',
+      'Modal ainda aberto após resolução remota'
+    );
+    await writeDiagnosticJson(attemptId);
+    reportCaptchaFalha({
+      etapa: 'portal_apos_central_remote',
+      erro: 'Modal de captcha ainda visível após remote_click',
+    });
+    throw new CaptchaError(
+      'Modal de captcha ainda aberto após resolução na Central',
+      'ERROR_CAPTCHA_UNSOLVABLE'
+    );
+  }
+
+  finalizeAttemptReport(
+    attemptId,
+    'RESOLVED_REMOTE_CLICK',
+    `Resolvido por ${solution.resolvedBy || 'remote_click'}`
+  );
+  await writeDiagnosticJson(attemptId);
+  await captureDebugScreenshot(page, attemptId, '04-after-remote-resolve');
+
+  reportSolucaoSubmetidaNoSite({
+    pageurl: dados.pageurl,
+    camposInjetados: [],
+    botaoConfirmacao: CAPTCHA_SUBMIT_SELECTOR,
+    sucesso: true,
+  });
+  notificarCaptcha(
+    onCaptchaStage,
+    'captcha_resolvido',
+    'Captcha resolvido na Central (cliques remotos)'
+  );
+  logger.info(
+    {
+      evento: 'manual_captcha_remote_finished',
+      batchId: executionIds.batchId,
+      executionId: executionIds.executionId,
+      empresaId: executionIds.empresaId,
+      captchaId: solution.captchaId,
+      attemptId,
+      resolvedBy: solution.resolvedBy,
+    },
+    'Captcha resolvido por cliques remotos'
+  );
 }
 
 /**
- * Aguarda resolução MANUAL do hCaptcha:
- * 1) detecta modal
- * 2) mantém o navegador aberto
- * 3) espera o usuário resolver (token preenchido e/ou modal fechado)
- * 4) se o token existir e o Confirmar ainda estiver visível, clica para seguir
+ * Resolução MANUAL no navegador Playwright:
+ * animação → Tab/Tab/Enter → usuário resolve → detecta token → Confirmar.
+ * Usado no fallback (CAPTCHA_MODE) e no modo de lote MANUAL.
  */
 async function aguardarResolucaoManual(
   page: Page,
-  onCaptchaStage?: CaptchaStageCallback
+  onCaptchaStage?: CaptchaStageCallback,
+  contexto?: CaptchaContexto
 ): Promise<void> {
-  const timeoutMs = CAPTCHA_MANUAL_TIMEOUT_MS;
-  notificarCaptcha(
-    onCaptchaStage,
-    'captcha_aguardando',
-    `Aguardando resolução MANUAL do hCaptcha no navegador (até ${Math.round(timeoutMs / 1000)}s). Resolva o desafio e confirme.`
-  );
+  const result = await tratarHCaptchaManual(page, contexto || {}, {
+    timeoutMs: CAPTCHA_MANUAL_TIMEOUT_MS,
+    modalJaVisivel: true,
+    onStage: onCaptchaStage,
+  });
 
-  const inicio = Date.now();
-  let tokenDetectado = false;
-
-  while (Date.now() - inicio < timeoutMs) {
-    const modalVisivel = await page
-      .locator(CAPTCHA_SUBMIT_SELECTOR)
-      .isVisible()
-      .catch(() => false);
-
-    if (!modalVisivel) {
-      notificarCaptcha(
-        onCaptchaStage,
-        'captcha_resolvido',
-        'Captcha resolvido — modal fechado, prosseguindo'
-      );
-      return;
-    }
-
-    if (!tokenDetectado && (await tokenHCaptchaPreenchido(page))) {
-      tokenDetectado = true;
-      notificarCaptcha(
-        onCaptchaStage,
-        'captcha_token_ok',
-        'Token h-captcha-response detectado — confirmando e prosseguindo'
-      );
-      try {
-        const botao = page.locator(CAPTCHA_SUBMIT_SELECTOR);
-        if (await botao.isVisible().catch(() => false)) {
-          await botao.click({ timeout: 10000 });
-        }
-      } catch (e) {
-        logger.debug(
-          { err: e },
-          'Falha ao clicar Confirmar após token (pode já ter sido clicado pelo usuário)'
-        );
-      }
-      try {
-        await page
-          .locator(CAPTCHA_SUBMIT_SELECTOR)
-          .waitFor({ state: 'hidden', timeout: 30000 });
-      } catch {
-        /* download pode já ter disparado */
-      }
-      notificarCaptcha(
-        onCaptchaStage,
-        'captcha_resolvido',
-        'Captcha resolvido — prosseguindo com o download'
-      );
-      return;
-    }
-
-    await page.waitForTimeout(TOKEN_POLL_MS);
+  if (result.status === 'RESOLVED') {
+    return;
   }
 
-  throw new Error(
-    `Timeout aguardando resolução manual do hCaptcha (${Math.round(timeoutMs / 1000)}s)`
+  if (result.status === 'MODAL_NOT_FOUND') {
+    // Caller já detectou o modal; se sumiu, o download pode ter seguido.
+    return;
+  }
+
+  throw new CaptchaError(
+    result.reason ||
+      `Falha na resolução manual do hCaptcha (${result.status})`,
+    'ERROR_CAPTCHA_UNSOLVABLE'
   );
 }
 
@@ -524,16 +540,33 @@ async function baixarArquivosDaLinha(
     `anon-${nomeEmpresa}-${Date.now()}`;
   const empresaId = executionIds?.empresaId || '0';
 
+  const captchaContextoBase: CaptchaContexto = {
+    executionId: execId,
+    empresaId,
+    batchId: executionIds?.batchId,
+  };
+
   const deps = {
     onStage: onCaptchaStage,
-    resolverCaptchaAutomatico: (p: Page) => resolverCaptchaAutomatico(p, onCaptchaStage),
-    aguardarResolucaoManual: (p: Page) => aguardarResolucaoManual(p, onCaptchaStage),
+    resolverCaptchaAutomatico: (p: Page) =>
+      resolverCaptchaAutomatico(p, onCaptchaStage),
+    /** MANUAL (lote ou fallback): Tab/Enter + token legítimo + #btnSubmitHCaptcha. */
+    aguardarResolucaoManual: (p: Page) =>
+      aguardarResolucaoManual(p, onCaptchaStage, captchaContextoBase),
+    /** Opt-in: Central remota (CAPTCHA_MANUAL_USE_CENTRAL=true). */
+    resolverCaptchaCentral:
+      executionIds?.captchaMode === 'MANUAL' &&
+      CAPTCHA_MANUAL_USE_CENTRAL &&
+      Boolean(executionIds.batchId)
+        ? (p: Page) => resolverCaptchaCentral(p, executionIds, onCaptchaStage)
+        : undefined,
   };
 
   const ctxXml = criarContextoOperacao({
     executionId: execId,
     empresaId,
     batchId: executionIds?.batchId,
+    captchaMode: executionIds?.captchaMode,
     tipoNota,
     tipoArquivo: 'xml',
     chaveNfse,
@@ -574,6 +607,7 @@ async function baixarArquivosDaLinha(
     executionId: execId,
     empresaId,
     batchId: executionIds?.batchId,
+    captchaMode: executionIds?.captchaMode,
     tipoNota,
     tipoArquivo: 'pdf',
     chaveNfse,

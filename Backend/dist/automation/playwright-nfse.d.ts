@@ -27,10 +27,13 @@ export interface ResultadoAutenticacao {
 export interface OpcoesContexto {
     headless?: boolean;
     ignoreHttpsErrors?: boolean;
+    /** Viewport da página (tamanho do conteúdo — NÃO a resolução do monitor). */
     viewport?: {
         width: number;
         height: number;
     };
+    /** Args extras do Chromium (ex.: --window-size / --window-position do slot). */
+    launchArgs?: string[];
     /** Chamado quando a tela de login está pronta (após page.goto, antes do clique) */
     onLoginPageReady?: () => void;
 }
@@ -56,6 +59,7 @@ export declare function abrirDashboardNfse(certificado: CertificadoEmMemoria, op
         width: number;
         height: number;
     };
+    launchArgs?: string[];
     onLoginPageReady?: () => void;
 }): Promise<ResultadoAutenticacao>;
 //# sourceMappingURL=playwright-nfse.d.ts.map

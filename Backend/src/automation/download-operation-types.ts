@@ -44,6 +44,8 @@ export interface DownloadOperationContext {
   executionId: string;
   empresaId: string;
   batchId?: string;
+  /** Modo do lote: TWO_CAPTCHA (padrão) | MANUAL (Central). */
+  captchaMode?: import('./captcha/types').CaptchaMode;
 
   tipoNota: TipoNotaUi;
   tipoArquivo: TipoArquivoNota;

@@ -1,0 +1,241 @@
+<div class="central-wrapper">
+
+  <header class="central-header">
+
+    <div class="central-header-main">
+
+      <h1 class="central-title">Central de Captchas</h1>
+
+      <p class="central-subtitle">
+
+        Lote <span class="mono">{{ batchId || '—' }}</span>
+
+        · Clique no print para interagir no navegador da automação
+
+      </p>
+
+    </div>
+
+    <div class="central-kpis">
+
+      <div class="kpi">
+
+        <span class="kpi-label">Aguardando</span>
+
+        <span class="kpi-value">{{ awaitingCount }}</span>
+
+      </div>
+
+      <div class="kpi connection" [attr.data-status]="connection">
+
+        <span class="kpi-label">Conexão</span>
+
+        <span class="kpi-value">{{ connectionLabel }}</span>
+
+      </div>
+
+    </div>
+
+  </header>
+
+
+
+  @if (routeError) {
+
+    <div class="banner-error">{{ routeError }}</div>
+
+  }
+
+
+
+  @if (cards.length === 0) {
+
+    <div class="empty-state">
+
+      <p>Nenhum captcha pendente neste lote.</p>
+
+      <p class="empty-hint">
+
+        Quando a automação encontrar um hCaptcha, o print do navegador aparecerá aqui para você clicar.
+
+      </p>
+
+    </div>
+
+  } @else {
+
+    <div class="captcha-grid">
+
+      @for (card of cards; track trackByCaptchaId($index, card)) {
+
+        <article class="captcha-card" [attr.data-status]="card.localStatus">
+
+          <div class="card-top">
+
+            <h2 class="card-empresa" [title]="card.empresaNome">{{ card.empresaNome || 'Empresa' }}</h2>
+
+            <span class="card-cnpj mono">{{ formatCnpj(card.cnpj) }}</span>
+
+          </div>
+
+          <div class="card-meta">
+
+            <span class="card-timer">{{ expiresInLabel(card) }}</span>
+
+            <span class="card-status">{{ statusLabel(card) }}</span>
+
+          </div>
+
+
+
+          <div class="frame-wrap" [class.busy]="isBusy(card)">
+
+            @if (frameSrc(card); as src) {
+
+              <img
+
+                class="frame-img"
+
+                [src]="src"
+
+                alt="Print do captcha no navegador"
+
+                draggable="false"
+
+                (click)="onImageClick(card, $event)"
+
+                [class.interactive]="canInteract(card)"
+
+              />
+
+            } @else {
+
+              <div class="frame-placeholder">Aguardando print do navegador…</div>
+
+            }
+
+          </div>
+
+
+
+          @if (card.errorMessage) {
+
+            <p class="card-error">{{ card.errorMessage }}</p>
+
+          }
+
+
+
+          <p class="card-hint">
+
+            Clique nas imagens do desafio e depois em
+
+            <strong>Confirmar no portal</strong>
+
+            (botão azul do modal NFSe).
+
+          </p>
+
+
+
+          @if (captchaDebug || card.debug) {
+
+            <details class="debug-panel" [open]="card.panelOpen">
+
+              <summary (click)="togglePanel(card); $event.preventDefault()">Painel técnico</summary>
+
+              <dl class="debug-grid">
+
+                <dt>captchaId</dt><dd class="mono">{{ card.captchaId }}</dd>
+
+                <dt>attemptId</dt><dd class="mono">{{ card.attemptId }}</dd>
+
+                <dt>modo</dt><dd>{{ card.interactionMode || 'remote_click' }}</dd>
+
+                <dt>frame seq</dt><dd>{{ card.latestFrame?.seq ?? '—' }}</dd>
+
+                <dt>viewport</dt>
+
+                <dd>
+
+                  {{ card.latestFrame?.viewportWidth || '—' }}×{{ card.latestFrame?.viewportHeight || '—' }}
+
+                </dd>
+
+                <dt>cliques</dt><dd>{{ card.clickCount ?? 0 }}</dd>
+
+                <dt>pageUrl</dt><dd class="mono truncate">{{ card.pageUrl }}</dd>
+
+                <dt>capturado</dt><dd>{{ card.latestFrame?.capturedAt || '—' }}</dd>
+
+              </dl>
+
+            </details>
+
+          }
+
+
+
+          <div class="card-actions">
+
+            <button
+
+              type="button"
+
+              class="btn-primary"
+
+              [disabled]="!canSkip(card)"
+
+              (click)="onConfirm(card)"
+
+            >
+
+              Confirmar no portal
+
+            </button>
+
+            <button
+
+              type="button"
+
+              class="btn-ghost"
+
+              [disabled]="!canSkip(card)"
+
+              (click)="onRefresh(card)"
+
+            >
+
+              Atualizar print
+
+            </button>
+
+            <button
+
+              type="button"
+
+              class="btn-ghost"
+
+              [disabled]="!canSkip(card)"
+
+              (click)="onSkip(card)"
+
+            >
+
+              Pular
+
+            </button>
+
+          </div>
+
+        </article>
+
+      }
+
+    </div>
+
+  }
+
+</div>
+
+

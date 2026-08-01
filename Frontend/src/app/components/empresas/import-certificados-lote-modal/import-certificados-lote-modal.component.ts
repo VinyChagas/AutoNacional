@@ -303,7 +303,7 @@ export class ImportCertificadosLoteModalComponent implements OnChanges {
       sessionId,
       sessionIndice: si.indice,
       previewAction: action,
-      canConfirm: si.can_confirm ?? status === 'NOVO' || status === 'ATUALIZAR',
+      canConfirm: si.can_confirm ?? (status === 'NOVO' || status === 'ATUALIZAR'),
       daysDelta: si.days_delta,
     };
   }

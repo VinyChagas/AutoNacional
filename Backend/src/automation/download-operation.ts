@@ -56,8 +56,13 @@ export interface DownloadOperationDeps {
   onStage?: StageCallback;
   /** Resolve o desafio ATUAL via 2Captcha (uma task). */
   resolverCaptchaAutomatico: (page: Page) => Promise<void>;
-  /** Fallback manual apenas para esta operação. */
+  /**
+   * Resolução MANUAL no navegador: Tab/Enter → usuário resolve →
+   * detecta token → #btnSubmitHCaptcha. Usado no fallback e no lote MANUAL.
+   */
   aguardarResolucaoManual: (page: Page) => Promise<void>;
+  /** Opt-in: Central Manual remota (Socket.IO) quando CAPTCHA_MANUAL_USE_CENTRAL=true. */
+  resolverCaptchaCentral?: (page: Page) => Promise<void>;
 }
 
 /** Estado por execução (nunca global entre empresas). */
@@ -137,6 +142,7 @@ export function criarContextoOperacao(params: {
   executionId: string;
   empresaId: string;
   batchId?: string;
+  captchaMode?: import('./captcha/types').CaptchaMode;
   tipoNota: TipoNotaUi;
   tipoArquivo: TipoArquivoNota;
   chaveNfse: string;
@@ -155,6 +161,7 @@ export function criarContextoOperacao(params: {
     executionId: params.executionId,
     empresaId: params.empresaId,
     batchId: params.batchId,
+    captchaMode: params.captchaMode,
     tipoNota: params.tipoNota,
     tipoArquivo: params.tipoArquivo,
     chaveNfse: params.chaveNfse,
@@ -510,6 +517,32 @@ async function tentarResolverCaptchaSeNecessario(
   if (!apareceuCaptcha) return;
 
   atualizarOperacao(ctx, { status: 'captcha_detectado' });
+
+  // Modo do lote MANUAL → tratamento no navegador (Tab/Enter + token + Confirmar).
+  // Opcionalmente ainda aceita Central remota se deps.resolverCaptchaCentral estiver definido.
+  if (ctx.captchaMode === 'MANUAL') {
+    atualizarOperacao(ctx, { status: 'captcha_resolvendo' });
+    if (deps.resolverCaptchaCentral) {
+      notificar(
+        deps,
+        'captcha_aguardando_central',
+        `Aguardando resolução MANUAL na Central para ${ctx.tipoArquivo.toUpperCase()} desta nota`,
+        ctx
+      );
+      await deps.resolverCaptchaCentral(page);
+    } else {
+      notificar(
+        deps,
+        'captcha_aguardando',
+        `Aguardando resolução MANUAL no navegador para ${ctx.tipoArquivo.toUpperCase()} desta nota`,
+        ctx
+      );
+      await deps.aguardarResolucaoManual(page);
+    }
+    atualizarOperacao(ctx, { status: 'captcha_enviando' });
+    return;
+  }
+
   const modo = CAPTCHA_MODE;
   const skipAuto =
     forceManual ||

@@ -133,6 +133,8 @@ export interface MultiplasExecucoesRequest {
   headless: boolean;
   baixarPdf: boolean; // true = XML + PDF (DANFS-e); false = apenas XML
   contabilidade_id?: number | null;
+  /** TWO_CAPTCHA (padrão) | MANUAL (Central de Captchas) */
+  captchaMode?: 'TWO_CAPTCHA' | 'MANUAL';
 }
 
 export interface MultiplasExecucoesResponse {

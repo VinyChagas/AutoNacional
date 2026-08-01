@@ -6,7 +6,10 @@
  */
 
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
-import { getPlaywrightConfig } from './playwright-config';
+import {
+  getPlaywrightConfig,
+  aplicarZoomPaginaNoContexto,
+} from './playwright-config';
 import { getLogger } from '../infrastructure/logger';
 
 const logger = getLogger('playwright-nfse');
@@ -41,7 +44,10 @@ export interface ResultadoAutenticacao {
 export interface OpcoesContexto {
   headless?: boolean;
   ignoreHttpsErrors?: boolean;
+  /** Viewport da página (tamanho do conteúdo — NÃO a resolução do monitor). */
   viewport?: { width: number; height: number };
+  /** Args extras do Chromium (ex.: --window-size / --window-position do slot). */
+  launchArgs?: string[];
   /** Chamado quando a tela de login está pronta (após page.goto, antes do clique) */
   onLoginPageReady?: () => void;
 }
@@ -60,11 +66,19 @@ export async function criarContextoComCertificado(
   const headless = opcoes.headless ?? config.headless;
   const ignoreHttpsErrors = opcoes.ignoreHttpsErrors ?? true;
   const viewport = opcoes.viewport ?? config.viewport;
+  const launchArgs = [...config.args, ...(opcoes.launchArgs ?? [])];
 
-  logger.debug('Iniciando Chromium...');
+  logger.debug(
+    {
+      headless,
+      viewport,
+      windowArgs: opcoes.launchArgs,
+    },
+    'Iniciando Chromium…'
+  );
   const browser = await chromium.launch({
     headless,
-    args: config.args,
+    args: launchArgs,
   });
 
   logger.debug('Configurando certificado cliente no contexto...');
@@ -92,6 +106,8 @@ export async function criarContextoComCertificado(
     ],
   });
 
+  await aplicarZoomPaginaNoContexto(context);
+
   return { browser, context };
 }
 
@@ -107,6 +123,7 @@ export async function abrirDashboardNfse(
     headless?: boolean;
     timeout?: number;
     viewport?: { width: number; height: number };
+    launchArgs?: string[];
     onLoginPageReady?: () => void;
   } = {}
 ): Promise<ResultadoAutenticacao> {
@@ -131,6 +148,7 @@ export async function abrirDashboardNfse(
       headless: opcoes.headless ?? config.headless,
       ignoreHttpsErrors: true,
       viewport: opcoes.viewport ?? config.viewport,
+      launchArgs: opcoes.launchArgs,
     });
 
     browser = resultado.browser;
@@ -143,13 +161,6 @@ export async function abrirDashboardNfse(
     log(`Acessando portal NFSe Nacional: ${BASE_URL}`);
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout });
     log(`Página carregada: ${page.url()}`);
-
-    await page.waitForTimeout(500);
-
-    const currentUrl = page.url();
-    const pageTitle = await page.title();
-    log(`URL atual: ${currentUrl}`);
-    log(`Título da página: ${pageTitle}`);
 
     const loginSelectors = [
       'button:has-text("Certificado")',
@@ -166,12 +177,33 @@ export async function abrirDashboardNfse(
       '#dashboard',
     ];
 
+    // Aguarda renderização (viewport compacto / vários browsers em paralelo)
+    try {
+      await Promise.race([
+        page.waitForSelector(loginSelectors.join(', '), {
+          timeout: 15000,
+          state: 'visible',
+        }),
+        page.waitForSelector(dashboardSelectors.join(', '), {
+          timeout: 15000,
+          state: 'visible',
+        }),
+      ]);
+    } catch {
+      await page.waitForTimeout(1000);
+    }
+
+    const currentUrl = page.url();
+    const pageTitle = await page.title();
+    log(`URL atual: ${currentUrl}`);
+    log(`Título da página: ${pageTitle}`);
+
     let loginElement = page.locator('body'); // placeholder, será substituído
     let loginFound = false;
     for (const selector of loginSelectors) {
       try {
         const locator = page.locator(selector);
-        if ((await locator.count()) > 0) {
+        if ((await locator.count()) > 0 && (await locator.first().isVisible().catch(() => false))) {
           log(`Elemento de login encontrado: ${selector}`);
           loginElement = locator.nth(0);
           loginFound = true;
@@ -187,7 +219,7 @@ export async function abrirDashboardNfse(
     for (const selector of dashboardSelectors) {
       try {
         const locator = page.locator(selector);
-        if ((await locator.count()) > 0) {
+        if ((await locator.count()) > 0 && (await locator.first().isVisible().catch(() => false))) {
           log(`Elemento de dashboard encontrado: ${selector}`);
           dashboardElement = locator.nth(0);
           dashboardFound = true;
@@ -195,6 +227,27 @@ export async function abrirDashboardNfse(
         }
       } catch {
         continue;
+      }
+    }
+
+    // Fallback: botão pode estar fora da área visível na janela compacta
+    if (!loginFound && !dashboardFound) {
+      await page.evaluate('window.scrollTo(0, 0)').catch(() => undefined);
+      for (const selector of loginSelectors) {
+        try {
+          const locator = page.locator(selector);
+          if ((await locator.count()) > 0) {
+            await locator.first().scrollIntoViewIfNeeded().catch(() => undefined);
+            if (await locator.first().isVisible().catch(() => false)) {
+              loginElement = locator.nth(0);
+              loginFound = true;
+              log(`Elemento de login encontrado após scroll: ${selector}`);
+              break;
+            }
+          }
+        } catch {
+          continue;
+        }
       }
     }
 

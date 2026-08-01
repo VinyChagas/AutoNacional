@@ -12,8 +12,13 @@ export interface DownloadOperationDeps {
     onStage?: StageCallback;
     /** Resolve o desafio ATUAL via 2Captcha (uma task). */
     resolverCaptchaAutomatico: (page: Page) => Promise<void>;
-    /** Fallback manual apenas para esta operação. */
+    /**
+     * Resolução MANUAL no navegador: Tab/Enter → usuário resolve →
+     * detecta token → #btnSubmitHCaptcha. Usado no fallback e no lote MANUAL.
+     */
     aguardarResolucaoManual: (page: Page) => Promise<void>;
+    /** Opt-in: Central Manual remota (Socket.IO) quando CAPTCHA_MANUAL_USE_CENTRAL=true. */
+    resolverCaptchaCentral?: (page: Page) => Promise<void>;
 }
 export declare function shouldSkipAutoForExecution(executionId: string): boolean;
 export declare function markAutoSuccess(executionId: string): void;
@@ -25,6 +30,7 @@ export declare function criarContextoOperacao(params: {
     executionId: string;
     empresaId: string;
     batchId?: string;
+    captchaMode?: import('./captcha/types').CaptchaMode;
     tipoNota: TipoNotaUi;
     tipoArquivo: TipoArquivoNota;
     chaveNfse: string;

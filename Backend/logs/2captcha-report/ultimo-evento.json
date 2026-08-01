@@ -1,9 +1,12 @@
 {
-  "seq": 88,
-  "at": "2026-07-20T11:59:42.100Z",
-  "sessionId": "20260719-154242",
-  "type": "captcha_failed",
-  "tentativa": 11,
-  "etapa": "resolverHCaptcha",
-  "erro": "2captcha getTaskResult: ERROR_CAPTCHA_UNSOLVABLE — Workers could not solve the Captcha"
+  "seq": 18,
+  "at": "2026-07-30T18:14:14.346Z",
+  "sessionId": "20260730-151106",
+  "type": "solution_submitted_to_target_site",
+  "tentativa": 9,
+  "targetSite": "https://www.nfse.gov.br",
+  "pageurl": "https://www.nfse.gov.br/EmissorNacional/Notas/Emitidas?busca=&datainicio=01%2F06%2F2026&datafim=30%2F06%2F2026",
+  "camposInjetados": [],
+  "botaoConfirmacao": "#btnSubmitHCaptcha",
+  "sucesso": true
 }

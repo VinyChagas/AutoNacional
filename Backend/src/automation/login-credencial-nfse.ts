@@ -5,6 +5,7 @@
  */
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
+import { aplicarZoomPaginaNoContexto } from './playwright-config';
 import type { ResultadoAutenticacao } from './playwright-nfse';
 import { NFSeAutenticacaoError } from './playwright-nfse';
 
@@ -14,7 +15,10 @@ const BASE_URL = 'https://www.nfse.gov.br/EmissorNacional/';
 export interface OpcoesLoginCredencial {
   headless?: boolean;
   timeout?: number;
+  /** Viewport da página (tamanho do conteúdo — NÃO a resolução do monitor). */
   viewport?: { width: number; height: number };
+  /** Args extras do Chromium (ex.: --window-size / --window-position do slot). */
+  launchArgs?: string[];
   onLoginPageReady?: () => void;
 }
 
@@ -30,7 +34,13 @@ export async function abrirDashboardNfseComCredencial(
 ): Promise<ResultadoAutenticacao> {
   const headless = opcoes.headless ?? true;
   const timeout = opcoes.timeout ?? 120000;
-  const viewport = opcoes.viewport ?? { width: 1920, height: 1080 };
+  // Fallback de conteúdo — nunca usar resolução Full HD do monitor aqui
+  const viewport = opcoes.viewport ?? { width: 769, height: 680 };
+  const launchArgs = [
+    '--disable-web-security',
+    '--disable-features=IsolateOrigins,site-per-process',
+    ...(opcoes.launchArgs ?? []),
+  ];
 
   const docLimpo = documento.replace(/[.\/\-\s]/g, '');
   const isCpf = docLimpo.length === 11;
@@ -56,7 +66,7 @@ export async function abrirDashboardNfseComCredencial(
 
     browser = await chromium.launch({
       headless,
-      args: ['--disable-web-security', '--disable-features=IsolateOrigins,site-per-process'],
+      args: launchArgs,
     });
 
     context = await browser.newContext({
@@ -66,6 +76,8 @@ export async function abrirDashboardNfseComCredencial(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
       acceptDownloads: true,
     });
+
+    await aplicarZoomPaginaNoContexto(context);
 
     page = await context.newPage();
     page.setDefaultTimeout(timeout);

@@ -3,10 +3,11 @@
  *
  * Varredura de notas emitidas e recebidas, com download de XML e DANFS-e (PDF).
  * hCaptcha: 2captcha (automático) com rqdata opcional; retry por operação (novo CAPTCHA);
- * fallback manual somente após esgotar tentativas da operação.
+ * modo MANUAL / fallback: Tab/Enter no browser → token legítimo → #btnSubmitHCaptcha.
  */
 import { Page } from 'playwright';
 import { setDownloadsBasePath } from './download-manager';
+import type { CaptchaMode } from './captcha/types';
 export { setDownloadsBasePath };
 /** Callback opcional para emitir estágio SSE (ex.: aguardando captcha). */
 export type CaptchaStageCallback = (stage: string, message: string) => void;
@@ -15,6 +16,10 @@ export interface ExecutionIds {
     executionId: string;
     empresaId: string;
     batchId?: string;
+    /** Modo de captcha do lote (TWO_CAPTCHA | MANUAL). */
+    captchaMode?: CaptchaMode;
+    empresaNome?: string;
+    cnpj?: string;
 }
 export declare function setMinActionDelayMs(ms: number): void;
 export declare function getMinActionDelayMs(): number;
