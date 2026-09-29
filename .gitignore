@@ -40,3 +40,6 @@ Backend/temp/
 Backend/db_mock.sqlite
 
 Backend/node_modules/
+
+# Backups Fase 1 (contém dados sensíveis — credenciais, certificados)
+Backend/dumps/

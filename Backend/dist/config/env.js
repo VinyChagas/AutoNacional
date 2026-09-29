@@ -34,46 +34,43 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.env = void 0;
+exports.isCertificateStorageConfigured = isCertificateStorageConfigured;
+exports.describeCertificateStorageTarget = describeCertificateStorageTarget;
+exports.describeDatabaseTarget = describeDatabaseTarget;
 /**
  * Validação de variáveis de ambiente.
- * O servidor não inicia se variáveis obrigatórias estiverem faltando.
+ *
+ * Separação clara:
+ * - DATABASE_URL → PostgreSQL (VPS / próprio) via Prisma
+ * - CERT_STORAGE_DRIVER → local (filesystem) ou sftp (VPS remota)
  */
 const dotenv = __importStar(require("dotenv"));
 const path = __importStar(require("path"));
+const sftp_auth_1 = require("../storage/sftp-auth");
 const backendDir = path.resolve(__dirname, '../..');
 const envPath = path.join(backendDir, '.env');
 dotenv.config({ path: envPath });
 dotenv.config();
-const REQUIRED = [
-    'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY',
-    'CRYPTO_KEY',
-    'CERT_STORAGE_BUCKET',
-];
-/**
- * Valida variáveis obrigatórias. Só valida quando USE_SUPABASE=true
- * (para não quebrar setups que ainda usam apenas Prisma).
- */
-function validateEnv() {
-    const useSupabase = process.env.USE_SUPABASE === 'true';
-    if (useSupabase) {
-        const missing = [];
-        for (const key of REQUIRED) {
-            const val = process.env[key];
-            if (!val || String(val).trim() === '') {
-                missing.push(key);
-            }
-        }
-        if (missing.length > 0) {
-            throw new Error(`Variáveis de ambiente obrigatórias não definidas: ${missing.join(', ')}. ` +
-                `Configure no .env (veja .env.example). Ou remova USE_SUPABASE=true para rodar sem Supabase.`);
-        }
+const DEFAULT_CERT_STORAGE_PATH = '/srv/data/autonacional/certificados';
+const DEFAULT_CERT_STORAGE_SFTP_BASE_PATH = '/srv/data/autonacional/certificados';
+function parseStorageDriver(raw) {
+    const value = (raw || 'local').trim().toLowerCase();
+    if (value === 'local' || value === 'sftp') {
+        return value;
     }
+    throw new Error(`CERT_STORAGE_DRIVER inválido: "${raw}". Valores permitidos: local, sftp`);
+}
+function validateEnv() {
     return {
-        SUPABASE_URL: process.env.SUPABASE_URL || '',
-        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
         CRYPTO_KEY: process.env.CRYPTO_KEY || process.env.APP_CRED_KEY || '',
-        CERT_STORAGE_BUCKET: process.env.CERT_STORAGE_BUCKET || 'certificados',
+        CERT_STORAGE_DRIVER: parseStorageDriver(process.env.CERT_STORAGE_DRIVER),
+        CERT_STORAGE_PATH: (process.env.CERT_STORAGE_PATH || DEFAULT_CERT_STORAGE_PATH).trim(),
+        CERT_STORAGE_SFTP_HOST: (process.env.CERT_STORAGE_SFTP_HOST || '').trim(),
+        CERT_STORAGE_SFTP_PORT: parseInt(process.env.CERT_STORAGE_SFTP_PORT || '22', 10),
+        CERT_STORAGE_SFTP_USER: (process.env.CERT_STORAGE_SFTP_USER || '').trim(),
+        CERT_STORAGE_SFTP_PRIVATE_KEY: (process.env.CERT_STORAGE_SFTP_PRIVATE_KEY || '').trim(),
+        CERT_STORAGE_SFTP_BASE_PATH: (process.env.CERT_STORAGE_SFTP_BASE_PATH ||
+            DEFAULT_CERT_STORAGE_SFTP_BASE_PATH).trim(),
         DATABASE_URL: process.env.DATABASE_URL || '',
         FERNET_KEY: process.env.FERNET_KEY || '',
         APP_CRED_KEY: process.env.APP_CRED_KEY || '',
@@ -84,4 +81,45 @@ function validateEnv() {
     };
 }
 exports.env = validateEnv();
+function isCertificateStorageConfigured() {
+    if (exports.env.CERT_STORAGE_DRIVER === 'sftp') {
+        return Boolean(exports.env.CERT_STORAGE_SFTP_HOST &&
+            exports.env.CERT_STORAGE_SFTP_USER &&
+            exports.env.CERT_STORAGE_SFTP_BASE_PATH &&
+            (0, sftp_auth_1.isSftpAuthConfigured)({
+                sshAuthSock: process.env.SSH_AUTH_SOCK,
+                privateKeyPath: exports.env.CERT_STORAGE_SFTP_PRIVATE_KEY,
+            }));
+    }
+    return Boolean(exports.env.CERT_STORAGE_PATH?.length);
+}
+function describeCertificateStorageTarget() {
+    if (exports.env.CERT_STORAGE_DRIVER === 'sftp') {
+        return `SFTP (${exports.env.CERT_STORAGE_SFTP_HOST}:${exports.env.CERT_STORAGE_SFTP_PORT})`;
+    }
+    return 'Local filesystem';
+}
+/**
+ * Extrai host e database de DATABASE_URL sem expor senha ou connection string.
+ */
+function describeDatabaseTarget(databaseUrl = exports.env.DATABASE_URL) {
+    if (!databaseUrl) {
+        return { host: '(não configurado)', database: '(não configurado)' };
+    }
+    try {
+        const normalized = databaseUrl
+            .replace(/^postgresql:/i, 'http:')
+            .replace(/^postgres:/i, 'http:');
+        const u = new URL(normalized);
+        const database = decodeURIComponent(u.pathname.replace(/^\//, '').split('?')[0] || '') ||
+            '(desconhecido)';
+        return {
+            host: u.hostname || '(desconhecido)',
+            database,
+        };
+    }
+    catch {
+        return { host: '(indisponível)', database: '(indisponível)' };
+    }
+}
 //# sourceMappingURL=env.js.map

@@ -2,8 +2,7 @@
  * Serviço de cadastro de empresa via certificado digital.
  */
 import { prisma } from '../../../db/client';
-import { getSupabaseClient } from '../../../config/supabase';
-import { env } from '../../../config/env';
+import { getCertificateStorage } from '../../../storage';
 import { parseCertificado } from '../../../utils/certificado.parser';
 import { encryptPassword } from '../../../infrastructure/crypto';
 import * as certRepo from '../../../repositories/certificados';
@@ -84,19 +83,13 @@ export async function cadastrarPorCertificado(
 
   const storagePath = gerarStoragePath(cnpjLimpo, contabilidade_id);
 
-  const supabase = getSupabaseClient();
-  const bucket = env.CERT_STORAGE_BUCKET || 'certificados';
-
-  const { error: uploadError } = await supabase.storage
-    .from(bucket)
-    .upload(storagePath, buffer, {
-      upsert: true,
-      contentType: 'application/x-pkcs12',
-    });
-
-  if (uploadError) {
-    logger.error({ err: uploadError }, 'Erro ao fazer upload do certificado');
-    throw new Error(`Falha ao fazer upload no Storage: ${uploadError.message}`);
+  try {
+    await getCertificateStorage().save(storagePath, buffer);
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, 'Erro ao salvar certificado');
+    throw new Error(
+      `Falha ao fazer upload no Storage: ${(err as Error).message}`
+    );
   }
 
   const existingCert = await certRepo.obterPorCnpj(cnpjLimpo);

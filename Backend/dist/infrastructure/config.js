@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PORT = exports.MAX_CONCURRENCY_CAP = exports.QUEUE_TIMEOUT = exports.CAPTCHA_RETRYABLE_ERROR_CODES = exports.CAPTCHA_CONSECUTIVE_FAILURE_LIMIT = exports.CAPTCHA_OPERATION_FALLBACK_MANUAL = exports.CAPTCHA_NOTE_RELOCATION_TIMEOUT_MS = exports.CAPTCHA_NEW_CHALLENGE_TIMEOUT_MS = exports.CAPTCHA_MODAL_CLOSE_TIMEOUT_MS = exports.CAPTCHA_OPERATION_RETRY_DELAY_MS = exports.CAPTCHA_OPERATION_MAX_ATTEMPTS = exports.TWOCAPTCHA_PROXY_PASSWORD = exports.TWOCAPTCHA_PROXY_LOGIN = exports.TWOCAPTCHA_PROXY_PORT = exports.TWOCAPTCHA_PROXY_ADDRESS = exports.TWOCAPTCHA_PROXY_TYPE = exports.CAPTCHA_DEBUG = exports.CAPTCHA_WINDOW_LAYOUT_ENABLED = exports.CAPTCHA_MANUAL_USE_CENTRAL = exports.MANUAL_CAPTCHA_TIMEOUT_MS = exports.CAPTCHA_MANUAL_TIMEOUT_MS = exports.CAPTCHA_MODE = exports.TWOCAPTCHA_RQDATA = exports.CAPTCHA_IS_INVISIBLE = exports.CAPTCHA_SOLVE_TIMEOUT_MS = exports.TWOCAPTCHA_API_VERSION = exports.TWOCAPTCHA_API_KEY = exports.BROWSER_PAGE_ZOOM = exports.PLAYWRIGHT_HEADLESS = exports.PLAYWRIGHT_TIMEOUT = exports.CORS_ORIGINS = exports.INTERNAL_API_KEY = exports.SUPABASE_ISSUER = exports.SUPABASE_AUDIENCE = exports.SUPABASE_JWKS_URL = exports.SUPABASE_SERVICE_ROLE_KEY = exports.SUPABASE_URL = exports.APP_CRED_KEY = exports.DATABASE_URL = exports.CERT_STORAGE_BUCKET = exports.CRYPTO_KEY = exports.FERNET_KEY = exports.CERTIFICATES_DIR = exports.BACKEND_DIR = void 0;
+exports.PORT = exports.MAX_CONCURRENCY_CAP = exports.QUEUE_TIMEOUT = exports.CAPTCHA_RETRYABLE_ERROR_CODES = exports.CAPTCHA_CONSECUTIVE_FAILURE_LIMIT = exports.CAPTCHA_OPERATION_FALLBACK_MANUAL = exports.CAPTCHA_NOTE_RELOCATION_TIMEOUT_MS = exports.CAPTCHA_NEW_CHALLENGE_TIMEOUT_MS = exports.CAPTCHA_MODAL_CLOSE_TIMEOUT_MS = exports.CAPTCHA_OPERATION_RETRY_DELAY_MS = exports.CAPTCHA_OPERATION_MAX_ATTEMPTS = exports.TWOCAPTCHA_PROXY_PASSWORD = exports.TWOCAPTCHA_PROXY_LOGIN = exports.TWOCAPTCHA_PROXY_PORT = exports.TWOCAPTCHA_PROXY_ADDRESS = exports.TWOCAPTCHA_PROXY_TYPE = exports.CAPTCHA_DEBUG = exports.CAPTCHA_WINDOW_LAYOUT_ENABLED = exports.CAPTCHA_MANUAL_USE_CENTRAL = exports.MANUAL_CAPTCHA_TIMEOUT_MS = exports.CAPTCHA_MANUAL_TIMEOUT_MS = exports.CAPTCHA_MODE = exports.TWOCAPTCHA_RQDATA = exports.CAPTCHA_IS_INVISIBLE = exports.CAPTCHA_SOLVE_TIMEOUT_MS = exports.TWOCAPTCHA_API_VERSION = exports.TWOCAPTCHA_API_KEY = exports.BROWSER_PAGE_ZOOM = exports.PLAYWRIGHT_HEADLESS = exports.PLAYWRIGHT_TIMEOUT = exports.CORS_ORIGINS = exports.INTERNAL_API_KEY = exports.APP_CRED_KEY = exports.DATABASE_URL = exports.CERT_STORAGE_PATH = exports.CRYPTO_KEY = exports.FERNET_KEY = exports.BACKEND_DIR = void 0;
 const dotenv = __importStar(require("dotenv"));
 const path = __importStar(require("path"));
 // Carrega .env a partir do diretório do Backend ou pai
@@ -45,13 +45,12 @@ dotenv.config(); // Também tenta do diretório atual
 // Caminhos
 // ============================================================================
 exports.BACKEND_DIR = backendDir;
-exports.CERTIFICATES_DIR = path.join(backendDir, 'certificados_armazenados');
 // ============================================================================
 // Configurações de certificado e criptografia
 // ============================================================================
 exports.FERNET_KEY = process.env.FERNET_KEY || '';
 exports.CRYPTO_KEY = process.env.CRYPTO_KEY || process.env.APP_CRED_KEY || '';
-exports.CERT_STORAGE_BUCKET = process.env.CERT_STORAGE_BUCKET || 'certificados';
+exports.CERT_STORAGE_PATH = process.env.CERT_STORAGE_PATH || '/srv/data/autonacional/certificados';
 // ============================================================================
 // Configurações de banco de dados
 // ============================================================================
@@ -60,11 +59,6 @@ exports.APP_CRED_KEY = process.env.APP_CRED_KEY || '';
 // ============================================================================
 // Configurações de segurança
 // ============================================================================
-exports.SUPABASE_URL = process.env.SUPABASE_URL || '';
-exports.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-exports.SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL || '';
-exports.SUPABASE_AUDIENCE = process.env.SUPABASE_AUDIENCE || 'authenticated';
-exports.SUPABASE_ISSUER = process.env.SUPABASE_ISSUER || '';
 exports.INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
 // ============================================================================
 // CORS

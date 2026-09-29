@@ -3,8 +3,11 @@
  * Classifica NEW / UPDATE_AVAILABLE / EXACT_DUPLICATE / etc. e exige ação explícita.
  */
 import { prisma } from '../../db/client';
-import { getSupabaseClient } from '../../config/supabase';
-import { env } from '../../config/env';
+import {
+  CertificateFileNotFoundError,
+  getCertificateStorage,
+  maskRelativePath,
+} from '../../storage';
 import { parseCertificado } from '../../utils/certificado.parser';
 import { encryptPassword, decryptPassword } from '../../infrastructure/crypto';
 import * as certRepo from '../../repositories/certificados';
@@ -49,20 +52,19 @@ async function baixarArquivoCertificado(
 ): Promise<Buffer | null> {
   if (!arquivo?.trim()) return null;
   try {
-    const supabase = getSupabaseClient();
-    const bucket = env.CERT_STORAGE_BUCKET || 'certificados';
-    const { data, error } = await supabase.storage.from(bucket).download(arquivo.trim());
-    if (error || !data) {
+    return await getCertificateStorage().read(arquivo.trim());
+  } catch (err) {
+    if (err instanceof CertificateFileNotFoundError) {
       logger.warn(
-        { path: arquivo, err: error?.message },
+        { pathMasked: maskRelativePath(arquivo) },
         'Falha ao baixar certificado existente para comparação'
       );
       return null;
     }
-    const ab = await data.arrayBuffer();
-    return Buffer.from(ab);
-  } catch (err) {
-    logger.warn({ err, path: arquivo }, 'Exceção ao baixar certificado existente');
+    logger.warn(
+      { pathMasked: maskRelativePath(arquivo) },
+      'Exceção ao baixar certificado existente'
+    );
     return null;
   }
 }
@@ -468,17 +470,11 @@ async function criarCertificadoNovo(opts: {
     contabilidade_id
   );
   const storagePath = gerarStoragePath(cnpjLimpo, contabilidade_id);
-  const supabase = getSupabaseClient();
-  const bucket = env.CERT_STORAGE_BUCKET || 'certificados';
 
-  const { error: uploadError } = await supabase.storage
-    .from(bucket)
-    .upload(storagePath, buffer, {
-      upsert: false,
-      contentType: 'application/x-pkcs12',
-    });
-  if (uploadError) {
-    throw new Error(`Upload: ${uploadError.message}`);
+  try {
+    await getCertificateStorage().save(storagePath, buffer);
+  } catch (err) {
+    throw new Error(`Upload: ${(err as Error).message}`);
   }
 
   try {
@@ -522,17 +518,11 @@ async function substituirCertificadoSeguro(opts: {
 
   const oldPath = existingCert.arquivo?.trim() || null;
   const newPath = gerarStoragePath(cnpjLimpo, contabilidade_id);
-  const supabase = getSupabaseClient();
-  const bucket = env.CERT_STORAGE_BUCKET || 'certificados';
 
-  const { error: uploadError } = await supabase.storage
-    .from(bucket)
-    .upload(newPath, buffer, {
-      upsert: false,
-      contentType: 'application/x-pkcs12',
-    });
-  if (uploadError) {
-    throw new Error(`Upload do novo certificado: ${uploadError.message}`);
+  try {
+    await getCertificateStorage().save(newPath, buffer);
+  } catch (err) {
+    throw new Error(`Upload do novo certificado: ${(err as Error).message}`);
   }
 
   try {
@@ -558,8 +548,8 @@ async function substituirCertificadoSeguro(opts: {
     const cleanup = await removerArquivosCertificado([oldPath]);
     if (cleanup.failed.length > 0) {
       logger.warn(
-        { oldPath, failed: cleanup.failed },
-        'Certificado atualizado, mas falha ao remover arquivo antigo do Storage'
+        { oldPathMasked: oldPath, failed: cleanup.failed.length },
+        'Certificado atualizado, mas falha ao remover arquivo antigo do storage local'
       );
     }
   }

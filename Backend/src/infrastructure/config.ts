@@ -12,7 +12,6 @@ dotenv.config(); // Também tenta do diretório atual
 // ============================================================================
 
 export const BACKEND_DIR = backendDir;
-export const CERTIFICATES_DIR = path.join(backendDir, 'certificados_armazenados');
 
 // ============================================================================
 // Configurações de certificado e criptografia
@@ -21,8 +20,8 @@ export const CERTIFICATES_DIR = path.join(backendDir, 'certificados_armazenados'
 export const FERNET_KEY = process.env.FERNET_KEY || '';
 export const CRYPTO_KEY =
   process.env.CRYPTO_KEY || process.env.APP_CRED_KEY || '';
-export const CERT_STORAGE_BUCKET =
-  process.env.CERT_STORAGE_BUCKET || 'certificados';
+export const CERT_STORAGE_PATH =
+  process.env.CERT_STORAGE_PATH || '/srv/data/autonacional/certificados';
 
 // ============================================================================
 // Configurações de banco de dados
@@ -35,12 +34,6 @@ export const APP_CRED_KEY = process.env.APP_CRED_KEY || '';
 // Configurações de segurança
 // ============================================================================
 
-export const SUPABASE_URL = process.env.SUPABASE_URL || '';
-export const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-export const SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL || '';
-export const SUPABASE_AUDIENCE = process.env.SUPABASE_AUDIENCE || 'authenticated';
-export const SUPABASE_ISSUER = process.env.SUPABASE_ISSUER || '';
 export const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
 
 // ============================================================================

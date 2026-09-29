@@ -1,11 +1,9 @@
 /**
- * Serviço de persistência de métricas de execução no Supabase.
+ * Persistência de métricas de execução no PostgreSQL (Prisma).
  * Alimenta o Painel de Rentabilidade (billing-summary).
- *
- * Usa SUPABASE_SERVICE_ROLE_KEY - nunca expor no frontend.
  */
+import { prisma } from '../db/client';
 import { getLogger } from '../infrastructure/logger';
-import { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } from '../infrastructure/config';
 
 const logger = getLogger('automation-metrics');
 
@@ -33,41 +31,24 @@ export interface PersistirExecutionInput {
   finishedAt: Date | null;
 }
 
-function isSupabaseConfigured(): boolean {
-  return Boolean(
-    SUPABASE_URL &&
-      SUPABASE_URL.length > 0 &&
-      SUPABASE_SERVICE_ROLE_KEY &&
-      SUPABASE_SERVICE_ROLE_KEY.length > 0
-  );
-}
-
 /**
  * Cria um batch de execução (ao clicar Iniciar).
  * Chamado pelo router POST /multiplas.
+ * O id é o UUID gerado pela aplicação (mesmo usado no SSE/Socket.IO).
  */
 export async function criarBatch(input: CriarBatchInput): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    logger.debug('Supabase não configurado - skip criarBatch');
-    return;
-  }
   try {
-    const { getSupabaseClient } = await import('../config/supabase');
-    const supabase = getSupabaseClient();
-
-    const { error } = await supabase.from('automation_execution_batches').insert({
-      id: input.batchId,
-      competencia: input.competencia,
-      contabilidade_id: input.contabilidadeId,
-      total_empresas: input.totalEmpresas,
-      status: 'RUNNING',
+    await prisma.automationExecutionBatch.create({
+      data: {
+        id: input.batchId,
+        competencia: input.competencia,
+        contabilidadeId: input.contabilidadeId,
+        totalEmpresas: input.totalEmpresas,
+        status: 'RUNNING',
+      },
     });
-
-    if (error) {
-      logger.warn({ err: error, batchId: input.batchId }, 'Erro ao criar batch de execução');
-    }
   } catch (err) {
-    logger.warn({ err, batchId: input.batchId }, 'Erro ao criar batch (Supabase)');
+    logger.warn({ err, batchId: input.batchId }, 'Erro ao criar batch de execução');
   }
 }
 
@@ -77,48 +58,51 @@ export async function criarBatch(input: CriarBatchInput): Promise<void> {
  * Usa UPSERT para evitar duplicatas (unique batch_id, empresa_id).
  */
 export async function persistirExecution(input: PersistirExecutionInput): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    logger.debug('Supabase não configurado - skip persistirExecution');
-    return;
-  }
   try {
-    const { getSupabaseClient } = await import('../config/supabase');
-    const supabase = getSupabaseClient();
-
-    const row = {
-      batch_id: input.batchId,
-      empresa_id: input.empresaId,
-      empresa_cnpj: input.empresaCnpj,
-      contabilidade_id: input.contabilidadeId,
-      competencia: input.competencia,
-      status: input.status,
-      login_metodo: input.loginMetodo ?? null,
-      qtd_emitidas: input.qtdEmitidas,
-      qtd_recebidas: input.qtdRecebidas,
-      qtd_canceladas: input.qtdCanceladas,
-      tempo_execucao_segundos: input.tempoExecucaoSegundos,
-      erro_resumo: input.erroResumo ?? null,
-      started_at: input.startedAt?.toISOString() ?? null,
-      finished_at: input.finishedAt?.toISOString() ?? null,
-    };
-
-    const { error } = await supabase.from('automation_executions').upsert(row, {
-      onConflict: 'batch_id,empresa_id',
+    await prisma.automationExecution.upsert({
+      where: {
+        batchId_empresaId: {
+          batchId: input.batchId,
+          empresaId: input.empresaId,
+        },
+      },
+      create: {
+        batchId: input.batchId,
+        empresaId: input.empresaId,
+        empresaCnpj: input.empresaCnpj,
+        contabilidadeId: input.contabilidadeId,
+        competencia: input.competencia,
+        status: input.status,
+        loginMetodo: input.loginMetodo ?? null,
+        qtdEmitidas: input.qtdEmitidas,
+        qtdRecebidas: input.qtdRecebidas,
+        qtdCanceladas: input.qtdCanceladas,
+        tempoExecucaoSegundos: input.tempoExecucaoSegundos,
+        erroResumo: input.erroResumo ?? null,
+        startedAt: input.startedAt,
+        finishedAt: input.finishedAt,
+      },
+      update: {
+        empresaCnpj: input.empresaCnpj,
+        contabilidadeId: input.contabilidadeId,
+        competencia: input.competencia,
+        status: input.status,
+        loginMetodo: input.loginMetodo ?? null,
+        qtdEmitidas: input.qtdEmitidas,
+        qtdRecebidas: input.qtdRecebidas,
+        qtdCanceladas: input.qtdCanceladas,
+        tempoExecucaoSegundos: input.tempoExecucaoSegundos,
+        erroResumo: input.erroResumo ?? null,
+        startedAt: input.startedAt,
+        finishedAt: input.finishedAt,
+      },
     });
-
-    if (error) {
-      logger.warn(
-        { err: error, batchId: input.batchId, empresaId: input.empresaId },
-        'Erro ao persistir execução'
-      );
-      return;
-    }
 
     await maybeFinalizarBatch(input.batchId);
   } catch (err) {
     logger.warn(
       { err, batchId: input.batchId, empresaId: input.empresaId },
-      'Erro ao persistir execução (Supabase)'
+      'Erro ao persistir execução'
     );
   }
 }
@@ -128,31 +112,23 @@ export async function persistirExecution(input: PersistirExecutionInput): Promis
  */
 async function maybeFinalizarBatch(batchId: string): Promise<void> {
   try {
-    const { getSupabaseClient } = await import('../config/supabase');
-    const supabase = getSupabaseClient();
+    const batch = await prisma.automationExecutionBatch.findUnique({
+      where: { id: batchId },
+      select: { totalEmpresas: true, status: true },
+    });
 
-    const { data: batch, error: errBatch } = await supabase
-      .from('automation_execution_batches')
-      .select('total_empresas, status')
-      .eq('id', batchId)
-      .single();
-
-    if (errBatch || !batch) return;
-
+    if (!batch) return;
     if (batch.status === 'FINISHED') return;
 
-    const { count, error: errCount } = await supabase
-      .from('automation_executions')
-      .select('*', { count: 'exact', head: true })
-      .eq('batch_id', batchId);
+    const count = await prisma.automationExecution.count({
+      where: { batchId },
+    });
 
-    if (errCount || count == null) return;
-
-    if (count >= batch.total_empresas) {
-      await supabase
-        .from('automation_execution_batches')
-        .update({ status: 'FINISHED' })
-        .eq('id', batchId);
+    if (count >= batch.totalEmpresas) {
+      await prisma.automationExecutionBatch.update({
+        where: { id: batchId },
+        data: { status: 'FINISHED' },
+      });
     }
   } catch {
     /* ignore */

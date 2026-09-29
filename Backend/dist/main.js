@@ -6,13 +6,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const http_1 = __importDefault(require("http"));
-require("./config/env"); // Valida env quando USE_SUPABASE=true
+const env_1 = require("./config/env");
 const config_1 = require("./infrastructure/config");
 const logger_1 = require("./infrastructure/logger");
 const socket_1 = require("./infrastructure/socket");
 const client_1 = require("./db/client");
 const init_1 = require("./db/init");
-const supabase_1 = require("./config/supabase");
+const storage_1 = require("./storage");
 const error_handler_1 = require("./middleware/error-handler");
 const settings_1 = __importDefault(require("./routers/settings"));
 const config_2 = __importDefault(require("./routers/config"));
@@ -64,19 +64,31 @@ app.use('/api/nfse', nfse_1.default);
 app.use('/api/metrics', metrics_1.default);
 app.use(error_handler_1.errorHandler);
 async function bootstrap() {
+    const dbTarget = (0, env_1.describeDatabaseTarget)();
+    let databaseOk = false;
     try {
         await (0, client_1.initDb)();
         await (0, init_1.seedDefaultSettings)();
-        logger.info('Banco inicializado');
+        databaseOk = true;
+        logger.info('Database: PostgreSQL próprio conectado');
+        logger.info(`Database host: ${dbTarget.host}`);
+        logger.info(`Database: ${dbTarget.database}`);
     }
     catch (err) {
         logger.warn({ err }, 'Erro ao inicializar banco - continuando');
+        logger.warn(`Database: falha ao conectar (host=${dbTarget.host}, database=${dbTarget.database})`);
     }
+    let storageOk = false;
     try {
-        await (0, supabase_1.ensureCertificadosBucket)();
+        await (0, storage_1.assertCertificateStorageReady)();
+        storageOk = true;
+        logger.info(`Certificate Storage: ${(0, storage_1.getCertificateStorageDriverLabel)()}`);
     }
     catch (err) {
-        logger.warn({ err }, 'Supabase Storage: bucket certificados não criado - cadastro de certificados pode falhar');
+        logger.warn({ err: err.message }, 'Certificate storage inacessível — cadastro de certificados pode falhar');
+    }
+    if (databaseOk && storageOk) {
+        logger.info(`Arquitetura: ${(0, storage_1.getCertificateStorageArchitectureLabel)()}`);
     }
     (0, execution_service_1.setCertificateLoader)(certificate_loader_1.carregarCertificadoPorCnpj);
     const reportPath = (0, captcha_report_1.iniciarRelatorio2Captcha)();
@@ -85,6 +97,18 @@ async function bootstrap() {
     (0, socket_1.initSocketIo)(httpServer);
     httpServer.listen(config_1.PORT, () => {
         logger.info(`AutoNacional API rodando em http://localhost:${config_1.PORT}`);
+    });
+    const shutdown = async (signal) => {
+        logger.info({ signal }, 'Encerrando Backend');
+        await (0, storage_1.closeCertificateStorage)().catch(() => undefined);
+        httpServer.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 5_000);
+    };
+    process.once('SIGINT', () => {
+        void shutdown('SIGINT');
+    });
+    process.once('SIGTERM', () => {
+        void shutdown('SIGTERM');
     });
     // Mantém o processo ativo (evita exit em alguns ambientes)
     httpServer.ref();

@@ -1,10 +1,13 @@
 /**
  * Loader de certificados para automação NFSe.
- * Carrega PFX do Supabase Storage e descriptografa a senha.
+ * Carrega PFX do filesystem local e descriptografa a senha.
  */
 import * as certificadosRepo from '../repositories/certificados';
-import { getSupabaseClient } from '../config/supabase';
-import { env } from '../config/env';
+import {
+  CertificateFileNotFoundError,
+  getCertificateStorage,
+  maskRelativePath,
+} from '../storage';
 import { decryptPassword } from '../infrastructure/crypto';
 import type { CertificadoEmMemoria } from '../automation/playwright-nfse';
 import { getLogger } from '../infrastructure/logger';
@@ -16,7 +19,7 @@ function limparCnpj(cnpj: string): string {
 }
 
 /**
- * Carrega certificado por CNPJ: baixa PFX do Storage e retorna buffer + senha.
+ * Carrega certificado por CNPJ: lê PFX do storage local e retorna buffer + senha.
  */
 export async function carregarCertificadoPorCnpj(
   cnpj: string
@@ -44,22 +47,22 @@ export async function carregarCertificadoPorCnpj(
     );
   }
 
-  const supabase = getSupabaseClient();
-  const bucket = env.CERT_STORAGE_BUCKET || 'certificados';
-
-  const { data: pfxBuffer, error } = await supabase.storage
-    .from(bucket)
-    .download(cert.arquivo);
-
-  if (error || !pfxBuffer) {
-    logger.error({ err: error, path: cert.arquivo }, 'Erro ao baixar certificado do Storage');
+  const storage = getCertificateStorage();
+  let pfx: Buffer;
+  try {
+    pfx = await storage.read(cert.arquivo);
+  } catch (e) {
+    logger.error(
+      { pathMasked: maskRelativePath(cert.arquivo) },
+      'Erro ao ler certificado do storage local'
+    );
+    if (e instanceof CertificateFileNotFoundError) {
+      throw new Error('Falha ao baixar certificado: Arquivo não encontrado');
+    }
     throw new Error(
-      `Falha ao baixar certificado: ${error?.message ?? 'Arquivo não encontrado'}`
+      `Falha ao baixar certificado: ${(e as Error).message || 'Arquivo não encontrado'}`
     );
   }
-
-  const arrayBuffer = await pfxBuffer.arrayBuffer();
-  const pfx = Buffer.from(arrayBuffer);
 
   let passphrase: string;
   try {

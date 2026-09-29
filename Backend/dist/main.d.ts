@@ -1,2 +1,2 @@
-import './config/env';
+export {};
 //# sourceMappingURL=main.d.ts.map

@@ -1,16 +1,16 @@
 /**
  * Router de status do ambiente (READ-ONLY).
- * Nunca expõe chaves sensíveis.
+ * Nunca expõe chaves sensíveis nem paths físicos de certificados.
  */
 import { Router, Request, Response } from 'express';
 import { getLogger } from '../infrastructure/logger';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import {
-  SUPABASE_URL,
   CORS_ORIGINS,
   PORT,
 } from '../infrastructure/config';
+import { isCertificateStorageReady } from '../storage';
 
 const logger = getLogger('config');
 
@@ -37,11 +37,15 @@ router.get('/status', async (_req: Request, res: Response) => {
     }
 
     const playwrightOk = await isPlaywrightInstalled();
+    const storageReady = await isCertificateStorageReady();
 
     res.json({
       apiUp: true,
       dbConnected,
-      supabaseConfigured: Boolean(SUPABASE_URL && SUPABASE_URL.length > 0),
+      // supabaseConfigured: compatibilidade com o frontend (storage local de PFX)
+      supabaseConfigured: storageReady,
+      supabaseStorageConfigured: storageReady,
+      certificateStorageConfigured: storageReady,
       playwrightOk,
       corsOrigins: CORS_ORIGINS,
       port: PORT,
@@ -53,6 +57,8 @@ router.get('/status', async (_req: Request, res: Response) => {
       apiUp: true,
       dbConnected: false,
       supabaseConfigured: false,
+      supabaseStorageConfigured: false,
+      certificateStorageConfigured: false,
       playwrightOk: false,
       error: 'Falha ao verificar status',
     });

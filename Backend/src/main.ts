@@ -1,13 +1,18 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
-import './config/env'; // Valida env quando USE_SUPABASE=true
+import { describeDatabaseTarget } from './config/env';
 import { CORS_ORIGINS, PORT } from './infrastructure/config';
 import { getLogger } from './infrastructure/logger';
 import { initSocketIo } from './infrastructure/socket';
 import { initDb } from './db/client';
 import { seedDefaultSettings } from './db/init';
-import { ensureCertificadosBucket } from './config/supabase';
+import {
+  assertCertificateStorageReady,
+  closeCertificateStorage,
+  getCertificateStorageArchitectureLabel,
+  getCertificateStorageDriverLabel,
+} from './storage';
 import { errorHandler } from './middleware/error-handler';
 import settingsRouter from './routers/settings';
 import configRouter from './routers/config';
@@ -75,18 +80,37 @@ app.use('/api/metrics', metricsRouter);
 app.use(errorHandler);
 
 async function bootstrap() {
+  const dbTarget = describeDatabaseTarget();
+  let databaseOk = false;
+
   try {
     await initDb();
     await seedDefaultSettings();
-    logger.info('Banco inicializado');
+    databaseOk = true;
+    logger.info('Database: PostgreSQL próprio conectado');
+    logger.info(`Database host: ${dbTarget.host}`);
+    logger.info(`Database: ${dbTarget.database}`);
   } catch (err) {
     logger.warn({ err }, 'Erro ao inicializar banco - continuando');
+    logger.warn(
+      `Database: falha ao conectar (host=${dbTarget.host}, database=${dbTarget.database})`
+    );
   }
 
+  let storageOk = false;
   try {
-    await ensureCertificadosBucket();
+    await assertCertificateStorageReady();
+    storageOk = true;
+    logger.info(`Certificate Storage: ${getCertificateStorageDriverLabel()}`);
   } catch (err) {
-    logger.warn({ err }, 'Supabase Storage: bucket certificados não criado - cadastro de certificados pode falhar');
+    logger.warn(
+      { err: (err as Error).message },
+      'Certificate storage inacessível — cadastro de certificados pode falhar'
+    );
+  }
+
+  if (databaseOk && storageOk) {
+    logger.info(`Arquitetura: ${getCertificateStorageArchitectureLabel()}`);
   }
 
   setCertificateLoader(carregarCertificadoPorCnpj);
@@ -99,6 +123,20 @@ async function bootstrap() {
 
   httpServer.listen(PORT, () => {
     logger.info(`AutoNacional API rodando em http://localhost:${PORT}`);
+  });
+
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'Encerrando Backend');
+    await closeCertificateStorage().catch(() => undefined);
+    httpServer.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5_000);
+  };
+
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
   });
 
   // Mantém o processo ativo (evita exit em alguns ambientes)

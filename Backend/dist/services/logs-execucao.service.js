@@ -3,13 +3,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.validarPayloadSalvarLog = validarPayloadSalvarLog;
 exports.salvarLogExecucoesService = salvarLogExecucoesService;
 /**
- * Service para persistência de logs de execução NFSe.
- * Usa Supabase (Postgres) - execucao_log_batch + execucao_log_item.
+ * Persistência de logs de execução NFSe via Prisma.
+ * Tabelas: execucao_log_batch + execucao_log_item.
  *
- * Nota: Supabase JS não suporta transações nativamente.
- * Estratégia: insert header -> insert items. Se items falhar, deletamos o header (rollback lógico).
+ * Estratégia: insert header -> insert items.
+ * Se items falhar, deletamos o header (rollback lógico), preservando o comportamento anterior.
  */
-const supabase_1 = require("../config/supabase");
+const client_1 = require("@prisma/client");
+const client_2 = require("../db/client");
 const logger_1 = require("../infrastructure/logger");
 const logger = (0, logger_1.getLogger)('logs-execucao');
 function validarPayloadSalvarLog(body) {
@@ -88,69 +89,76 @@ function sanitizarItem(it) {
         erro_msg: item.erro_msg != null ? String(item.erro_msg) : undefined,
     };
 }
+function parseOptionalDate(value) {
+    if (!value)
+        return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+}
 async function salvarLogExecucoesService(payload) {
-    const supabase = (0, supabase_1.getSupabaseClient)();
     // 1. Verificar duplicidade
-    const { data: existing } = await supabase
-        .from('execucao_log_batch')
-        .select('id')
-        .eq('batch_id', payload.batch_id)
-        .maybeSingle();
+    const existing = await client_2.prisma.execucaoLogBatch.findUnique({
+        where: { batchId: payload.batch_id },
+        select: { id: true },
+    });
     if (existing) {
         return { conflict: true };
     }
     // 2. Insert header (execucao_log_batch)
-    const contabilidadeId = payload.contabilidade_id ? parseInt(String(payload.contabilidade_id).replace(/\D/g, '') || '0', 10) : null;
-    const { data: header, error: errHeader } = await supabase
-        .from('execucao_log_batch')
-        .insert({
-        batch_id: payload.batch_id,
-        contabilidade_id: contabilidadeId && contabilidadeId > 0 ? contabilidadeId : null,
-        competencia: payload.competencia,
-        data_inicio: payload.dataInicio || null,
-        data_fim: payload.dataFim || null,
-        tipo: payload.tipo,
-        headless: payload.headless,
-        total_empresas: payload.totais.total_empresas,
-        total_sucesso: payload.totais.total_sucesso,
-        total_falha: payload.totais.total_falha,
-        total_emitidas: payload.totais.total_emitidas,
-        total_recebidas: payload.totais.total_recebidas,
-        totais_por_resultado: Object.keys(payload.totais.totais_por_resultado || {}).length > 0
-            ? payload.totais.totais_por_resultado
-            : null,
-    })
-        .select('id')
-        .single();
-    if (errHeader) {
+    const contabilidadeId = payload.contabilidade_id
+        ? parseInt(String(payload.contabilidade_id).replace(/\D/g, '') || '0', 10)
+        : null;
+    let batchLogId;
+    try {
+        const header = await client_2.prisma.execucaoLogBatch.create({
+            data: {
+                batchId: payload.batch_id,
+                contabilidadeId: contabilidadeId && contabilidadeId > 0 ? contabilidadeId : null,
+                competencia: payload.competencia,
+                dataInicio: payload.dataInicio || null,
+                dataFim: payload.dataFim || null,
+                tipo: payload.tipo,
+                headless: payload.headless,
+                totalEmpresas: payload.totais.total_empresas,
+                totalSucesso: payload.totais.total_sucesso,
+                totalFalha: payload.totais.total_falha,
+                totalEmitidas: payload.totais.total_emitidas,
+                totalRecebidas: payload.totais.total_recebidas,
+                totaisPorResultado: Object.keys(payload.totais.totais_por_resultado || {}).length > 0
+                    ? payload.totais.totais_por_resultado
+                    : client_1.Prisma.DbNull,
+            },
+            select: { id: true },
+        });
+        batchLogId = header.id;
+    }
+    catch (errHeader) {
         logger.error({ err: errHeader }, 'Erro ao inserir execucao_log_batch');
         throw errHeader;
     }
-    const batchLogId = header?.id;
-    if (!batchLogId) {
-        throw new Error('Insert header retornou sem id');
-    }
     // 3. Insert items (execucao_log_item)
     if (payload.itens.length > 0) {
-        const rows = payload.itens.map((it) => ({
-            batch_log_id: batchLogId,
-            empresa_id: it.empresa_id,
-            cnpj: it.cnpj,
-            nome_empresa: it.nome_empresa,
-            tipo_autenticacao: it.tipo_autenticacao || null,
-            status_final: it.status_final,
-            qtd_emitidas: it.qtd_emitidas,
-            qtd_recebidas: it.qtd_recebidas,
-            resultado_final: it.resultado_final || null,
-            started_at: it.started_at || null,
-            finished_at: it.finished_at || null,
-            erro_msg: it.erro_msg || null,
-        }));
-        const { error: errItems } = await supabase.from('execucao_log_item').insert(rows);
-        if (errItems) {
+        try {
+            await client_2.prisma.execucaoLogItem.createMany({
+                data: payload.itens.map((it) => ({
+                    batchLogId,
+                    empresaId: it.empresa_id,
+                    cnpj: it.cnpj,
+                    nomeEmpresa: it.nome_empresa,
+                    tipoAutenticacao: it.tipo_autenticacao || null,
+                    statusFinal: it.status_final,
+                    qtdEmitidas: it.qtd_emitidas,
+                    qtdRecebidas: it.qtd_recebidas,
+                    resultadoFinal: it.resultado_final || null,
+                    startedAt: parseOptionalDate(it.started_at),
+                    finishedAt: parseOptionalDate(it.finished_at),
+                    erroMsg: it.erro_msg || null,
+                })),
+            });
+        }
+        catch (errItems) {
             logger.error({ err: errItems }, 'Erro ao inserir execucao_log_item - rollback lógico');
-            // Rollback lógico: deletar header para manter consistência
-            await supabase.from('execucao_log_batch').delete().eq('id', batchLogId);
+            await client_2.prisma.execucaoLogBatch.delete({ where: { id: batchLogId } });
             throw errItems;
         }
     }

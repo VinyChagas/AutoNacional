@@ -3,7 +3,7 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
-// PostgreSQL (Supabase) - DATABASE_URL obrigatória
+// PostgreSQL próprio (VPS) - DATABASE_URL obrigatória
 const databaseUrl = process.env["DATABASE_URL"] || "";
 
 export default defineConfig({

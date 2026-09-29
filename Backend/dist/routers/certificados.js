@@ -39,12 +39,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
  */
 const express_1 = require("express");
 const logger_1 = require("../infrastructure/logger");
-const fs = __importStar(require("fs"));
-const path = __importStar(require("path"));
 const repo = __importStar(require("../repositories/certificados"));
 const empresasRepo = __importStar(require("../repositories/empresas"));
 const certificado_utils_1 = require("../utils/certificado-utils");
-const config_1 = require("../infrastructure/config");
+const storage_1 = require("../storage");
 const upload_1 = require("../middleware/upload");
 const logger = (0, logger_1.getLogger)('certificados');
 const router = (0, express_1.Router)();
@@ -158,12 +156,8 @@ router.post('/importar', (0, upload_1.uploadSingle)('certificado'), async (req, 
             res.status(400).json({ success: false, message: `Certificado para CNPJ ${cnpjLimpo} já existe` });
             return;
         }
-        const dir = config_1.CERTIFICATES_DIR;
-        if (!fs.existsSync(dir))
-            fs.mkdirSync(dir, { recursive: true });
         const nomeArquivo = `${cnpjLimpo}.pfx`;
-        const caminho = path.join(dir, nomeArquivo);
-        fs.writeFileSync(caminho, file.buffer);
+        await (0, storage_1.getCertificateStorage)().save(nomeArquivo, file.buffer);
         await repo.criar({
             cnpj: cnpjLimpo,
             arquivo: nomeArquivo,
@@ -189,9 +183,7 @@ router.post('/importar-lote', (0, upload_1.uploadArray)('certificados', 50), asy
         const senha = (req.body?.senha ?? '').trim();
         const contabilidadeId = parseInt(String(req.body?.contabilidade_id ?? 0), 10);
         const resultados = [];
-        const dir = config_1.CERTIFICATES_DIR;
-        if (!fs.existsSync(dir))
-            fs.mkdirSync(dir, { recursive: true });
+        const storage = (0, storage_1.getCertificateStorage)();
         for (const file of files) {
             try {
                 if (!file.buffer?.length || !file.originalname?.toLowerCase().match(/\.(pfx|p12)$/)) {
@@ -209,7 +201,7 @@ router.post('/importar-lote', (0, upload_1.uploadArray)('certificados', 50), asy
                     continue;
                 }
                 const nomeArquivo = `${info.cnpj_limpo}.pfx`;
-                fs.writeFileSync(path.join(dir, nomeArquivo), file.buffer);
+                await storage.save(nomeArquivo, file.buffer);
                 await repo.criar({
                     cnpj: info.cnpj_limpo,
                     arquivo: nomeArquivo,

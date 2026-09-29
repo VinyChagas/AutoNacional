@@ -38,8 +38,7 @@ exports.cadastrarPorCertificado = cadastrarPorCertificado;
  * Serviço de cadastro de empresa via certificado digital.
  */
 const client_1 = require("../../../db/client");
-const supabase_1 = require("../../../config/supabase");
-const env_1 = require("../../../config/env");
+const storage_1 = require("../../../storage");
 const certificado_parser_1 = require("../../../utils/certificado.parser");
 const crypto_1 = require("../../../infrastructure/crypto");
 const certRepo = __importStar(require("../../../repositories/certificados"));
@@ -86,17 +85,12 @@ async function cadastrarPorCertificado(input) {
         });
     }
     const storagePath = gerarStoragePath(cnpjLimpo, contabilidade_id);
-    const supabase = (0, supabase_1.getSupabaseClient)();
-    const bucket = env_1.env.CERT_STORAGE_BUCKET || 'certificados';
-    const { error: uploadError } = await supabase.storage
-        .from(bucket)
-        .upload(storagePath, buffer, {
-        upsert: true,
-        contentType: 'application/x-pkcs12',
-    });
-    if (uploadError) {
-        logger.error({ err: uploadError }, 'Erro ao fazer upload do certificado');
-        throw new Error(`Falha ao fazer upload no Storage: ${uploadError.message}`);
+    try {
+        await (0, storage_1.getCertificateStorage)().save(storagePath, buffer);
+    }
+    catch (err) {
+        logger.error({ err: err.message }, 'Erro ao salvar certificado');
+        throw new Error(`Falha ao fazer upload no Storage: ${err.message}`);
     }
     const existingCert = await certRepo.obterPorCnpj(cnpjLimpo);
     const senhaCriptografada = (0, crypto_1.encryptPassword)(senha);

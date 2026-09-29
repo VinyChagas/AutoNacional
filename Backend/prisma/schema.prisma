@@ -1,5 +1,6 @@
 // Schema Prisma - AutoNacional Backend
-// PostgreSQL (Supabase)
+// PostgreSQL próprio (VPS) via DATABASE_URL — fonte de verdade do schema físico.
+// Não execute `prisma migrate` contra a VPS nesta fase; o banco já existe.
 
 generator client {
   provider = "prisma-client-js"
@@ -21,9 +22,10 @@ model Contabilidade {
   responsavel       String?
   dataCadastro      DateTime @default(now()) @map("data_cadastro")
 
-  empresas          Empresa[]
-  certificados      Certificado[]
-  execucaoBatchLogs ExecucaoBatchLog[]
+  empresas           Empresa[]
+  certificados       Certificado[]
+  execucaoBatchLogs  ExecucaoBatchLog[]
+  execucaoLogBatches ExecucaoLogBatch[]
 
   @@map("contabilidades")
 }
@@ -167,4 +169,92 @@ model Execucao {
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   @@map("execucoes")
+}
+
+// ============================================================================
+// Logs de execução (header + itens) — Painel de Logs
+// ============================================================================
+model ExecucaoLogBatch {
+  id                 Int       @id @default(autoincrement())
+  batchId            String    @unique @map("batch_id") @db.VarChar(36)
+  contabilidadeId    Int?      @map("contabilidade_id")
+  competencia        String    @map("competencia") @db.VarChar(7)
+  dataInicio         String?   @map("data_inicio") @db.VarChar(10)
+  dataFim            String?   @map("data_fim") @db.VarChar(10)
+  tipo               String    @default("ambas") @db.VarChar(20)
+  headless           Boolean   @default(false)
+  totalEmpresas      Int       @default(0) @map("total_empresas")
+  totalSucesso       Int       @default(0) @map("total_sucesso")
+  totalFalha         Int       @default(0) @map("total_falha")
+  totalEmitidas      Int       @default(0) @map("total_emitidas")
+  totalRecebidas     Int       @default(0) @map("total_recebidas")
+  totaisPorResultado Json?     @map("totais_por_resultado")
+  createdAt          DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  contabilidade Contabilidade?    @relation(fields: [contabilidadeId], references: [id], onDelete: SetNull)
+  itens         ExecucaoLogItem[]
+
+  @@map("execucao_log_batch")
+}
+
+model ExecucaoLogItem {
+  id               Int       @id @default(autoincrement())
+  batchLogId       Int       @map("batch_log_id")
+  empresaId        String    @map("empresa_id") @db.VarChar(50)
+  cnpj             String    @db.VarChar(20)
+  nomeEmpresa      String    @map("nome_empresa") @db.VarChar(255)
+  tipoAutenticacao String?   @map("tipo_autenticacao") @db.VarChar(20)
+  statusFinal      String    @map("status_final") @db.VarChar(20)
+  qtdEmitidas      Int       @default(0) @map("qtd_emitidas")
+  qtdRecebidas     Int       @default(0) @map("qtd_recebidas")
+  resultadoFinal   String?   @map("resultado_final") @db.VarChar(50)
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt       DateTime? @map("finished_at") @db.Timestamptz(6)
+  erroMsg          String?   @map("erro_msg")
+
+  batchLog ExecucaoLogBatch @relation(fields: [batchLogId], references: [id], onDelete: Cascade)
+
+  @@map("execucao_log_item")
+}
+
+// ============================================================================
+// Métricas de automação (Painel de Rentabilidade)
+// UUID gerado pelo PostgreSQL via gen_random_uuid() quando omitido
+// ============================================================================
+model AutomationExecutionBatch {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  competencia     String
+  contabilidadeId Int?     @map("contabilidade_id")
+  totalEmpresas   Int      @default(0) @map("total_empresas")
+  status          String   @default("RUNNING")
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  executions AutomationExecution[]
+
+  @@map("automation_execution_batches")
+}
+
+model AutomationExecution {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId               String    @map("batch_id") @db.Uuid
+  empresaId             Int       @map("empresa_id")
+  empresaCnpj           String    @map("empresa_cnpj")
+  contabilidadeId       Int?      @map("contabilidade_id")
+  competencia           String
+  status                String
+  loginMetodo           String?   @map("login_metodo")
+  qtdEmitidas           Int       @default(0) @map("qtd_emitidas")
+  qtdRecebidas          Int       @default(0) @map("qtd_recebidas")
+  qtdCanceladas         Int       @default(0) @map("qtd_canceladas")
+  tempoExecucaoSegundos Int       @default(0) @map("tempo_execucao_segundos")
+  erroResumo            String?   @map("erro_resumo")
+  startedAt             DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt            DateTime? @map("finished_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  batch AutomationExecutionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, empresaId], map: "automation_executions_batch_empresa_unique")
+  @@map("automation_executions")
 }

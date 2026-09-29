@@ -2,14 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.removerArquivosCertificado = removerArquivosCertificado;
 /**
- * Limpeza de arquivos de certificado no Supabase Storage.
+ * Limpeza de arquivos de certificado no filesystem local.
  */
-const supabase_1 = require("../config/supabase");
-const env_1 = require("../config/env");
+const storage_1 = require("../storage");
 const logger_1 = require("../infrastructure/logger");
 const logger = (0, logger_1.getLogger)('certificado-storage');
 /**
- * Remove paths do bucket de certificados.
+ * Remove paths relativos do armazenamento local de certificados.
  * Não lança: falhas vão em `failed` para o caller decidir.
  */
 async function removerArquivosCertificado(paths) {
@@ -21,55 +20,25 @@ async function removerArquivosCertificado(paths) {
     const removed = [];
     const failed = [];
     if (attempted.length === 0) {
-        return { attempted, removed, failed };
+        return { attempted, removed, failed: [] };
     }
-    try {
-        const supabase = (0, supabase_1.getSupabaseClient)();
-        const bucket = env_1.env.CERT_STORAGE_BUCKET || 'certificados';
-        const { data, error } = await supabase.storage.from(bucket).remove(attempted);
-        if (error) {
-            logger.error({
-                err: error,
-                pathsCount: attempted.length,
-                bucket,
-            }, 'Falha ao remover arquivos de certificado do Storage');
-            for (const path of attempted) {
-                failed.push({ path, error: error.message });
-            }
-            return { attempted, removed, failed };
+    const storage = (0, storage_1.getCertificateStorage)();
+    for (const relativePath of attempted) {
+        try {
+            await storage.delete(relativePath);
+            removed.push(relativePath);
         }
-        const removedSet = new Set((data ?? []).map((d) => d.name || d).filter(Boolean));
-        // API do storage às vezes não devolve lista completa; se não há error, consideramos ok
-        if (removedSet.size === 0) {
-            removed.push(...attempted);
+        catch (err) {
+            const msg = err instanceof storage_1.UnsafeCertificatePathError
+                ? err.message
+                : 'Falha ao excluir certificado';
+            logger.error({ pathsCount: 1, pathMasked: (0, storage_1.maskRelativePath)(relativePath) }, 'Falha ao remover arquivo de certificado do storage local');
+            failed.push({ path: relativePath, error: msg });
         }
-        else {
-            for (const path of attempted) {
-                const base = path.split('/').pop() ?? path;
-                if (removedSet.has(path) ||
-                    [...removedSet].some((n) => String(n) === path || String(n).endsWith(base))) {
-                    removed.push(path);
-                }
-                else {
-                    // Sem erro global: assume removido
-                    removed.push(path);
-                }
-            }
-        }
-        logger.info({ removedCount: removed.length, pathsMasked: attempted.map(maskPath) }, 'Arquivos de certificado removidos do Storage');
     }
-    catch (err) {
-        const msg = err.message;
-        logger.error({ err, pathsCount: attempted.length }, 'Exceção ao limpar Storage');
-        for (const path of attempted) {
-            failed.push({ path, error: msg });
-        }
+    if (removed.length > 0) {
+        logger.info({ removedCount: removed.length, pathsMasked: attempted.map(storage_1.maskRelativePath) }, 'Arquivos de certificado removidos do storage local');
     }
     return { attempted, removed, failed };
-}
-function maskPath(path) {
-    if (path.length <= 12)
-        return '***';
-    return `${path.slice(0, 8)}...${path.slice(-8)}`;
 }
 //# sourceMappingURL=certificado-storage.service.js.map

@@ -1,10 +1,11 @@
 /**
  * Router de métricas - billing summary para precificação/rentabilidade.
- * Consulta Supabase (automation_executions / billing_monthly_summary) com service role.
+ * Consulta a view billing_monthly_summary no PostgreSQL via Prisma ($queryRaw).
  */
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../db/client';
 import { getLogger } from '../infrastructure/logger';
-import { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } from '../infrastructure/config';
 
 const logger = getLogger('metrics');
 const router = Router();
@@ -23,15 +24,23 @@ export interface BillingSummaryResponse {
   tempo_medio_por_empresa_segundos?: number;
 }
 
-function isSupabaseConfigured(): boolean {
-  return Boolean(
-    SUPABASE_URL?.length && SUPABASE_SERVICE_ROLE_KEY?.length
-  );
-}
+type BillingMonthlyRow = {
+  competencia: string;
+  contabilidade_id: number | null;
+  empresas_processadas_total: number | null;
+  empresas_ok: number | null;
+  empresas_erro: number | null;
+  nf_emitidas: number | null;
+  nf_recebidas: number | null;
+  nf_canceladas: number | null;
+  total_notas: number | null;
+  tempo_total_segundos: number | null;
+  tempo_medio_por_empresa_segundos: number | Prisma.Decimal | null;
+};
 
 /**
  * GET /api/metrics/billing-summary?competencia=YYYY-MM&contabilidade_id=optional
- * Consulta Supabase: view billing_monthly_summary ou agregação sobre automation_executions.
+ * Consulta PostgreSQL: view billing_monthly_summary.
  */
 router.get('/billing-summary', async (req: Request, res: Response) => {
   try {
@@ -56,26 +65,24 @@ router.get('/billing-summary', async (req: Request, res: Response) => {
       return;
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.json(buildEmptyResponse(competencia, contabilidadeId));
-    }
-
-    const { getSupabaseClient } = await import('../config/supabase');
-    const supabase = getSupabaseClient();
-
-    let query = supabase
-      .from('billing_monthly_summary')
-      .select('*')
-      .eq('competencia', competencia);
-
-    if (contabilidadeId != null) {
-      query = query.eq('contabilidade_id', contabilidadeId);
-    }
-
-    const { data: rows, error } = await query;
-
-    if (error) {
-      logger.warn({ err: error, competencia }, 'Supabase billing_monthly_summary error');
+    let rows: BillingMonthlyRow[];
+    try {
+      if (contabilidadeId != null) {
+        rows = await prisma.$queryRaw<BillingMonthlyRow[]>`
+          SELECT *
+          FROM billing_monthly_summary
+          WHERE competencia = ${competencia}
+            AND contabilidade_id = ${contabilidadeId}
+        `;
+      } else {
+        rows = await prisma.$queryRaw<BillingMonthlyRow[]>`
+          SELECT *
+          FROM billing_monthly_summary
+          WHERE competencia = ${competencia}
+        `;
+      }
+    } catch (error) {
+      logger.warn({ err: error, competencia }, 'Erro ao consultar billing_monthly_summary');
       return res.json(buildEmptyResponse(competencia, contabilidadeId));
     }
 

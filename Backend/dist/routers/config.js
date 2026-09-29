@@ -35,13 +35,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 /**
  * Router de status do ambiente (READ-ONLY).
- * Nunca expõe chaves sensíveis.
+ * Nunca expõe chaves sensíveis nem paths físicos de certificados.
  */
 const express_1 = require("express");
 const logger_1 = require("../infrastructure/logger");
 const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
 const config_1 = require("../infrastructure/config");
+const storage_1 = require("../storage");
 const logger = (0, logger_1.getLogger)('config');
 function isPlaywrightInstalled() {
     return Promise.resolve().then(() => __importStar(require('playwright'))).then(() => true)
@@ -63,10 +64,14 @@ router.get('/status', async (_req, res) => {
             dbConnected = false;
         }
         const playwrightOk = await isPlaywrightInstalled();
+        const storageReady = await (0, storage_1.isCertificateStorageReady)();
         res.json({
             apiUp: true,
             dbConnected,
-            supabaseConfigured: Boolean(config_1.SUPABASE_URL && config_1.SUPABASE_URL.length > 0),
+            // supabaseConfigured: compatibilidade com o frontend (storage local de PFX)
+            supabaseConfigured: storageReady,
+            supabaseStorageConfigured: storageReady,
+            certificateStorageConfigured: storageReady,
             playwrightOk,
             corsOrigins: config_1.CORS_ORIGINS,
             port: config_1.PORT,
@@ -79,6 +84,8 @@ router.get('/status', async (_req, res) => {
             apiUp: true,
             dbConnected: false,
             supabaseConfigured: false,
+            supabaseStorageConfigured: false,
+            certificateStorageConfigured: false,
             playwrightOk: false,
             error: 'Falha ao verificar status',
         });

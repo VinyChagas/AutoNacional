@@ -7,7 +7,7 @@ export interface StorageCleanupResult {
     }>;
 }
 /**
- * Remove paths do bucket de certificados.
+ * Remove paths relativos do armazenamento local de certificados.
  * Não lança: falhas vão em `failed` para o caller decidir.
  */
 export declare function removerArquivosCertificado(paths: Array<string | null | undefined>): Promise<StorageCleanupResult>;

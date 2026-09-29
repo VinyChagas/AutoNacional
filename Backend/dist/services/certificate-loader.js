@@ -36,11 +36,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.carregarCertificadoPorCnpj = carregarCertificadoPorCnpj;
 /**
  * Loader de certificados para automação NFSe.
- * Carrega PFX do Supabase Storage e descriptografa a senha.
+ * Carrega PFX do filesystem local e descriptografa a senha.
  */
 const certificadosRepo = __importStar(require("../repositories/certificados"));
-const supabase_1 = require("../config/supabase");
-const env_1 = require("../config/env");
+const storage_1 = require("../storage");
 const crypto_1 = require("../infrastructure/crypto");
 const logger_1 = require("../infrastructure/logger");
 const logger = (0, logger_1.getLogger)('certificate-loader');
@@ -48,7 +47,7 @@ function limparCnpj(cnpj) {
     return cnpj.replace(/[.\/\-\s]/g, '').trim();
 }
 /**
- * Carrega certificado por CNPJ: baixa PFX do Storage e retorna buffer + senha.
+ * Carrega certificado por CNPJ: lê PFX do storage local e retorna buffer + senha.
  */
 async function carregarCertificadoPorCnpj(cnpj) {
     const cnpjLimpo = limparCnpj(cnpj);
@@ -66,17 +65,18 @@ async function carregarCertificadoPorCnpj(cnpj) {
         throw new Error(`Certificado para CNPJ ${cnpjLimpo} não possui senha armazenada. ` +
             `Reimporte o certificado na tela de Empresas para salvar a senha.`);
     }
-    const supabase = (0, supabase_1.getSupabaseClient)();
-    const bucket = env_1.env.CERT_STORAGE_BUCKET || 'certificados';
-    const { data: pfxBuffer, error } = await supabase.storage
-        .from(bucket)
-        .download(cert.arquivo);
-    if (error || !pfxBuffer) {
-        logger.error({ err: error, path: cert.arquivo }, 'Erro ao baixar certificado do Storage');
-        throw new Error(`Falha ao baixar certificado: ${error?.message ?? 'Arquivo não encontrado'}`);
+    const storage = (0, storage_1.getCertificateStorage)();
+    let pfx;
+    try {
+        pfx = await storage.read(cert.arquivo);
     }
-    const arrayBuffer = await pfxBuffer.arrayBuffer();
-    const pfx = Buffer.from(arrayBuffer);
+    catch (e) {
+        logger.error({ pathMasked: (0, storage_1.maskRelativePath)(cert.arquivo) }, 'Erro ao ler certificado do storage local');
+        if (e instanceof storage_1.CertificateFileNotFoundError) {
+            throw new Error('Falha ao baixar certificado: Arquivo não encontrado');
+        }
+        throw new Error(`Falha ao baixar certificado: ${e.message || 'Arquivo não encontrado'}`);
+    }
     let passphrase;
     try {
         passphrase = (0, crypto_1.decryptPassword)(cert.senhaCriptografada);

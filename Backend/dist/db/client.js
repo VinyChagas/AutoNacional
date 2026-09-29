@@ -5,7 +5,7 @@ exports.initDb = initDb;
 exports.disconnectDb = disconnectDb;
 /**
  * Cliente Prisma singleton.
- * Conecta ao PostgreSQL (Supabase) via adapter @prisma/adapter-pg.
+ * Conecta ao PostgreSQL próprio (DATABASE_URL) via adapter @prisma/adapter-pg.
  * Prisma 7 exige adapter ou accelerateUrl para engine type "client".
  */
 const client_1 = require("@prisma/client");

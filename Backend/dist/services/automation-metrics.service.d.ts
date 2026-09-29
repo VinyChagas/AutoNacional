@@ -23,6 +23,7 @@ export interface PersistirExecutionInput {
 /**
  * Cria um batch de execução (ao clicar Iniciar).
  * Chamado pelo router POST /multiplas.
+ * O id é o UUID gerado pela aplicação (mesmo usado no SSE/Socket.IO).
  */
 export declare function criarBatch(input: CriarBatchInput): Promise<void>;
 /**

@@ -4,12 +4,10 @@
  */
 import { Router, Request, Response } from 'express';
 import { getLogger } from '../infrastructure/logger';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as repo from '../repositories/certificados';
 import * as empresasRepo from '../repositories/empresas';
 import { extrairInformacoesCertificado } from '../utils/certificado-utils';
-import { CERTIFICATES_DIR } from '../infrastructure/config';
+import { getCertificateStorage } from '../storage';
 import { uploadSingle, uploadArray } from '../middleware/upload';
 
 const logger = getLogger('certificados');
@@ -130,11 +128,8 @@ router.post('/importar', uploadSingle('certificado'), async (req: Request, res: 
       res.status(400).json({ success: false, message: `Certificado para CNPJ ${cnpjLimpo} já existe` });
       return;
     }
-    const dir = CERTIFICATES_DIR;
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const nomeArquivo = `${cnpjLimpo}.pfx`;
-    const caminho = path.join(dir, nomeArquivo);
-    fs.writeFileSync(caminho, file.buffer);
+    await getCertificateStorage().save(nomeArquivo, file.buffer);
     await repo.criar({
       cnpj: cnpjLimpo,
       arquivo: nomeArquivo,
@@ -160,8 +155,7 @@ router.post('/importar-lote', uploadArray('certificados', 50), async (req: Reque
     const senha = (req.body?.senha ?? '').trim();
     const contabilidadeId = parseInt(String(req.body?.contabilidade_id ?? 0), 10);
     const resultados: Array<{ nome_arquivo: string; sucesso: boolean; cnpj?: string; empresa?: string; data_vencimento?: string; mensagem_erro?: string }> = [];
-    const dir = CERTIFICATES_DIR;
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const storage = getCertificateStorage();
 
     for (const file of files) {
       try {
@@ -180,7 +174,7 @@ router.post('/importar-lote', uploadArray('certificados', 50), async (req: Reque
           continue;
         }
         const nomeArquivo = `${info.cnpj_limpo}.pfx`;
-        fs.writeFileSync(path.join(dir, nomeArquivo), file.buffer);
+        await storage.save(nomeArquivo, file.buffer);
         await repo.criar({
           cnpj: info.cnpj_limpo,
           arquivo: nomeArquivo,
