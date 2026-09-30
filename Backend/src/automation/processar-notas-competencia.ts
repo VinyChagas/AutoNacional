@@ -9,16 +9,18 @@
 import { Page, Locator } from 'playwright';
 import { setDownloadsBasePath } from './download-manager';
 import { getLogger } from '../infrastructure/logger';
+import {
+  CAPTCHA_MANUAL_TIMEOUT_MS,
+  CAPTCHA_MANUAL_USE_CENTRAL,
+  PLAYWRIGHT_TIMEOUT,
+} from '../infrastructure/config';
+import { aguardarEstabilizarPagina } from './playwright-nav';
 import { captchaConfigurado, CaptchaError } from './captcha-solver';
 import {
   reportCaptchaDetectado,
   reportSolucaoSubmetidaNoSite,
   reportCaptchaFalha,
 } from './captcha-report';
-import {
-  CAPTCHA_MANUAL_TIMEOUT_MS,
-  CAPTCHA_MANUAL_USE_CENTRAL,
-} from '../infrastructure/config';
 import {
   criarContextoOperacao,
   executarDownloadNotaComRetry,
@@ -444,7 +446,7 @@ async function clicarBotaoProximaPagina(page: Page): Promise<boolean> {
         const liClass = await parent.locator('..').getAttribute('class');
         if (liClass?.toLowerCase().includes('disabled')) return false;
         await botao.click();
-        await page.waitForLoadState('networkidle', { timeout: 10000 });
+        await aguardarEstabilizarPagina(page, Math.min(10000, PLAYWRIGHT_TIMEOUT));
         await page.waitForSelector('table tbody tr', { timeout: 8000 });
         return true;
       }
@@ -780,6 +782,6 @@ export async function preencherDatasEFiltrar(
 
   const botaoFiltrar = page.locator('xpath=//*[@id="searchbar"]/form/div[2]/div[2]/div[2]/button');
   await botaoFiltrar.click();
-  await page.waitForLoadState('networkidle', { timeout: 10000 });
+  await aguardarEstabilizarPagina(page, Math.min(15000, PLAYWRIGHT_TIMEOUT));
   await page.waitForTimeout(_minActionDelayMs * 2);
 }

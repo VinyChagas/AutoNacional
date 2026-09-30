@@ -10,7 +10,14 @@ import {
   getPlaywrightConfig,
   aplicarZoomPaginaNoContexto,
 } from './playwright-config';
+import {
+  assertPageUsable,
+  gotoWithRetry,
+  isTargetClosedError,
+  safePageTitle,
+} from './playwright-nav';
 import { getLogger } from '../infrastructure/logger';
+import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
 
 const logger = getLogger('playwright-nfse');
 
@@ -156,10 +163,17 @@ export async function abrirDashboardNfse(
     log('Contexto criado com sucesso');
 
     page = await context.newPage();
+    page.setDefaultTimeout(timeout);
     log('Página criada');
 
+    const navTimeout = PLAYWRIGHT_TIMEOUT;
     log(`Acessando portal NFSe Nacional: ${BASE_URL}`);
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout });
+    await gotoWithRetry(page, BASE_URL, {
+      timeout: navTimeout,
+      waitUntil: 'domcontentloaded',
+      log,
+    });
+    assertPageUsable(page);
     log(`Página carregada: ${page.url()}`);
 
     const loginSelectors = [
@@ -169,32 +183,41 @@ export async function abrirDashboardNfse(
       '.btn-certificado',
     ];
 
-    const dashboardSelectors = [
+    // Sinais de sessão já autenticada (Dashboard, Meus dados, menus de notas…)
+    const autenticadoSelectors = [
       'text=Dashboard',
       'text=Painel',
+      'text=Meus dados',
       '[href*="Dashboard"]',
+      '[href*="MeusDados"]',
+      '[href*="Meus-Dados"]',
       '.dashboard',
       '#dashboard',
+      'li:nth-of-type(3) img',
+      '#datainicio',
     ];
 
     // Aguarda renderização (viewport compacto / vários browsers em paralelo)
     try {
       await Promise.race([
         page.waitForSelector(loginSelectors.join(', '), {
-          timeout: 15000,
+          timeout: Math.min(15000, navTimeout),
           state: 'visible',
         }),
-        page.waitForSelector(dashboardSelectors.join(', '), {
-          timeout: 15000,
+        page.waitForSelector(autenticadoSelectors.join(', '), {
+          timeout: Math.min(15000, navTimeout),
           state: 'visible',
         }),
       ]);
     } catch {
-      await page.waitForTimeout(1000);
+      if (!page.isClosed()) {
+        await page.waitForTimeout(1000).catch(() => undefined);
+      }
     }
 
+    assertPageUsable(page);
     const currentUrl = page.url();
-    const pageTitle = await page.title();
+    const pageTitle = await safePageTitle(page);
     log(`URL atual: ${currentUrl}`);
     log(`Título da página: ${pageTitle}`);
 
@@ -202,6 +225,7 @@ export async function abrirDashboardNfse(
     let loginFound = false;
     for (const selector of loginSelectors) {
       try {
+        assertPageUsable(page);
         const locator = page.locator(selector);
         if ((await locator.count()) > 0 && (await locator.first().isVisible().catch(() => false))) {
           log(`Elemento de login encontrado: ${selector}`);
@@ -209,32 +233,35 @@ export async function abrirDashboardNfse(
           loginFound = true;
           break;
         }
-      } catch {
+      } catch (e) {
+        if (isTargetClosedError(e)) throw e;
         continue;
       }
     }
 
-    let dashboardElement = page.locator('body'); // placeholder
-    let dashboardFound = false;
-    for (const selector of dashboardSelectors) {
+    let autenticadoFound = false;
+    for (const selector of autenticadoSelectors) {
       try {
+        assertPageUsable(page);
         const locator = page.locator(selector);
         if ((await locator.count()) > 0 && (await locator.first().isVisible().catch(() => false))) {
-          log(`Elemento de dashboard encontrado: ${selector}`);
-          dashboardElement = locator.nth(0);
-          dashboardFound = true;
+          log(`Sessão autenticada detectada: ${selector}`);
+          autenticadoFound = true;
           break;
         }
-      } catch {
+      } catch (e) {
+        if (isTargetClosedError(e)) throw e;
         continue;
       }
     }
 
     // Fallback: botão pode estar fora da área visível na janela compacta
-    if (!loginFound && !dashboardFound) {
+    if (!loginFound && !autenticadoFound) {
+      assertPageUsable(page);
       await page.evaluate('window.scrollTo(0, 0)').catch(() => undefined);
       for (const selector of loginSelectors) {
         try {
+          assertPageUsable(page);
           const locator = page.locator(selector);
           if ((await locator.count()) > 0) {
             await locator.first().scrollIntoViewIfNeeded().catch(() => undefined);
@@ -245,13 +272,15 @@ export async function abrirDashboardNfse(
               break;
             }
           }
-        } catch {
+        } catch (e) {
+          if (isTargetClosedError(e)) throw e;
           continue;
         }
       }
     }
 
-    if (loginFound && !dashboardFound) {
+    if (loginFound && !autenticadoFound) {
+      assertPageUsable(page);
       opcoes.onLoginPageReady?.();
       log('Elemento de login encontrado - tentando autenticar...');
       try {
@@ -259,14 +288,22 @@ export async function abrirDashboardNfse(
         log('Clique no botão de certificado realizado');
 
         try {
-          await page.waitForLoadState('domcontentloaded', { timeout: 10000 });
-          await page.waitForTimeout(500);
-          await page.waitForSelector('text=Dashboard', { timeout: 5000, state: 'visible' });
-          log('Dashboard detectado após autenticação!');
+          await Promise.race([
+            page.waitForURL(
+              /Dashboard|dashboard|MeusDados|Meus-Dados|EmissorNacional\/(?!Login)/i,
+              { timeout: navTimeout }
+            ),
+            page.waitForSelector(autenticadoSelectors.join(', '), {
+              timeout: navTimeout,
+              state: 'visible',
+            }),
+          ]);
+          log('Sessão autenticada detectada após clique no certificado');
+          autenticadoFound = true;
         } catch {
           try {
-            await page.waitForLoadState('load', { timeout: 5000 });
-            log('Página carregada completamente');
+            await page.waitForLoadState('domcontentloaded', { timeout: 10000 });
+            log('Página carregada após clique no certificado');
           } catch {
             /* ignore */
           }
@@ -274,23 +311,61 @@ export async function abrirDashboardNfse(
       } catch (e) {
         log(`Erro ao clicar no botão de certificado: ${e}`);
       }
-    } else if (dashboardFound) {
-      log('Já autenticado - dashboard detectado diretamente!');
+    } else if (autenticadoFound) {
+      log('Já autenticado — área logada detectada diretamente!');
     } else {
-      log('Não foi possível detectar elementos de login ou dashboard');
+      log('Não foi possível detectar elementos de login ou área autenticada');
     }
 
+    assertPageUsable(page);
     const finalUrl = page.url();
-    const finalTitle = await page.title();
+    const finalTitle = await safePageTitle(page);
     log(`URL final: ${finalUrl}`);
     log(`Título final: ${finalTitle}`);
 
-    const sucesso =
-      finalUrl.includes('Dashboard') ||
-      !finalUrl.includes('Login') ||
-      dashboardFound;
+    // Reavalia sinais na página final (ex.: caiu em "Meus dados")
+    if (!autenticadoFound) {
+      for (const selector of autenticadoSelectors) {
+        try {
+          const locator = page.locator(selector);
+          if (
+            (await locator.count()) > 0 &&
+            (await locator.first().isVisible().catch(() => false))
+          ) {
+            autenticadoFound = true;
+            log(`Sessão autenticada confirmada na página final: ${selector}`);
+            break;
+          }
+        } catch (e) {
+          if (isTargetClosedError(e)) throw e;
+        }
+      }
+    }
 
-    const mensagem = sucesso ? 'Dashboard acessado com sucesso' : 'Não foi possível confirmar acesso ao dashboard';
+    const bodyText = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '');
+    const textoIndicaAutenticado =
+      /meus\s+dados/i.test(bodyText) ||
+      /dashboard/i.test(bodyText) ||
+      /notas\s+emitidas/i.test(bodyText) ||
+      /notas\s+recebidas/i.test(bodyText);
+
+    const urlLower = finalUrl.toLowerCase();
+    const urlIndicaAutenticado =
+      urlLower.includes('dashboard') ||
+      urlLower.includes('meusdados') ||
+      urlLower.includes('meus-dados') ||
+      urlLower.includes('meus_dados') ||
+      (!urlLower.includes('login') && urlLower.includes('emisornacional'));
+
+    const sucesso =
+      autenticadoFound || textoIndicaAutenticado || urlIndicaAutenticado;
+
+    const mensagem = sucesso
+      ? 'Dashboard acessado com sucesso'
+      : 'Não foi possível confirmar acesso ao dashboard';
     if (sucesso) {
       log('Autenticação bem-sucedida!');
     } else {

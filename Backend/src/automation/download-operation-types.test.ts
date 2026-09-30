@@ -71,6 +71,21 @@ describe('extractErrorCode / classificarErroDaOperacao', () => {
     const c = classificarErroDaOperacao(new Error('fetch failed ETIMEDOUT'));
     expect(c.retryable).toBe(true);
   });
+
+  it('classifica Target closed / context destroyed como FAIL_PERMANENT', () => {
+    const closed = classificarErroDaOperacao(
+      new Error('locator.click: Target page, context or browser has been closed')
+    );
+    expect(closed.retryable).toBe(false);
+    expect(closed.action).toBe('FAIL_PERMANENT');
+    expect(closed.code).toBe('ERROR_TARGET_CLOSED');
+
+    const destroyed = classificarErroDaOperacao(
+      new Error('page.title: Execution context was destroyed')
+    );
+    expect(destroyed.retryable).toBe(false);
+    expect(destroyed.action).toBe('FAIL_PERMANENT');
+  });
 });
 
 describe('circuit breaker por executionId', () => {

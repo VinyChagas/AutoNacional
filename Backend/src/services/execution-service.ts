@@ -28,6 +28,7 @@ import {
 import { formatarMesExecucaoParaPasta } from '../automation/download-manager';
 import { resolveStoragePath } from '../utils/path-resolve';
 import { abrirDashboardNfseComCredencial } from '../automation/login-credencial-nfse';
+import { assertPageUsable, clicarMenuNotasEAguardar, isTargetClosedError } from '../automation/playwright-nav';
 import * as credenciaisRepo from '../repositories/credenciais';
 import { emitirEventoExecucao } from './execution-events.service';
 import { persistirExecution } from './automation-metrics.service';
@@ -627,11 +628,9 @@ async function executarFluxoCompleto(
     });
     info.mensagem = 'Fazendo login…';
     adicionarLog('Chamando autenticação via credencial...');
-    const config = await settingsRepo.obterConfiguracoes();
-    const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
     resultadoAuth = await abrirDashboardNfseComCredencial(documento, senha, {
       headless,
-      timeout: timeout || PLAYWRIGHT_TIMEOUT,
+      timeout: PLAYWRIGHT_TIMEOUT,
       ...(viewport ? { viewport } : {}),
       ...(launchArgs ? { launchArgs } : {}),
       onLoginPageReady,
@@ -650,8 +649,6 @@ async function executarFluxoCompleto(
       info.resultadoFinal = 'ERRO';
       return;
     }
-    const config = await settingsRepo.obterConfiguracoes();
-    const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
     emitirEventoExecucao(batchId, {
       type: 'execution:stage',
       empresa_id: key,
@@ -662,7 +659,7 @@ async function executarFluxoCompleto(
     adicionarLog('Chamando autenticação via certificado...');
     resultadoAuth = await abrirDashboardNfse(certificado, {
       headless,
-      timeout: timeout || PLAYWRIGHT_TIMEOUT,
+      timeout: PLAYWRIGHT_TIMEOUT,
       ...(viewport ? { viewport } : {}),
       ...(launchArgs ? { launchArgs } : {}),
       onLoginPageReady,
@@ -720,11 +717,12 @@ async function executarFluxoCompleto(
         message: 'Acessando notas emitidas…',
       });
       info.mensagem = 'Acessando notas emitidas…';
+      assertPageUsable(page);
       const menuEmitidas = page.locator('li:nth-of-type(3) img').nth(0);
-      await menuEmitidas.click();
-      await page.waitForURL('**/Notas/Emitidas', { timeout: 15000 });
-      await page.waitForLoadState('networkidle', { timeout: 15000 });
-      await page.waitForTimeout(1000);
+      await clicarMenuNotasEAguardar(page, menuEmitidas, 'Emitidas', {
+        timeout: PLAYWRIGHT_TIMEOUT,
+        log: adicionarLog,
+      });
 
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
@@ -796,11 +794,12 @@ async function executarFluxoCompleto(
         message: 'Acessando notas recebidas…',
       });
       info.mensagem = 'Acessando notas recebidas…';
+      assertPageUsable(page);
       const menuRecebidas = page.locator('li:nth-of-type(4) img').nth(0);
-      await menuRecebidas.click();
-      await page.waitForURL('**/Notas/Recebidas', { timeout: 15000 });
-      await page.waitForLoadState('networkidle', { timeout: 15000 });
-      await page.waitForTimeout(1000);
+      await clicarMenuNotasEAguardar(page, menuRecebidas, 'Recebidas', {
+        timeout: PLAYWRIGHT_TIMEOUT,
+        log: adicionarLog,
+      });
 
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
@@ -890,7 +889,9 @@ async function executarFluxoCompleto(
     adicionarLog('Execução concluída com sucesso');
   } catch (e) {
     const err = e as Error;
-    const msg = err.message || 'Erro desconhecido';
+    const msg = isTargetClosedError(e)
+      ? 'Navegador/página fechou durante a automação — execução abortada'
+      : err.message || 'Erro desconhecido';
     adicionarLog(`ERRO: ${msg}`);
     info.status = 'falhou';
     info.mensagem = msg;

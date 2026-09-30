@@ -4,6 +4,7 @@
 
 import { CAPTCHA_RETRYABLE_ERROR_CODES } from '../infrastructure/config';
 import { CaptchaError } from './captcha-solver';
+import { isTargetClosedError } from './playwright-nav';
 
 export type TipoNotaUi = 'Emitidas' | 'Recebidas';
 export type TipoArquivoNota = 'xml' | 'pdf';
@@ -151,6 +152,7 @@ export function extractErrorCode(error: unknown): string {
   }
   if (error instanceof CaptchaModalCloseError) return 'ERROR_MODAL_CLOSE';
   if (error instanceof NotaNaoEncontradaParaRetryError) return 'ERROR_NOTE_NOT_FOUND';
+  if (isTargetClosedError(error)) return 'ERROR_TARGET_CLOSED';
   if (/TimeoutError|timeout/i.test(msg)) return 'ERROR_TIMEOUT';
   return 'ERROR_UNKNOWN';
 }
@@ -178,6 +180,15 @@ export function classificarErroDaOperacao(
       retryable: false,
       action: 'FAIL_PERMANENT',
       code,
+      reason,
+    };
+  }
+
+  if (code === 'ERROR_TARGET_CLOSED' || isTargetClosedError(error)) {
+    return {
+      retryable: false,
+      action: 'FAIL_PERMANENT',
+      code: 'ERROR_TARGET_CLOSED',
       reason,
     };
   }

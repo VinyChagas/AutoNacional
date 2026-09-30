@@ -5,6 +5,13 @@
  */
 import { chromium } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
+import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
+import {
+  assertPageUsable,
+  gotoWithRetry,
+  isTargetClosedError,
+  safePageTitle,
+} from './playwright-nav';
 
 const logger = getLogger('validar-credencial-nfse');
 const BASE_URL = 'https://www.nfse.gov.br/EmissorNacional/';
@@ -43,8 +50,12 @@ export async function validarCredencialNfse(
     const page = await context.newPage();
     page.setDefaultTimeout(timeoutSeconds * 1000);
 
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForTimeout(1000);
+    await gotoWithRetry(page, BASE_URL, {
+      timeout: PLAYWRIGHT_TIMEOUT,
+      waitUntil: 'domcontentloaded',
+    });
+    assertPageUsable(page);
+    await page.waitForTimeout(1000).catch(() => undefined);
 
     const selectorsDocumento = [
       'input[name="cnpj"]',
@@ -96,8 +107,10 @@ export async function validarCredencialNfse(
     }
 
     // Aguardar possível redirect ou atualização SPA (portal pode ser single-page)
-    await page.waitForTimeout(5000);
+    assertPageUsable(page);
+    await page.waitForTimeout(5000).catch(() => undefined);
 
+    assertPageUsable(page);
     const urlAtual = page.url();
 
     // 1) Verificar indicadores de FALHA explícitos (prioridade)
@@ -170,7 +183,7 @@ export async function validarCredencialNfse(
     const dashboardEncontrado =
       urlIndicaSucesso || conteudoIndicaSucesso || (formSumiu && !temIndicadorFalha);
 
-    const tituloPagina = await page.title().catch(() => '');
+    const tituloPagina = await safePageTitle(page);
     logger.debug(
       { urlAtual, tituloPagina, urlIndicaSucesso, conteudoIndicaSucesso, formSumiu, temIndicadorFalha },
       'Resultado da verificação de login'
@@ -191,6 +204,13 @@ export async function validarCredencialNfse(
       if (browser) await browser.close();
     } catch {
       /* ignore */
+    }
+    if (isTargetClosedError(err)) {
+      return {
+        ok: false,
+        status: 'ERRO_VALIDACAO',
+        message: 'Navegador fechou durante a validação',
+      };
     }
     const msg = err instanceof Error ? err.message : 'Falha ao validar';
     return { ok: false, status: 'ERRO_VALIDACAO', message: msg.slice(0, 200) };

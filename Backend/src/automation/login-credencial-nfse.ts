@@ -5,7 +5,13 @@
  */
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
+import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
 import { aplicarZoomPaginaNoContexto } from './playwright-config';
+import {
+  assertPageUsable,
+  gotoWithRetry,
+  safePageTitle,
+} from './playwright-nav';
 import type { ResultadoAutenticacao } from './playwright-nfse';
 import { NFSeAutenticacaoError } from './playwright-nfse';
 
@@ -84,8 +90,13 @@ export async function abrirDashboardNfseComCredencial(
     log('Página criada');
 
     log(`Acessando portal NFSe Nacional: ${BASE_URL}`);
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForTimeout(1000);
+    await gotoWithRetry(page, BASE_URL, {
+      timeout: PLAYWRIGHT_TIMEOUT,
+      waitUntil: 'domcontentloaded',
+      log,
+    });
+    assertPageUsable(page);
+    await page.waitForTimeout(1000).catch(() => undefined);
     log(`Página carregada: ${page.url()}`);
 
     const selectorsDocumento = [
@@ -141,8 +152,10 @@ export async function abrirDashboardNfseComCredencial(
       log('Clique em Entrar realizado');
     }
 
-    await page.waitForTimeout(5000);
+    assertPageUsable(page);
+    await page.waitForTimeout(5000).catch(() => undefined);
 
+    assertPageUsable(page);
     const urlAtual = page.url();
 
     const textoPagina = await page.locator('body').innerText().catch(() => '');
@@ -202,7 +215,7 @@ export async function abrirDashboardNfseComCredencial(
     }
 
     log('Autenticação por credencial bem-sucedida!');
-    const tituloPagina = await page.title().catch(() => '');
+    const tituloPagina = await safePageTitle(page);
 
     return {
       sucesso: true,
