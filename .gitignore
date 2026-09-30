@@ -1,47 +1,77 @@
-# Database files (SQLite) - Criados automaticamente
+# Dependências e artefatos de build
+node_modules/
+Backend/node_modules/
+Frontend/node_modules/
+Backend/dist/
+Frontend/dist/
+Frontend/.angular/
+Frontend/out-tsc/
+coverage/
+*.tsbuildinfo
+
+# Ambiente — nunca versionar segredo real
+.env
+.env.*
+!.env.example
+Backend/.env
+Backend/.env.*
+!Backend/.env.example
+
+# Banco local
 Backend/db/*.db
 Backend/db/*.db-journal
 Backend/db/*.db-wal
 Backend/db/*.db-shm
+Backend/db_mock.sqlite
+*.dump
+*.sql.gz
 
-# Node / Angular
-Frontend/node_modules/
-Frontend/dist/
-Frontend/.angular/
-Frontend/*.log
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Env files
-.env
-.env.local
-
-# Certificados e arquivos sensíveis
+# Certificados e chaves (ficam na VPS, fora do Git)
+*.pfx
+*.p12
+*.pem
+*.key
+*.pwd
+*.pwd.enc
+*.pfx.enc
 CERTIFICADO e-CNPJ/
 CERTIFICADO e-CNPJ.zip
 certificados digitais/
 certificados digitais.zip
 Backend/certificados_armazenados/
-Backend/*.pfx.enc
-Backend/*.pwd.enc
+certificates/
 
+# Dados gerados pela automação e operação
 Backend/downloads/
 Backend/temp/
-
-Backend/db_mock.sqlite
-
-Backend/node_modules/
-
-# Backups Fase 1 (contém dados sensíveis — credenciais, certificados)
+Backend/logs/
 Backend/dumps/
+downloads/
+logs/
+tmp/
+temp/
+backups/
 
-node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json
+# Dados de clientes e planilhas soltas
+*.xlsx
+*.xls
+*.csv
+*.zip
+
+# Python legado
+__pycache__/
+*.pyc
+
+# IDEs e sistema
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Relatórios e saídas de teste
+node_modules/.vite/
+*.log
+screenshots/
