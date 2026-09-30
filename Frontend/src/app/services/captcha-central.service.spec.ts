@@ -17,6 +17,7 @@ describe('ManualCaptchaRequest contrato', () => {
   it('exige campos mínimos para widget', () => {
     const req: ManualCaptchaRequest = {
       captchaId: 'c1',
+      attemptId: 'a1',
       batchId: 'b1',
       executionId: 'e1',
       empresaId: '10',
@@ -24,6 +25,7 @@ describe('ManualCaptchaRequest contrato', () => {
       cnpj: '12345678000199',
       siteKey: 'sitekey',
       pageUrl: 'https://example.com',
+      payloadFingerprint: 'fp',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 120000).toISOString(),
       timeoutSeconds: 120,

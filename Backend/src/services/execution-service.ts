@@ -43,6 +43,9 @@ import { CAPTCHA_WINDOW_LAYOUT_ENABLED } from '../infrastructure/config';
 
 const logger = getLogger('execution-service');
 
+/** Impede novos jobs e orienta o encerramento das execuções já enfileiradas. */
+let encerrandoFila = false;
+
 /** DD/MM/YYYY -> YYYY-MM */
 function competenciaFromDataInicio(dataInicio: string): string {
   const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dataInicio);
@@ -201,6 +204,10 @@ export async function adicionarExecucao(
   baixarPdf: boolean = true,
   captchaMode: CaptchaMode = 'TWO_CAPTCHA'
 ): Promise<number> {
+  if (encerrandoFila) {
+    throw new Error('Servidor em encerramento; novas execuções não são aceitas');
+  }
+
   const config = await settingsRepo.obterConfiguracoes();
   // Modo MANUAL exige navegador visível para o operador resolver o hCaptcha.
   const headlessFinal =
@@ -358,6 +365,68 @@ const fila = new PQueue({
   autoStart: true,
 });
 
+export function obterEstadoFila(): {
+  pending: number;
+  running: number;
+  shuttingDown: boolean;
+} {
+  return {
+    pending: fila.size,
+    running: fila.pending,
+    shuttingDown: encerrandoFila,
+  };
+}
+
+/**
+ * Pausa a fila, descarta jobs ainda não iniciados e fecha browsers em andamento.
+ * O fluxo existente de finalização grava a falha das execuções que já tinham começado.
+ */
+export async function pararFilaExecucao(timeoutMs = 20_000): Promise<void> {
+  encerrandoFila = true;
+  fila.pause();
+  fila.clear();
+
+  const ativas = [...execucoesAtivas.values()];
+  for (const info of ativas) {
+    if (info.status !== 'pendente') continue;
+    try {
+      await execucoesRepo.atualizar(info.execucaoDbId, {
+        status: 'falhou',
+        etapaAtual: 'encerramento',
+        mensagem: 'Execução interrompida: processo encerrando',
+        mensagemErro: 'Encerramento do processo antes do início da automação',
+        dataFim: new Date(),
+      });
+    } catch (err) {
+      logger.error(
+        { err, execucaoId: info.execucaoDbId },
+        'Falha ao marcar execução pendente como interrompida'
+      );
+    }
+    execucoesAtivas.delete(String(info.empresaId));
+  }
+
+  await Promise.all(
+    [...execucoesAtivas.values()].map(async (info) => {
+      try {
+        await info.page?.close().catch(() => undefined);
+        await info.browser?.close().catch(() => undefined);
+      } catch {
+        /* o finally de cada execução fecha o que restar */
+      }
+    })
+  );
+
+  await Promise.race([
+    fila.onIdle(),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+
+  logger.info(obterEstadoFila(), 'Fila de execução parada');
+}
+
 function logWorker(empresaId: number, msg: string): void {
   logger.debug({ empresaId }, `[worker] ${msg}`);
 }
@@ -505,6 +574,24 @@ async function executarFluxoCompleto(
   const key = String(empresaId);
   const info = execucoesAtivas.get(key);
   if (!info) return;
+
+  if (encerrandoFila) {
+    info.status = 'falhou';
+    info.mensagem = 'Execução interrompida: processo encerrando';
+    info.resultadoFinal = 'ERRO';
+    await finalizarExecucao({
+      execucaoId: execucaoDbId,
+      empresaId,
+      cnpj,
+      batchId: info.batchId,
+      statusFinal: 'falhou',
+      message: info.mensagem,
+      contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
+      resultado_final: 'ERRO',
+      persistirMetrica: () => undefined,
+    });
+    return;
+  }
 
   logWorker(empresaId, 'START');
   const startedAt = new Date();

@@ -28,6 +28,25 @@ export interface PlaywrightConfig {
   args: string[];
 }
 
+const CONTAINER_CHROMIUM_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+];
+
+/**
+ * No Linux em container o Chromium falha sem estes flags.
+ * Fora do Docker o comportamento permanece o das args já usadas por cada fluxo.
+ */
+export function appendContainerChromiumArgs(args: string[]): string[] {
+  if (process.env.PLAYWRIGHT_NO_SANDBOX !== 'true') return args;
+  const merged = [...args];
+  for (const arg of CONTAINER_CHROMIUM_ARGS) {
+    if (!merged.includes(arg)) merged.push(arg);
+  }
+  return merged;
+}
+
 export const defaultPlaywrightConfig: PlaywrightConfig = {
   timeout: PLAYWRIGHT_TIMEOUT,
   headless: PLAYWRIGHT_HEADLESS,

@@ -6,7 +6,10 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
 import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
-import { aplicarZoomPaginaNoContexto } from './playwright-config';
+import {
+  aplicarZoomPaginaNoContexto,
+  appendContainerChromiumArgs,
+} from './playwright-config';
 import {
   assertPageUsable,
   gotoWithRetry,
@@ -72,7 +75,7 @@ export async function abrirDashboardNfseComCredencial(
 
     browser = await chromium.launch({
       headless,
-      args: launchArgs,
+      args: appendContainerChromiumArgs(launchArgs),
     });
 
     context = await browser.newContext({

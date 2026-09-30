@@ -6,6 +6,7 @@
 import { chromium } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
 import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
+import { appendContainerChromiumArgs } from './playwright-config';
 import {
   assertPageUsable,
   gotoWithRetry,
@@ -40,6 +41,7 @@ export async function validarCredencialNfse(
   try {
     browser = await chromium.launch({
       headless,
+      args: appendContainerChromiumArgs([]),
       ...(headless ? {} : { slowMo: 50 }),
     });
     const context = await browser.newContext({

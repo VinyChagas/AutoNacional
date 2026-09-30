@@ -9,6 +9,7 @@ import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import {
   getPlaywrightConfig,
   aplicarZoomPaginaNoContexto,
+  appendContainerChromiumArgs,
 } from './playwright-config';
 import {
   assertPageUsable,
@@ -73,7 +74,10 @@ export async function criarContextoComCertificado(
   const headless = opcoes.headless ?? config.headless;
   const ignoreHttpsErrors = opcoes.ignoreHttpsErrors ?? true;
   const viewport = opcoes.viewport ?? config.viewport;
-  const launchArgs = [...config.args, ...(opcoes.launchArgs ?? [])];
+  const launchArgs = appendContainerChromiumArgs([
+    ...config.args,
+    ...(opcoes.launchArgs ?? []),
+  ]);
 
   logger.debug(
     {
