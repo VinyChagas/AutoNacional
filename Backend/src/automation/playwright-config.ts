@@ -5,16 +5,18 @@
  * pelos scripts de automação.
  */
 
+import { BrowserContext } from 'playwright';
 import {
   PLAYWRIGHT_TIMEOUT,
   PLAYWRIGHT_HEADLESS,
+  BROWSER_PAGE_ZOOM,
 } from '../infrastructure/config';
 import { getLogger } from '../infrastructure/logger';
 
 const logger = getLogger('playwright-config');
 
 export interface PlaywrightConfig {
-  /** Timeout em milissegundos para operações (default: 30000) */
+  /** Timeout em milissegundos para operações (default: 60000) */
   timeout: number;
   /** Se true, executa navegador em modo headless */
   headless: boolean;
@@ -26,11 +28,32 @@ export interface PlaywrightConfig {
   args: string[];
 }
 
+const CONTAINER_CHROMIUM_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+];
+
+/**
+ * No Linux em container o Chromium falha sem estes flags.
+ * Fora do Docker o comportamento permanece o das args já usadas por cada fluxo.
+ */
+export function appendContainerChromiumArgs(args: string[]): string[] {
+  if (process.env.PLAYWRIGHT_NO_SANDBOX !== 'true') return args;
+  const merged = [...args];
+  for (const arg of CONTAINER_CHROMIUM_ARGS) {
+    if (!merged.includes(arg)) merged.push(arg);
+  }
+  return merged;
+}
+
 export const defaultPlaywrightConfig: PlaywrightConfig = {
   timeout: PLAYWRIGHT_TIMEOUT,
   headless: PLAYWRIGHT_HEADLESS,
   ignoreHttpsErrors: true,
-  viewport: { width: 1920, height: 1080 },
+  // Fallback de conteúdo — a resolução do monitor NÃO é o tamanho da janela.
+  // Em execução real o slot visual define viewport + --window-size (769×…).
+  viewport: { width: 769, height: 680 },
   args: [
     '--disable-features=DownloadBubble,DownloadBubbleV2',
     '--disable-features=SafeBrowsing',
@@ -52,4 +75,30 @@ export function getPlaywrightConfig(overrides?: Partial<PlaywrightConfig>): Play
     `Config: timeout=${config.timeout}ms, headless=${config.headless}, viewport=${config.viewport.width}x${config.viewport.height}`
   );
   return config;
+}
+
+/**
+ * Aplica zoom de página em todas as navegações do contexto (padrão 80%).
+ * Usa CSS zoom no documentElement — estável no Chromium e reaplicado a cada load.
+ */
+export async function aplicarZoomPaginaNoContexto(
+  context: BrowserContext,
+  zoom: number = BROWSER_PAGE_ZOOM
+): Promise<void> {
+  if (!Number.isFinite(zoom) || zoom === 1) return;
+
+  // Script como string para não exigir lib DOM no tsconfig do Backend
+  const zoomCss = JSON.stringify(String(zoom));
+  await context.addInitScript({
+    content: `(() => {
+      var z = ${zoomCss};
+      var apply = function () {
+        try { document.documentElement.style.zoom = z; } catch (e) {}
+      };
+      apply();
+      document.addEventListener('DOMContentLoaded', apply);
+    })();`,
+  });
+
+  logger.debug({ zoom }, 'Zoom de página configurado no contexto Playwright');
 }

@@ -131,7 +131,10 @@ export interface MultiplasExecucoesRequest {
   dataFim: string;
   tipo: string;
   headless: boolean;
+  baixarPdf: boolean; // true = XML + PDF (DANFS-e); false = apenas XML
   contabilidade_id?: number | null;
+  /** TWO_CAPTCHA (padrão) | MANUAL (Central de Captchas) */
+  captchaMode?: 'TWO_CAPTCHA' | 'MANUAL';
 }
 
 export interface MultiplasExecucoesResponse {
@@ -214,6 +217,18 @@ export class ExecucaoService {
     ).pipe(
       catchError((error) => {
         console.error('Erro ao obter status da execução:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  /** Status de todas as execuções do batch em 1 request (evita N requests e crash da UI) */
+  obterStatusBatch(batchId: string): Observable<{ execucoes: ExecucaoStatusResponse[] }> {
+    return this.http.get<{ execucoes: ExecucaoStatusResponse[] }>(
+      `${this.baseUrl}/execucao/batch/${batchId}/status`
+    ).pipe(
+      catchError((error) => {
+        console.error('Erro ao obter status do batch:', error);
         return throwError(() => error);
       })
     );

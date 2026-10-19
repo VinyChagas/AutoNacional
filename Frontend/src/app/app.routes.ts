@@ -2,6 +2,7 @@ import { Routes } from '@angular/router';
 import { LayoutComponent } from './components/layout/layout.component';
 import { HomeComponent } from './components/home/home.component';
 import { ExecucaoComponent } from './components/execucao/execucao.component';
+import { CentralCaptchasComponent } from './components/central-captchas/central-captchas.component';
 import { ConfiguracoesComponent } from './components/configuracoes/configuracoes.component';
 import { ContabilidadesComponent } from './components/contabilidades/contabilidades.component';
 import { EmpresasComponent } from './components/empresas/empresas.component';
@@ -36,6 +37,11 @@ export const routes: Routes = [
         path: 'credenciais',
         redirectTo: 'empresas',
         pathMatch: 'full'
+      },
+      {
+        path: 'execucao/captchas/:batchId',
+        component: CentralCaptchasComponent,
+        data: { animation: 'central-captchas' }
       },
       {
         path: 'execucao',

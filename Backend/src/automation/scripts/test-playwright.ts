@@ -7,7 +7,7 @@
  */
 
 import { chromium } from 'playwright';
-import { getPlaywrightConfig } from '../playwright-config';
+import { appendContainerChromiumArgs, getPlaywrightConfig } from '../playwright-config';
 import { getLogger } from '../../infrastructure/logger';
 
 const logger = getLogger('test-playwright');
@@ -19,7 +19,7 @@ async function main() {
 
   const browser = await chromium.launch({
     headless: config.headless,
-    args: config.args,
+    args: appendContainerChromiumArgs(config.args),
   });
 
   const context = await browser.newContext({

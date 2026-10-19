@@ -2,11 +2,14 @@ import {
   Component,
   ChangeDetectionStrategy,
   ChangeDetectorRef,
+  OnDestroy,
   OnInit,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
+import { Subject, of } from 'rxjs';
+import { catchError, finalize, switchMap, takeUntil } from 'rxjs/operators';
 import { ContabilidadeService } from '../../services/contabilidade.service';
 import { EmpresasUnificadoService } from '../../services/empresas-unificado.service';
 import { CredenciaisService } from '../../services/credenciais.service';
@@ -15,14 +18,13 @@ import type { Contabilidade } from '../../models/contabilidade.model';
 import type {
   EmpresaListagemItem,
   EmpresaDetalhes,
+  EmpresasSummaryResponse,
 } from '../../models/empresas-unificado.model';
 import { toEmpresaRow } from '../../models/empresas-unificado.model';
 import {
-  computeCertStatus,
-  computeCompanyStatusGeral,
-  needsRevalidateCredentials,
+  displayStatusGeral,
+  displayStatusReason,
   getCertDisplayInfo as getCertDisplayInfoUtil,
-  computeStatusReason,
 } from './status.utils';
 import { EmpresaDrawerComponent, type EditorSavePayload } from './empresa-drawer/empresa-drawer.component';
 import { EmpresasCadastroComponent } from './empresas-cadastro/empresas-cadastro.component';
@@ -38,6 +40,30 @@ import { EmpresasValidacaoModalComponent } from './empresas-validacao-modal/empr
 export interface ChipFilter {
   id: string;
   label: string;
+}
+
+/** Segmento enviado à API ao clicar nos cards. */
+export type EmpresaListSegment =
+  | 'ALL'
+  | 'CERT_EXPIRED'
+  | 'CREDENTIAL_REVALIDATION_REQUIRED'
+  | 'OPERATIONAL'
+  | 'NOT_ELIGIBLE';
+
+function presetToSegment(
+  preset: EmpresasFilterPreset | null
+): EmpresaListSegment {
+  if (!preset || preset.type === 'ALL') return 'ALL';
+  switch (preset.type) {
+    case 'CERT_VENCIDO':
+      return 'CERT_EXPIRED';
+    case 'CRED_VALIDAR':
+      return 'CREDENTIAL_REVALIDATION_REQUIRED';
+    case 'OPERACIONAIS':
+      return 'OPERATIONAL';
+    default:
+      return 'ALL';
+  }
 }
 
 @Component({
@@ -58,17 +84,32 @@ export interface ChipFilter {
   styleUrls: ['./empresas.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class EmpresasComponent implements OnInit {
+export class EmpresasComponent implements OnInit, OnDestroy {
   title = 'Empresas';
   subtitle = 'Cadastro unificado de empresas, certificados e credenciais';
 
-  /** Preset de filtro ativo (clique nos cards). */
+  /** Preset de filtro ativo (clique nos cards) — enviado como segment à API. */
   presetActive: EmpresasFilterPreset | null = null;
 
   search = '';
   empresasCount = 0;
   sortLabel = 'padrão';
   sortOpen = false;
+
+  // Paginação
+  page = 1;
+  pageSize = 20;
+  pageSizeOptions = [20, 50, 100];
+  totalCount = 0;
+
+  // Summary (cards)
+  summary: EmpresasSummaryResponse = {
+    total_empresas: 0,
+    certificados_vencidos: 0,
+    credenciais_para_validar: 0,
+    operacionais: 0,
+  };
+  loadingSummary = false;
 
   contabilidades: Contabilidade[] = [];
   contabilidadeId: number | null = null;
@@ -108,6 +149,11 @@ export class EmpresasComponent implements OnInit {
   // Editor dirty (alterações não salvas)
   editorDirty = false;
 
+  private readonly destroy$ = new Subject<void>();
+  private readonly listTrigger$ = new Subject<void>();
+  private readonly summaryTrigger$ = new Subject<void>();
+  private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(
     private cdr: ChangeDetectorRef,
     private contabilidadeService: ContabilidadeService,
@@ -117,31 +163,95 @@ export class EmpresasComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
+    this.listTrigger$
+      .pipe(
+        switchMap(() => {
+          this.carregando = true;
+          this.erro = null;
+          this.cdr.markForCheck();
+          return this.empresasService.listar(this.buildListParams()).pipe(
+            catchError((err: unknown) => {
+              this.erro =
+                err instanceof Error
+                  ? err.message
+                  : 'Erro ao carregar empresas';
+              this.listaEmpresas = [];
+              this.totalCount = 0;
+              this.empresasCount = 0;
+              return of(null);
+            }),
+            finalize(() => {
+              this.carregando = false;
+              this.cdr.markForCheck();
+            })
+          );
+        }),
+        takeUntil(this.destroy$)
+      )
+      .subscribe((r) => {
+        if (!r) {
+          this.cdr.markForCheck();
+          return;
+        }
+        this.listaEmpresas = r.items ?? [];
+        this.totalCount = r.total ?? 0;
+        this.empresasCount = r.total ?? 0;
+        if (this.empresaSelecionada) {
+          const updated = this.listaEmpresas.find(
+            (e) => e.id === this.empresaSelecionada?.id
+          );
+          if (updated) this.empresaSelecionada = updated;
+        }
+        this.cdr.markForCheck();
+      });
+
+    this.summaryTrigger$
+      .pipe(
+        switchMap(() => {
+          this.loadingSummary = true;
+          this.cdr.markForCheck();
+          return this.empresasService.getSummary(this.buildSummaryParams()).pipe(
+            catchError(() => of(null)),
+            finalize(() => {
+              this.loadingSummary = false;
+              this.cdr.markForCheck();
+            })
+          );
+        }),
+        takeUntil(this.destroy$)
+      )
+      .subscribe((s) => {
+        if (s) this.summary = s;
+        this.cdr.markForCheck();
+      });
+
     this.carregarContabilidades();
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
-  carregarContabilidades(): void {
-    this.loadingContabilidades = true;
-    this.cdr.markForCheck();
-    this.contabilidadeService.listar().subscribe({
-      next: (r) => {
-        this.contabilidades = r.contabilidades ?? [];
-        this.loadingContabilidades = false;
-        this.cdr.markForCheck();
-      },
-      error: () => {
-        this.loadingContabilidades = false;
-        this.cdr.markForCheck();
-      },
-    });
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+    this.listTrigger$.complete();
+    this.summaryTrigger$.complete();
+    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
   }
 
-  carregarEmpresas(): void {
-    this.carregando = true;
-    this.erro = null;
-    this.cdr.markForCheck();
-
+  private buildListParams(): {
+    search?: string;
+    contabilidade_id?: number | null;
+    has_cert?: boolean;
+    has_cred?: boolean;
+    sem_cert?: boolean;
+    sem_cred?: boolean;
+    sem_metodo?: boolean;
+    segment?: EmpresaListSegment;
+    sort?: string;
+    order?: 'asc' | 'desc';
+    page?: number;
+    limit?: number;
+  } {
     const params: {
       search?: string;
       contabilidade_id?: number | null;
@@ -150,9 +260,16 @@ export class EmpresasComponent implements OnInit {
       sem_cert?: boolean;
       sem_cred?: boolean;
       sem_metodo?: boolean;
+      segment?: EmpresaListSegment;
       sort?: string;
       order?: 'asc' | 'desc';
-    } = {};
+      page?: number;
+      limit?: number;
+    } = {
+      page: this.page,
+      limit: this.pageSize,
+      segment: presetToSegment(this.presetActive),
+    };
 
     if (this.search.trim()) {
       params.search = this.search.trim();
@@ -179,25 +296,65 @@ export class EmpresasComponent implements OnInit {
       params.order = 'asc';
     }
 
-    this.empresasService.listar(params).subscribe({
+    return params;
+  }
+
+  private buildSummaryParams(): {
+    contabilidade_id?: number | null;
+    search?: string;
+    has_cert?: boolean;
+    has_cred?: boolean;
+    sem_cert?: boolean;
+    sem_cred?: boolean;
+    sem_metodo?: boolean;
+  } {
+    const params: {
+      contabilidade_id?: number | null;
+      search?: string;
+      has_cert?: boolean;
+      has_cred?: boolean;
+      sem_cert?: boolean;
+      sem_cred?: boolean;
+      sem_metodo?: boolean;
+    } = {};
+
+    if (this.contabilidadeId != null && this.contabilidadeId > 0) {
+      params.contabilidade_id = this.contabilidadeId;
+    }
+    if (this.search.trim()) {
+      params.search = this.search.trim();
+    }
+    if (this.chipsAtivos.has('com_cert')) params.has_cert = true;
+    if (this.chipsAtivos.has('com_cred')) params.has_cred = true;
+    if (this.chipsAtivos.has('sem_cert')) params.sem_cert = true;
+    if (this.chipsAtivos.has('sem_cred')) params.sem_cred = true;
+    if (this.chipsAtivos.has('sem_metodo')) params.sem_metodo = true;
+
+    return params;
+  }
+
+  carregarContabilidades(): void {
+    this.loadingContabilidades = true;
+    this.cdr.markForCheck();
+    this.contabilidadeService.listar().subscribe({
       next: (r) => {
-        this.listaEmpresas = r.items ?? [];
-        this.empresasCount = r.total ?? 0;
-        this.carregando = false;
-        if (this.empresaSelecionada) {
-          const updated = this.listaEmpresas.find((e) => e.id === this.empresaSelecionada?.id);
-          if (updated) this.empresaSelecionada = updated;
-        }
+        this.contabilidades = r.contabilidades ?? [];
+        this.loadingContabilidades = false;
         this.cdr.markForCheck();
       },
-      error: (err) => {
-        this.erro = err.message || 'Erro ao carregar empresas';
-        this.carregando = false;
-        this.listaEmpresas = [];
-        this.empresasCount = 0;
+      error: () => {
+        this.loadingContabilidades = false;
         this.cdr.markForCheck();
       },
     });
+  }
+
+  carregarEmpresas(): void {
+    this.listTrigger$.next();
+  }
+
+  carregarSummary(): void {
+    this.summaryTrigger$.next();
   }
 
   /** Rows para os cards (conversão da lista). */
@@ -205,63 +362,40 @@ export class EmpresasComponent implements OnInit {
     return this.listaEmpresas.map(toEmpresaRow);
   }
 
-  /** Lista filtrada por preset (em memória). */
-  get filteredEmpresas(): EmpresaListagemItem[] {
-    return this.applyFilters(this.listaEmpresas, {
-      preset: this.presetActive,
-    });
-  }
-
-  /** Filtra em memória por preset. Mantém search/contab/chips via API. */
-  applyFilters(
-    items: EmpresaListagemItem[],
-    opts: { preset?: EmpresasFilterPreset | null }
-  ): EmpresaListagemItem[] {
-    let result = items;
-    if (opts.preset?.type === 'CERT_VENCIDO') {
-      result = result.filter(
-        (i) => computeCertStatus(toEmpresaRow(i)) === 'VENCIDO'
-      );
-    } else if (opts.preset?.type === 'CRED_VALIDAR') {
-      result = result.filter(
-        (i) => toEmpresaRow(i).possui_credenciais && needsRevalidateCredentials(toEmpresaRow(i))
-      );
-    } else if (opts.preset?.type === 'OPERACIONAIS') {
-      result = result.filter((i) =>
-        ['OPERACIONAL', 'ATENCAO'].includes(
-          computeCompanyStatusGeral(toEmpresaRow(i))
-        )
-      );
-    }
-    return result;
-  }
-
   onFilterPresetRequested(preset: EmpresasFilterPreset): void {
     this.presetActive =
       this.presetActive?.type === preset.type ? null : preset;
+    this.page = 1;
+    this.carregarEmpresas();
     this.cdr.markForCheck();
   }
 
   /** Retorna info de exibição do certificado (validade + dias restantes/vencidos) */
   getCertDisplayInfo(item: EmpresaListagemItem) {
-    const info = getCertDisplayInfoUtil(toEmpresaRow(item));
-    return info ? { label: info.label, diasText: info.diasText, vencido: info.vencido, certStatus: info.certStatus } : null;
+    const info = getCertDisplayInfoUtil(item);
+    return info
+      ? {
+          label: info.label,
+          diasText: info.diasText,
+          vencido: info.vencido,
+          certStatus: info.certStatus,
+        }
+      : null;
   }
 
   getStatusGeral(item: EmpresaListagemItem) {
-    return computeCompanyStatusGeral(toEmpresaRow(item));
+    return displayStatusGeral(item);
   }
 
   getStatusReason(item: EmpresaListagemItem) {
-    return computeStatusReason(toEmpresaRow(item));
+    return displayStatusReason(item);
   }
 
-  /** Retorna status geral e motivo juntos (evita múltiplos toEmpresaRow). */
+  /** Status e motivo vindos da API (sem recálculo local). */
   getStatusInfo(item: EmpresaListagemItem): { status: string; reason: string } {
-    const row = toEmpresaRow(item);
     return {
-      status: computeCompanyStatusGeral(row),
-      reason: computeStatusReason(row),
+      status: displayStatusGeral(item),
+      reason: displayStatusReason(item),
     };
   }
 
@@ -276,9 +410,9 @@ export class EmpresasComponent implements OnInit {
     };
   }
 
-  /** Contagem exibida: quando preset ativo, mostra total filtrado. */
+  /** Contagem exibida: total retornado pela API (já com segment + filtros). */
   get displayedCount(): number {
-    return this.presetActive ? this.filteredEmpresas.length : this.empresasCount;
+    return this.empresasCount;
   }
 
   getContabilidadeLabel(): string {
@@ -290,6 +424,38 @@ export class EmpresasComponent implements OnInit {
   onContabilidadeSelect(id: number | null): void {
     this.contabilidadeId = id;
     this.contabDropdownOpen = false;
+    this.page = 1;
+    this.carregarEmpresas();
+    this.carregarSummary();
+  }
+
+  // Paginação
+  get totalPages(): number {
+    return Math.max(1, Math.ceil(this.totalCount / this.pageSize));
+  }
+
+  get pageNumbers(): number[] {
+    const total = this.totalPages;
+    const current = this.page;
+    const pages: number[] = [];
+    const delta = 2;
+    const start = Math.max(1, current - delta);
+    const end = Math.min(total, current + delta);
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  }
+
+  onPageChange(newPage: number): void {
+    if (newPage < 1 || newPage > this.totalPages || newPage === this.page) return;
+    this.page = newPage;
+    this.carregarEmpresas();
+  }
+
+  onPageSizeChange(newSize: number): void {
+    this.pageSize = newSize;
+    this.page = 1;
     this.carregarEmpresas();
   }
 
@@ -300,42 +466,99 @@ export class EmpresasComponent implements OnInit {
       this.chipsAtivos.add(chipId);
     }
     this.chipsAtivos = new Set(this.chipsAtivos);
+    this.page = 1;
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   removeChip(chipId: string): void {
     this.chipsAtivos.delete(chipId);
     this.chipsAtivos = new Set(this.chipsAtivos);
+    this.page = 1;
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   clearAllChips(): void {
     this.chipsAtivos.clear();
     this.chipsAtivos = new Set(this.chipsAtivos);
+    this.page = 1;
     this.carregarEmpresas();
+    this.carregarSummary();
   }
 
   isChipAtivo(chipId: string): boolean {
     return this.chipsAtivos.has(chipId);
   }
 
-  private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
   onSearchChange(): void {
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     this.searchDebounceTimer = setTimeout(() => {
+      this.page = 1;
       this.carregarEmpresas();
+      this.carregarSummary();
       this.searchDebounceTimer = null;
     }, 350);
   }
 
   onExportar(): void {
-    console.log('[Empresas] Exportar clicado');
+    this.exportOpen = !this.exportOpen;
+    this.sortOpen = false;
+    this.cdr.markForCheck();
+  }
+
+  exportOpen = false;
+  exportando = false;
+
+  onExportReport(
+    report: 'NOT_ELIGIBLE' | 'ALL_PENDING' | 'FILTERED'
+  ): void {
+    if (this.exportando) return;
+    this.exportOpen = false;
+    this.exportando = true;
+    this.cdr.markForCheck();
+
+    const listParams = this.buildListParams();
+    this.empresasService
+      .exportar({
+        report,
+        search: listParams.search,
+        contabilidade_id: listParams.contabilidade_id,
+        has_cert: listParams.has_cert,
+        has_cred: listParams.has_cred,
+        sem_cert: listParams.sem_cert,
+        sem_cred: listParams.sem_cred,
+        sem_metodo: listParams.sem_metodo,
+        segment: listParams.segment,
+        sort: listParams.sort,
+        order: listParams.order,
+      })
+      .subscribe({
+        next: ({ blob, filename }) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+          this.toast.success('Exportação concluída');
+          this.exportando = false;
+          this.cdr.markForCheck();
+        },
+        error: (err: unknown) => {
+          this.toast.error(
+            err instanceof Error ? err.message : 'Erro ao exportar'
+          );
+          this.exportando = false;
+          this.cdr.markForCheck();
+        },
+      });
   }
 
   onSortChange(label: string): void {
     this.sortLabel = label;
     this.sortOpen = false;
+    this.page = 1;
     this.carregarEmpresas();
   }
 
@@ -356,6 +579,7 @@ export class EmpresasComponent implements OnInit {
   onCadastroSaved(): void {
     this.cadastroAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
@@ -372,6 +596,7 @@ export class EmpresasComponent implements OnInit {
   onImportCertificadosLoteConcluido(): void {
     this.importCertificadosLoteAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
@@ -388,6 +613,7 @@ export class EmpresasComponent implements OnInit {
   onImportCredenciaisConcluido(): void {
     this.importCredenciaisModalAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
@@ -406,12 +632,13 @@ export class EmpresasComponent implements OnInit {
   onValidacaoConcluida(): void {
     this.validacaoModalAberto = false;
     this.carregarEmpresas();
+    this.carregarSummary();
     this.cdr.markForCheck();
   }
 
-  /** Empresas para o modal de validação (filtradas). */
+  /** Empresas para o modal de validação (página atual já filtrada pela API). */
   get empresasParaValidacao() {
-    return this.filteredEmpresas.map((e) => ({
+    return this.listaEmpresas.map((e) => ({
       id: parseInt(e.id, 10),
       cnpj: e.cnpj,
       razao_social: e.razao_social,
@@ -717,6 +944,10 @@ export class EmpresasComponent implements OnInit {
     let changed = false;
     if (this.sortOpen) {
       this.sortOpen = false;
+      changed = true;
+    }
+    if (this.exportOpen) {
+      this.exportOpen = false;
       changed = true;
     }
     if (this.contabDropdownOpen) {

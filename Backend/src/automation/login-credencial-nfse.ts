@@ -5,6 +5,16 @@
  */
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
+import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
+import {
+  aplicarZoomPaginaNoContexto,
+  appendContainerChromiumArgs,
+} from './playwright-config';
+import {
+  assertPageUsable,
+  gotoWithRetry,
+  safePageTitle,
+} from './playwright-nav';
 import type { ResultadoAutenticacao } from './playwright-nfse';
 import { NFSeAutenticacaoError } from './playwright-nfse';
 
@@ -14,7 +24,11 @@ const BASE_URL = 'https://www.nfse.gov.br/EmissorNacional/';
 export interface OpcoesLoginCredencial {
   headless?: boolean;
   timeout?: number;
+  /** Viewport da página (tamanho do conteúdo — NÃO a resolução do monitor). */
   viewport?: { width: number; height: number };
+  /** Args extras do Chromium (ex.: --window-size / --window-position do slot). */
+  launchArgs?: string[];
+  onLoginPageReady?: () => void;
 }
 
 /**
@@ -29,7 +43,13 @@ export async function abrirDashboardNfseComCredencial(
 ): Promise<ResultadoAutenticacao> {
   const headless = opcoes.headless ?? true;
   const timeout = opcoes.timeout ?? 120000;
-  const viewport = opcoes.viewport ?? { width: 1920, height: 1080 };
+  // Fallback de conteúdo — nunca usar resolução Full HD do monitor aqui
+  const viewport = opcoes.viewport ?? { width: 769, height: 680 };
+  const launchArgs = [
+    '--disable-web-security',
+    '--disable-features=IsolateOrigins,site-per-process',
+    ...(opcoes.launchArgs ?? []),
+  ];
 
   const docLimpo = documento.replace(/[.\/\-\s]/g, '');
   const isCpf = docLimpo.length === 11;
@@ -41,7 +61,7 @@ export async function abrirDashboardNfseComCredencial(
 
   const logs: string[] = [];
   const log = (msg: string) => {
-    logger.info(msg);
+    logger.debug(msg);
     logs.push(msg);
   };
 
@@ -55,7 +75,7 @@ export async function abrirDashboardNfseComCredencial(
 
     browser = await chromium.launch({
       headless,
-      args: ['--disable-web-security', '--disable-features=IsolateOrigins,site-per-process'],
+      args: appendContainerChromiumArgs(launchArgs),
     });
 
     context = await browser.newContext({
@@ -66,13 +86,20 @@ export async function abrirDashboardNfseComCredencial(
       acceptDownloads: true,
     });
 
+    await aplicarZoomPaginaNoContexto(context);
+
     page = await context.newPage();
     page.setDefaultTimeout(timeout);
     log('Página criada');
 
     log(`Acessando portal NFSe Nacional: ${BASE_URL}`);
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForTimeout(1000);
+    await gotoWithRetry(page, BASE_URL, {
+      timeout: PLAYWRIGHT_TIMEOUT,
+      waitUntil: 'domcontentloaded',
+      log,
+    });
+    assertPageUsable(page);
+    await page.waitForTimeout(1000).catch(() => undefined);
     log(`Página carregada: ${page.url()}`);
 
     const selectorsDocumento = [
@@ -114,6 +141,7 @@ export async function abrirDashboardNfseComCredencial(
       throw new NFSeAutenticacaoError('Portal NFSe: campos de documento/senha não encontrados');
     }
 
+    opcoes.onLoginPageReady?.();
     log('Preenchendo credenciais...');
     await inputCnpj.fill(docLimpo, { timeout: 5000 });
     await inputSenha.fill(senha, { timeout: 5000 });
@@ -127,8 +155,10 @@ export async function abrirDashboardNfseComCredencial(
       log('Clique em Entrar realizado');
     }
 
-    await page.waitForTimeout(5000);
+    assertPageUsable(page);
+    await page.waitForTimeout(5000).catch(() => undefined);
 
+    assertPageUsable(page);
     const urlAtual = page.url();
 
     const textoPagina = await page.locator('body').innerText().catch(() => '');
@@ -188,7 +218,7 @@ export async function abrirDashboardNfseComCredencial(
     }
 
     log('Autenticação por credencial bem-sucedida!');
-    const tituloPagina = await page.title().catch(() => '');
+    const tituloPagina = await safePageTitle(page);
 
     return {
       sucesso: true,

@@ -10,6 +10,7 @@ import { environment } from '../../environments/environment';
 import type {
   EmpresaListagemResponse,
   EmpresaDetalhes,
+  EmpresasSummaryResponse,
   CadastroCredencialPayload,
   CadastroResult,
   PreviewCertificadosResponse,
@@ -46,6 +47,13 @@ export class EmpresasUnificadoService {
     sem_cert?: boolean;
     sem_cred?: boolean;
     sem_metodo?: boolean;
+    /** Segmento operacional dos cards (API). */
+    segment?:
+      | 'ALL'
+      | 'CERT_EXPIRED'
+      | 'CREDENTIAL_REVALIDATION_REQUIRED'
+      | 'OPERATIONAL'
+      | 'NOT_ELIGIBLE';
     page?: number;
     limit?: number;
     sort?: string;
@@ -75,6 +83,9 @@ export class EmpresasUnificadoService {
     }
     if (params.sem_metodo) {
       httpParams = httpParams.set('sem_metodo', 'true');
+    }
+    if (params.segment && params.segment !== 'ALL') {
+      httpParams = httpParams.set('segment', params.segment);
     }
     if (params.sort) {
       httpParams = httpParams.set('sort', params.sort);
@@ -233,6 +244,134 @@ export class EmpresasUnificadoService {
           const d = unwrap(r);
           if (!d) throw new Error('Resposta vazia');
           return d;
+        }),
+        catchError(this.handleError)
+      );
+  }
+
+  getSummary(params?: {
+    contabilidade_id?: number | null;
+    search?: string;
+    has_cert?: boolean;
+    has_cred?: boolean;
+    sem_cert?: boolean;
+    sem_cred?: boolean;
+    sem_metodo?: boolean;
+  }): Observable<EmpresasSummaryResponse> {
+    let httpParams = new HttpParams();
+    if (params?.contabilidade_id != null && params.contabilidade_id > 0) {
+      httpParams = httpParams.set('contabilidade_id', String(params.contabilidade_id));
+    }
+    if (params?.search?.trim()) {
+      httpParams = httpParams.set('search', params.search.trim());
+    }
+    if (params?.has_cert != null) {
+      httpParams = httpParams.set('has_cert', String(params.has_cert));
+    }
+    if (params?.has_cred != null) {
+      httpParams = httpParams.set('has_cred', String(params.has_cred));
+    }
+    if (params?.sem_cert) {
+      httpParams = httpParams.set('sem_cert', 'true');
+    }
+    if (params?.sem_cred) {
+      httpParams = httpParams.set('sem_cred', 'true');
+    }
+    if (params?.sem_metodo) {
+      httpParams = httpParams.set('sem_metodo', 'true');
+    }
+    const defaultSummary: EmpresasSummaryResponse = {
+      total_empresas: 0,
+      certificados_vencidos: 0,
+      credenciais_para_validar: 0,
+      operacionais: 0,
+    };
+    return this.http
+      .get<ApiSuccess<EmpresasSummaryResponse> | EmpresasSummaryResponse>(
+        `${this.baseUrl}/empresas/summary`,
+        { params: httpParams }
+      )
+      .pipe(
+        map((r) => {
+          const d = (r as ApiSuccess<EmpresasSummaryResponse>)?.data ?? (r as EmpresasSummaryResponse);
+          if (d && typeof d === 'object' && 'total_empresas' in d) {
+            return {
+              total_empresas: Number(d.total_empresas ?? 0),
+              certificados_vencidos: Number(d.certificados_vencidos ?? 0),
+              credenciais_para_validar: Number(d.credenciais_para_validar ?? 0),
+              operacionais: Number(d.operacionais ?? 0),
+            };
+          }
+          return defaultSummary;
+        }),
+        catchError(this.handleError)
+      );
+  }
+
+  /**
+   * Exporta relatório Excel (todas as empresas do escopo, não só a página).
+   * Retorna o blob e o nome sugerido pelo Content-Disposition.
+   */
+  exportar(params: {
+    report: 'NOT_ELIGIBLE' | 'ALL_PENDING' | 'FILTERED';
+    search?: string;
+    contabilidade_id?: number | null;
+    has_cert?: boolean;
+    has_cred?: boolean;
+    sem_cert?: boolean;
+    sem_cred?: boolean;
+    sem_metodo?: boolean;
+    segment?:
+      | 'ALL'
+      | 'CERT_EXPIRED'
+      | 'CREDENTIAL_REVALIDATION_REQUIRED'
+      | 'OPERATIONAL'
+      | 'NOT_ELIGIBLE';
+    sort?: string;
+    order?: 'asc' | 'desc';
+  }): Observable<{ blob: Blob; filename: string }> {
+    let httpParams = new HttpParams()
+      .set('report', params.report)
+      .set('format', 'xlsx');
+    if (params.search?.trim()) {
+      httpParams = httpParams.set('search', params.search.trim());
+    }
+    if (params.contabilidade_id != null && params.contabilidade_id > 0) {
+      httpParams = httpParams.set(
+        'contabilidade_id',
+        String(params.contabilidade_id)
+      );
+    }
+    if (params.has_cert != null) {
+      httpParams = httpParams.set('has_cert', String(params.has_cert));
+    }
+    if (params.has_cred != null) {
+      httpParams = httpParams.set('has_cred', String(params.has_cred));
+    }
+    if (params.sem_cert) httpParams = httpParams.set('sem_cert', 'true');
+    if (params.sem_cred) httpParams = httpParams.set('sem_cred', 'true');
+    if (params.sem_metodo) httpParams = httpParams.set('sem_metodo', 'true');
+    if (params.segment && params.segment !== 'ALL') {
+      httpParams = httpParams.set('segment', params.segment);
+    }
+    if (params.sort) httpParams = httpParams.set('sort', params.sort);
+    if (params.order) httpParams = httpParams.set('order', params.order);
+
+    return this.http
+      .get(`${this.baseUrl}/empresas/export`, {
+        params: httpParams,
+        responseType: 'blob',
+        observe: 'response',
+      })
+      .pipe(
+        map((resp) => {
+          const disposition = resp.headers.get('Content-Disposition') ?? '';
+          const match = /filename="?([^";]+)"?/i.exec(disposition);
+          const filename =
+            match?.[1]?.trim() ||
+            `empresas_export_${params.report.toLowerCase()}.xlsx`;
+          const blob = resp.body ?? new Blob();
+          return { blob, filename };
         }),
         catchError(this.handleError)
       );

@@ -28,6 +28,15 @@ export async function obterPorId(id: number): Promise<Execucao | null> {
   });
 }
 
+export async function obterUltimaPorEmpresa(empresaId: number): Promise<Execucao | null> {
+  const list = await prisma.execucao.findMany({
+    where: { empresaId },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+  });
+  return list[0] ?? null;
+}
+
 export async function criar(data: {
   empresaId: number;
   cnpj?: string;

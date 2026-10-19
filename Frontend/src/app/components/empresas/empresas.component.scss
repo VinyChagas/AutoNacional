@@ -921,6 +921,100 @@ $chip-border-inactive: rgba(15, 23, 42, 0.12);
   }
 }
 
+// ============================================================================
+// 6) Paginação
+// ============================================================================
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--border-color);
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.pagination-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pagination-select {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
+}
+
+.pagination-total {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+
+  &:hover:not(:disabled) {
+    border-color: rgba(79, 70, 229, 0.4);
+    background: rgba(79, 70, 229, 0.06);
+    color: var(--primary);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.pagination-page {
+  min-width: 32px;
+}
+
+.pagination-page-active {
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  color: white !important;
+
+  &:hover:not(:disabled) {
+    background: var(--primary) !important;
+    color: white !important;
+  }
+}
+
 // Linha expandida
 .row-expanded {
   background: rgba(79, 70, 229, 0.06);

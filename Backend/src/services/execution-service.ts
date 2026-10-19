@@ -2,9 +2,11 @@
  * Service de orquestração de execuções de automação NFSe.
  *
  * Gerencia fila de execuções e coordena: playwright_nfse → processar_notas → salvamento.
+ * Padrão producer/worker: endpoint apenas enfileira; browser launch ocorre APENAS no worker.
  */
 
 import PQueue from 'p-queue';
+import { sleep } from '../utils/sleep';
 import { Page, Browser } from 'playwright';
 import { getLogger } from '../infrastructure/logger';
 import {
@@ -17,19 +19,32 @@ import * as empresasRepo from '../repositories/empresas';
 import * as settingsRepo from '../repositories/settings';
 import { abrirDashboardNfse, NFSeAutenticacaoError } from '../automation/playwright-nfse';
 import type { CertificadoEmMemoria } from '../automation/playwright-nfse';
-import { setDownloadsBasePath, setMinActionDelayMs } from '../automation/processar-notas-competencia';
+import { setMinActionDelayMs } from '../automation/processar-notas-competencia';
 import {
   processarTabelaEmitidas,
   processarTabelaRecebidas,
   preencherDatasEFiltrar,
 } from '../automation/processar-notas-competencia';
 import { formatarMesExecucaoParaPasta } from '../automation/download-manager';
+import { resolveStoragePath } from '../utils/path-resolve';
 import { abrirDashboardNfseComCredencial } from '../automation/login-credencial-nfse';
+import { assertPageUsable, clicarMenuNotasEAguardar, isTargetClosedError } from '../automation/playwright-nav';
 import * as credenciaisRepo from '../repositories/credenciais';
 import { emitirEventoExecucao } from './execution-events.service';
 import { persistirExecution } from './automation-metrics.service';
+import { cancelByExecution } from './manual-captcha.service';
+import type { CaptchaMode } from '../automation/captcha/types';
+import {
+  captchaWindowManager,
+  getVisualSlotCapacityFromSettings,
+  type ReservedBrowserSlot,
+} from '../automation/captcha-window-manager';
+import { CAPTCHA_WINDOW_LAYOUT_ENABLED } from '../infrastructure/config';
 
 const logger = getLogger('execution-service');
+
+/** Impede novos jobs e orienta o encerramento das execuções já enfileiradas. */
+let encerrandoFila = false;
 
 /** DD/MM/YYYY -> YYYY-MM */
 function competenciaFromDataInicio(dataInicio: string): string {
@@ -37,31 +52,6 @@ function competenciaFromDataInicio(dataInicio: string): string {
   if (m) return `${m[3]}-${m[2]}`;
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
-/** Resolve viewport a partir das settings */
-function resolveViewport(config: Awaited<ReturnType<typeof settingsRepo.obterConfiguracoes>>): {
-  width: number;
-  height: number;
-} {
-  if (
-    config?.viewportPreset === 'CUSTOM' &&
-    config?.viewportWidth &&
-    config?.viewportHeight
-  ) {
-    return { width: config.viewportWidth, height: config.viewportHeight };
-  }
-  switch (config?.viewportPreset) {
-    case 'DESKTOP_1366x768':
-      return { width: 1366, height: 768 };
-    case 'HD':
-      return { width: 1280, height: 720 };
-    case 'QHD':
-      return { width: 2560, height: 1440 };
-    case 'FULLHD':
-    default:
-      return { width: 1920, height: 1080 };
-  }
 }
 
 const RESULTADOS = [
@@ -80,6 +70,8 @@ interface ExecucaoInfo {
   periodoFim: string;
   tipo: string;
   headless: boolean;
+  baixarPdf: boolean;
+  captchaMode: CaptchaMode;
   execucaoDbId: number;
   batchId?: string;
   status: string;
@@ -94,6 +86,8 @@ interface ExecucaoInfo {
   tipoAutenticacao?: TipoAutenticacao;
   page?: Page;
   browser?: Browser;
+  /** Slot visual reservado antes do launch (liberado ao fechar o browser). */
+  windowSlot?: ReservedBrowserSlot;
   startedAt?: Date;
 }
 
@@ -123,19 +117,62 @@ export async function obterCertificadoPorCnpj(
   return certificateLoader(cnpj);
 }
 
+const BROWSER_LAUNCH_DELAY_MS_DEFAULT = 150;
+
 /**
- * Obtém o limite de concorrência das configurações.
+ * Obtém delay entre enfileiramentos (configurável, padrão 150ms).
  */
+export async function obterDelayEnfileiramento(): Promise<number> {
+  const config = await settingsRepo.obterConfiguracoes();
+  return config?.browserLaunchDelayMs ?? BROWSER_LAUNCH_DELAY_MS_DEFAULT;
+}
+
+/**
+ * Calcula e aplica concurrency_final =
+ * min(padrão, máximo das settings, slots visuais, totalEmpresas).
+ *
+ * Assim, com 10 na fila e 8 slots/navegadores, só 8 rodam; as demais
+ * esperam na PQueue até um navegador finalizar e liberar o slot.
+ */
+export async function configurarConcorrenciaParaBatch(totalEmpresas: number): Promise<number> {
+  const config = await settingsRepo.obterConfiguracoes();
+  const userConfigured = config?.defaultConcurrentBrowsers ?? 3;
+  const maxFromSettings = config?.maxConcurrentBrowsers ?? 5;
+  let limite = Math.min(userConfigured, maxFromSettings);
+
+  if (CAPTCHA_WINDOW_LAYOUT_ENABLED) {
+    const visualSlots = await getVisualSlotCapacityFromSettings();
+    limite = Math.min(limite, visualSlots);
+  }
+
+  const concurrencyFinal = Math.max(1, Math.min(limite, totalEmpresas));
+  fila.concurrency = concurrencyFinal;
+  logger.info(
+    {
+      totalEmpresas,
+      defaultConcurrentBrowsers: userConfigured,
+      maxConcurrentBrowsers: maxFromSettings,
+      concurrencyFinal,
+    },
+    'Concorrência do lote aplicada (settings + slots visuais)'
+  );
+  return concurrencyFinal;
+}
+
 async function obterLimiteConcorrencia(): Promise<number> {
   const config = await settingsRepo.obterConfiguracoes();
+  let limite = 3;
   if (config) {
-    let limite = config.defaultConcurrentBrowsers ?? 3;
+    limite = config.defaultConcurrentBrowsers ?? 3;
     if (config.maxConcurrentBrowsers && limite > config.maxConcurrentBrowsers) {
       limite = config.maxConcurrentBrowsers;
     }
-    return limite;
   }
-  return 3;
+  if (CAPTCHA_WINDOW_LAYOUT_ENABLED) {
+    const visualSlots = await getVisualSlotCapacityFromSettings();
+    limite = Math.min(limite, visualSlots);
+  }
+  return Math.max(1, limite);
 }
 
 /**
@@ -163,10 +200,20 @@ export async function adicionarExecucao(
   headless?: boolean,
   certificado?: CertificadoEmMemoria,
   batchId?: string,
-  tipoAutenticacao?: TipoAutenticacao
+  tipoAutenticacao?: TipoAutenticacao,
+  baixarPdf: boolean = true,
+  captchaMode: CaptchaMode = 'TWO_CAPTCHA'
 ): Promise<number> {
+  if (encerrandoFila) {
+    throw new Error('Servidor em encerramento; novas execuções não são aceitas');
+  }
+
   const config = await settingsRepo.obterConfiguracoes();
-  const headlessFinal = headless ?? config?.headless ?? PLAYWRIGHT_HEADLESS;
+  // Modo MANUAL exige navegador visível para o operador resolver o hCaptcha.
+  const headlessFinal =
+    captchaMode === 'MANUAL'
+      ? false
+      : headless ?? config?.headless ?? PLAYWRIGHT_HEADLESS;
 
   const exec = await execucoesRepo.criar({
     empresaId,
@@ -186,6 +233,8 @@ export async function adicionarExecucao(
     periodoFim: dataFim,
     tipo: tipo || 'ambas',
     headless: headlessFinal,
+    baixarPdf,
+    captchaMode,
     execucaoDbId: exec.id,
     batchId,
     status: 'pendente',
@@ -200,12 +249,13 @@ export async function adicionarExecucao(
     tipoAutenticacao: tipoAuth,
   });
 
-  // Atualiza concorrência da fila com valor das configurações (Máx. e Padrão de navegadores)
-  const limite = await obterLimiteConcorrencia();
-  fila.concurrency = limite;
+  if (!batchId) {
+    fila.concurrency = Math.max(fila.concurrency, await obterLimiteConcorrencia());
+  }
 
   fila.add(async () => {
-    await executarFluxoCompleto(
+    try {
+      await executarFluxoCompleto(
       empresaId,
       cnpj,
       dataInicio,
@@ -214,11 +264,74 @@ export async function adicionarExecucao(
       headlessFinal,
       exec.id,
       certificado,
-      tipoAuth
+      tipoAuth,
+      baixarPdf
     );
+    } catch (e) {
+      logger.error({ err: e, empresaId }, '[worker] Erro não tratado em executarFluxoCompleto');
+    }
   });
 
   return exec.id;
+}
+
+/**
+ * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).
+ * @param batchId - UUID do batch
+ * @param empresaIdsFallback - Se fornecido, para cada empresa_id não encontrado em memória, busca última execução no DB
+ */
+export async function obterStatusBatch(
+  batchId: string,
+  empresaIdsFallback?: number[]
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  const seenEmpresas = new Set<number>();
+
+  for (const [, info] of execucoesAtivas) {
+    if (info.batchId === batchId) {
+      seenEmpresas.add(info.empresaId);
+      out.push({
+        empresa_id: String(info.empresaId),
+        cnpj: info.cnpj,
+        batch_id: info.batchId,
+        status: info.status,
+        etapa_atual: info.etapaAtual,
+        progresso: info.progresso,
+        logs: info.logs,
+        mensagem: info.mensagem,
+        qtd_notas_emitidas: info.qtdNotasEmitidas,
+        qtd_notas_recebidas: info.qtdNotasRecebidas,
+        qtd_notas_canceladas: info.qtdNotasCanceladas,
+        resultado_final: info.resultadoFinal,
+        tipo_autenticacao: info.tipoAutenticacao,
+      });
+    }
+  }
+
+  if (empresaIdsFallback && empresaIdsFallback.length > 0) {
+    for (const empId of empresaIdsFallback) {
+      if (seenEmpresas.has(empId)) continue;
+      const ultima = await execucoesRepo.obterUltimaPorEmpresa(empId);
+      if (ultima && (ultima.status === 'concluido' || ultima.status === 'falhou')) {
+        out.push({
+          empresa_id: String(empId),
+          cnpj: ultima.cnpj ?? '',
+          batch_id: batchId,
+          status: ultima.status,
+          etapa_atual: ultima.etapaAtual,
+          progresso: ultima.progresso,
+          logs: [],
+          mensagem: ultima.status === 'falhou' ? (ultima.mensagemErro ?? '') : (ultima.mensagem ?? ''),
+          qtd_notas_emitidas: ultima.qtdNotasEmitidas,
+          qtd_notas_recebidas: ultima.qtdNotasRecebidas,
+          qtd_notas_canceladas: 0,
+          resultado_final: ultima.resultadoFinal,
+        });
+      }
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -252,6 +365,200 @@ const fila = new PQueue({
   autoStart: true,
 });
 
+export function obterEstadoFila(): {
+  pending: number;
+  running: number;
+  shuttingDown: boolean;
+} {
+  return {
+    pending: fila.size,
+    running: fila.pending,
+    shuttingDown: encerrandoFila,
+  };
+}
+
+/**
+ * Pausa a fila, descarta jobs ainda não iniciados e fecha browsers em andamento.
+ * O fluxo existente de finalização grava a falha das execuções que já tinham começado.
+ */
+export async function pararFilaExecucao(timeoutMs = 20_000): Promise<void> {
+  encerrandoFila = true;
+  fila.pause();
+  fila.clear();
+
+  const ativas = [...execucoesAtivas.values()];
+  for (const info of ativas) {
+    if (info.status !== 'pendente') continue;
+    try {
+      await execucoesRepo.atualizar(info.execucaoDbId, {
+        status: 'falhou',
+        etapaAtual: 'encerramento',
+        mensagem: 'Execução interrompida: processo encerrando',
+        mensagemErro: 'Encerramento do processo antes do início da automação',
+        dataFim: new Date(),
+      });
+    } catch (err) {
+      logger.error(
+        { err, execucaoId: info.execucaoDbId },
+        'Falha ao marcar execução pendente como interrompida'
+      );
+    }
+    execucoesAtivas.delete(String(info.empresaId));
+  }
+
+  await Promise.all(
+    [...execucoesAtivas.values()].map(async (info) => {
+      try {
+        await info.page?.close().catch(() => undefined);
+        await info.browser?.close().catch(() => undefined);
+      } catch {
+        /* o finally de cada execução fecha o que restar */
+      }
+    })
+  );
+
+  await Promise.race([
+    fila.onIdle(),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+
+  logger.info(obterEstadoFila(), 'Fila de execução parada');
+}
+
+function logWorker(empresaId: number, msg: string): void {
+  logger.debug({ empresaId }, `[worker] ${msg}`);
+}
+
+function logFinalize(execucaoDbId: number, msg: string): void {
+  logger.debug({ execucaoDbId }, `[finalize] ${msg}`);
+}
+
+interface FinalizarExecucaoParams {
+  execucaoId: number;
+  empresaId: number;
+  cnpj: string;
+  batchId?: string;
+  statusFinal: 'concluido' | 'falhou';
+  message: string;
+  contagens: { emitidas: number; recebidas: number; canceladas: number };
+  resultado_final: string;
+  page?: Page;
+  browser?: Browser;
+  windowSlot?: ReservedBrowserSlot;
+  startedAt?: Date;
+  persistirMetrica: (status: 'OK' | 'ERRO', erroResumo?: string) => void;
+}
+
+/** Status finais que indicam que a execução já foi finalizada no DB. */
+const STATUS_FINAIS_DB = new Set(['concluido', 'falhou']);
+
+/** IDs já finalizados (evita dupla chamada em finally + early return). */
+const finalizadosIds = new Set<number>();
+
+/**
+ * Finalização idempotente: atualiza DB, emite SSE, remove de execucoesAtivas, fecha Playwright.
+ * Se já foi chamada para este execucaoId, skip (evita race e dupla emissão SSE).
+ */
+async function finalizarExecucao(params: FinalizarExecucaoParams): Promise<void> {
+  const { execucaoId } = params;
+  if (finalizadosIds.has(execucaoId)) {
+    logFinalize(execucaoId, 'já finalizado, skip idempotente');
+    return;
+  }
+  finalizadosIds.add(execucaoId);
+
+  // Cancela captchas manuais pendentes desta execução (Central)
+  cancelByExecution(String(execucaoId), 'execution_finished');
+
+  const {
+    empresaId,
+    cnpj,
+    batchId,
+    statusFinal,
+    message,
+    contagens,
+    resultado_final,
+    page,
+    browser,
+    windowSlot,
+    startedAt,
+    persistirMetrica,
+  } = params;
+
+  const key = String(empresaId);
+  const info = execucoesAtivas.get(key);
+  const slotToRelease = windowSlot ?? info?.windowSlot;
+
+  const sseStatus: 'OK' | 'ERRO' = statusFinal === 'concluido' ? 'OK' : 'ERRO';
+  const msgResumo = message.length > 80 ? message.slice(0, 77) + '...' : message;
+
+  try {
+    const existente = await execucoesRepo.obterPorId(execucaoId);
+    if (existente && STATUS_FINAIS_DB.has(existente.status)) {
+      logFinalize(execucaoId, `já finalizado no DB (${existente.status}), garantindo consistência`);
+    } else {
+      await execucoesRepo.atualizar(execucaoId, {
+        status: statusFinal,
+        etapaAtual: 'finalizacao',
+        progresso: statusFinal === 'concluido' ? 100 : 0,
+        mensagem: message,
+        mensagemErro: statusFinal === 'falhou' ? message.slice(0, 500) : undefined,
+        dataFim: new Date(),
+        qtdNotasEmitidas: contagens.emitidas,
+        qtdNotasRecebidas: contagens.recebidas,
+        resultadoFinal: resultado_final,
+      });
+      logFinalize(execucaoId, `DB UPDATED ${statusFinal}`);
+    }
+
+    emitirEventoExecucao(batchId, {
+      type: 'execution:finished',
+      empresa_id: key,
+      status: sseStatus,
+      message: statusFinal === 'falhou' ? msgResumo : undefined,
+      qtd_emitidas: contagens.emitidas,
+      qtd_recebidas: contagens.recebidas,
+      qtd_canceladas: contagens.canceladas,
+      resultado_final,
+    });
+    logFinalize(execucaoId, 'SSE FINISHED EMITTED');
+
+    persistirMetrica(sseStatus, statusFinal === 'falhou' ? (message?.slice(0, 200) ?? undefined) : undefined);
+
+    // Log único por empresa: sucesso ou falha (evita poluição com logs intermediários)
+    if (statusFinal === 'concluido') {
+      logger.info(
+        { empresaId, cnpj, emitidas: contagens.emitidas, recebidas: contagens.recebidas },
+        'Empresa concluída com sucesso'
+      );
+    } else {
+      logger.error({ empresaId, cnpj, err: message }, 'Empresa falhou');
+    }
+  } catch (e) {
+    logger.error({ err: e, execucaoId }, '[finalize] Erro ao atualizar DB/emitir SSE');
+  } finally {
+    execucoesAtivas.delete(key);
+    logFinalize(execucaoId, 'REMOVED ACTIVE');
+
+    try {
+      if (page) await page.close().catch(() => {});
+      if (browser) await browser.close().catch(() => {});
+    } catch {
+      /* ignore */
+    } finally {
+      // Libera o slot visual somente após o navegador ser fechado
+      try {
+        slotToRelease?.release();
+      } catch {
+        /* ignore */
+      }
+      if (info) info.windowSlot = undefined;
+    }
+  }
+}
+
 async function executarFluxoCompleto(
   empresaId: number,
   cnpj: string,
@@ -261,28 +568,68 @@ async function executarFluxoCompleto(
   headless: boolean,
   execucaoDbId: number,
   certificadoFornecido?: CertificadoEmMemoria,
-  tipoAutenticacao: TipoAutenticacao = 'certificado'
+  tipoAutenticacao: TipoAutenticacao = 'certificado',
+  baixarPdf: boolean = true
 ): Promise<void> {
   const key = String(empresaId);
   const info = execucoesAtivas.get(key);
   if (!info) return;
 
+  if (encerrandoFila) {
+    info.status = 'falhou';
+    info.mensagem = 'Execução interrompida: processo encerrando';
+    info.resultadoFinal = 'ERRO';
+    await finalizarExecucao({
+      execucaoId: execucaoDbId,
+      empresaId,
+      cnpj,
+      batchId: info.batchId,
+      statusFinal: 'falhou',
+      message: info.mensagem,
+      contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
+      resultado_final: 'ERRO',
+      persistirMetrica: () => undefined,
+    });
+    return;
+  }
+
+  logWorker(empresaId, 'START');
   const startedAt = new Date();
   info.startedAt = startedAt;
+  const batchId = info.batchId;
+  let persistirMetrica: (status: 'OK' | 'ERRO', erroResumo?: string) => void = () => {};
+
+  try {
+  const razaoSocial = await obterNomeEmpresa(cnpj);
+  const metodo: 'CERTIFICADO' | 'CREDENCIAL' = tipoAutenticacao === 'credenciais' ? 'CREDENCIAL' : 'CERTIFICADO';
+
+  emitirEventoExecucao(batchId, {
+    type: 'execution:started',
+    empresa_id: key,
+    cnpj,
+    razao_social: razaoSocial,
+    metodo,
+  });
+
   const competencia = competenciaFromDataInicio(dataInicio);
   const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
   const contabilidadeId = (empresaComContab as { contabilidadeId?: number | null })?.contabilidadeId ?? null;
 
   const adicionarLog = (msg: string) => {
     info.logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-    logger.info(`Empresa ${empresaId}: ${msg}`);
+    logger.debug({ empresaId }, msg);
   };
 
-  const batchId = info.batchId;
-  const razaoSocial = await obterNomeEmpresa(cnpj);
-  const metodo: 'CERTIFICADO' | 'CREDENCIAL' = tipoAutenticacao === 'credenciais' ? 'CREDENCIAL' : 'CERTIFICADO';
+  const onLoginPageReady = () => {
+    logWorker(empresaId, 'login page ready');
+    emitirEventoExecucao(batchId, {
+      type: 'execution:login_ready',
+      empresa_id: key,
+      message: 'Tela de login carregada',
+    });
+  };
 
-  const persistirMetrica = (status: 'OK' | 'ERRO', erroResumo?: string) => {
+  persistirMetrica = (status: 'OK' | 'ERRO', erroResumo?: string) => {
     if (!batchId) return;
     const finishedAt = new Date();
     const tempoSeg = Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000);
@@ -305,19 +652,13 @@ async function executarFluxoCompleto(
   };
 
   emitirEventoExecucao(batchId, {
-    type: 'execution:started',
-    empresa_id: key,
-    cnpj,
-    razao_social: razaoSocial,
-    metodo,
-  });
-  emitirEventoExecucao(batchId, {
     type: 'execution:stage',
     empresa_id: key,
     stage: 'abrir_navegador',
     message: 'Abrindo navegador…',
   });
 
+  logWorker(empresaId, 'launching browser');
   info.status = 'em_execucao';
   info.etapaAtual = 'autenticacao';
   info.progresso = 10;
@@ -328,28 +669,40 @@ async function executarFluxoCompleto(
     dataInicio: new Date(),
   });
 
-  let resultadoAuth: Awaited<ReturnType<typeof abrirDashboardNfse>>;
+  let resultadoAuth: Awaited<ReturnType<typeof abrirDashboardNfse>> | undefined;
+
+  try {
+  // Reserva slot visual ANTES do Chromium (headless não usa layout)
+  const useWindowLayout = !headless && CAPTCHA_WINDOW_LAYOUT_ENABLED;
+  if (useWindowLayout) {
+    emitirEventoExecucao(batchId, {
+      type: 'execution:stage',
+      empresa_id: key,
+      stage: 'reservando_janela',
+      message: 'Reservando posição da janela…',
+    });
+    info.mensagem = 'Reservando posição da janela…';
+    info.windowSlot = await captchaWindowManager.reserveSlot(
+      String(execucaoDbId),
+      { enabled: true }
+    );
+    adicionarLog(
+      `Slot visual ${info.windowSlot.slotId}: ${info.windowSlot.width}×${info.windowSlot.height} @ (${info.windowSlot.left},${info.windowSlot.top})`
+    );
+  }
+
+  const windowSlot = info.windowSlot;
+  const viewport = windowSlot?.viewport;
+  const launchArgs = windowSlot?.launchArgs;
 
   if (tipoAutenticacao === 'credenciais') {
     const credencial = await credenciaisRepo.obterPrimeiraPorEmpresa(empresaId);
     if (!credencial) {
       const err = `Nenhuma credencial encontrada para a empresa (CNPJ ${cnpj})`;
       adicionarLog(`ERRO: ${err}`);
-      emitirEventoExecucao(batchId, {
-        type: 'execution:finished',
-        empresa_id: key,
-        status: 'ERRO',
-        message: err,
-      });
       info.status = 'falhou';
       info.mensagem = err;
-      await execucoesRepo.atualizar(execucaoDbId, {
-        status: 'falhou',
-        mensagemErro: err,
-        dataFim: new Date(),
-      });
-      persistirMetrica('ERRO', err.length > 200 ? err.slice(0, 197) + '...' : err);
-      execucoesAtivas.delete(key);
+      info.resultadoFinal = 'ERRO';
       return;
     }
     const senha = credenciaisRepo.descriptografarSenha(credencial);
@@ -362,13 +715,12 @@ async function executarFluxoCompleto(
     });
     info.mensagem = 'Fazendo login…';
     adicionarLog('Chamando autenticação via credencial...');
-    const config = await settingsRepo.obterConfiguracoes();
-    const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-    const viewport = resolveViewport(config);
     resultadoAuth = await abrirDashboardNfseComCredencial(documento, senha, {
       headless,
-      timeout: timeout || PLAYWRIGHT_TIMEOUT,
-      viewport,
+      timeout: PLAYWRIGHT_TIMEOUT,
+      ...(viewport ? { viewport } : {}),
+      ...(launchArgs ? { launchArgs } : {}),
+      onLoginPageReady,
     });
   } else {
     let certificado: CertificadoEmMemoria;
@@ -379,26 +731,11 @@ async function executarFluxoCompleto(
     } else {
       const err = 'CertificateService não configurado. Execute a Etapa 5.2 da migração.';
       adicionarLog(`ERRO: ${err}`);
-      emitirEventoExecucao(batchId, {
-        type: 'execution:finished',
-        empresa_id: key,
-        status: 'ERRO',
-        message: err,
-      });
       info.status = 'falhou';
       info.mensagem = err;
-      await execucoesRepo.atualizar(execucaoDbId, {
-        status: 'falhou',
-        mensagemErro: err,
-        dataFim: new Date(),
-      });
-      persistirMetrica('ERRO', err.length > 200 ? err.slice(0, 197) + '...' : err);
-      execucoesAtivas.delete(key);
+      info.resultadoFinal = 'ERRO';
       return;
     }
-    const config = await settingsRepo.obterConfiguracoes();
-    const timeout = (config?.companyTimeoutSeconds ?? 300) * 1000;
-    const viewport = resolveViewport(config);
     emitirEventoExecucao(batchId, {
       type: 'execution:stage',
       empresa_id: key,
@@ -409,25 +746,30 @@ async function executarFluxoCompleto(
     adicionarLog('Chamando autenticação via certificado...');
     resultadoAuth = await abrirDashboardNfse(certificado, {
       headless,
-      timeout: timeout || PLAYWRIGHT_TIMEOUT,
-      viewport,
+      timeout: PLAYWRIGHT_TIMEOUT,
+      ...(viewport ? { viewport } : {}),
+      ...(launchArgs ? { launchArgs } : {}),
+      onLoginPageReady,
     });
   }
 
-  try {
+  logWorker(empresaId, 'browser launched');
+
     const config = await settingsRepo.obterConfiguracoes();
 
-    if (!resultadoAuth.sucesso) {
-      throw new NFSeAutenticacaoError(resultadoAuth.mensagem || 'Falha na autenticação');
+    if (!resultadoAuth!.sucesso) {
+      throw new NFSeAutenticacaoError(resultadoAuth!.mensagem || 'Falha na autenticação');
     }
 
-    if (!resultadoAuth.page) {
+    if (!resultadoAuth!.page) {
       throw new Error('Página do navegador não foi criada corretamente');
     }
 
-    info.page = resultadoAuth.page;
-    info.browser = resultadoAuth.browser;
-    for (const logMsg of resultadoAuth.logs) adicionarLog(logMsg);
+    const auth = resultadoAuth!;
+    const page = auth.page!;
+    info.page = page;
+    info.browser = auth.browser;
+    for (const logMsg of auth.logs) adicionarLog(logMsg);
     info.progresso = 30;
     info.mensagem = 'Autenticação concluída.';
     emitirEventoExecucao(batchId, {
@@ -437,12 +779,12 @@ async function executarFluxoCompleto(
       message: 'Autenticação concluída.',
     });
 
-    if (config?.downloadsBasePath) {
-      setDownloadsBasePath(config.downloadsBasePath);
-    }
     if (config?.minActionDelayMs) {
       setMinActionDelayMs(config.minActionDelayMs);
     }
+
+    const basePathRaw = config?.downloadsBasePath ?? './downloads';
+    const basePath = resolveStoragePath(basePathRaw);
 
     const nomeEmpresa = await obterNomeEmpresa(cnpj);
     const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
@@ -462,11 +804,12 @@ async function executarFluxoCompleto(
         message: 'Acessando notas emitidas…',
       });
       info.mensagem = 'Acessando notas emitidas…';
-      const menuEmitidas = resultadoAuth.page.locator('li:nth-of-type(3) img').nth(0);
-      await menuEmitidas.click();
-      await resultadoAuth.page.waitForURL('**/Notas/Emitidas', { timeout: 15000 });
-      await resultadoAuth.page.waitForLoadState('networkidle', { timeout: 15000 });
-      await resultadoAuth.page.waitForTimeout(1000);
+      assertPageUsable(page);
+      const menuEmitidas = page.locator('li:nth-of-type(3) img').nth(0);
+      await clicarMenuNotasEAguardar(page, menuEmitidas, 'Emitidas', {
+        timeout: PLAYWRIGHT_TIMEOUT,
+        log: adicionarLog,
+      });
 
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
@@ -475,7 +818,7 @@ async function executarFluxoCompleto(
         message: 'Pesquisando notas emitidas…',
       });
       info.mensagem = 'Pesquisando notas emitidas…';
-      await preencherDatasEFiltrar(resultadoAuth.page, dataInicio, dataFim);
+      await preencherDatasEFiltrar(page, dataInicio, dataFim);
 
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
@@ -484,11 +827,31 @@ async function executarFluxoCompleto(
         message: 'Baixando notas emitidas…',
       });
       info.mensagem = 'Baixando notas emitidas…';
+      const onCaptchaStage = (stage: string, message: string) => {
+        info.mensagem = message;
+        emitirEventoExecucao(batchId, {
+          type: 'execution:stage',
+          empresa_id: key,
+          stage,
+          message,
+        });
+      };
       const resEmitidas = await processarTabelaEmitidas(
-        resultadoAuth.page,
+        page,
+        basePath,
         nomeContabilidade,
         mesExecucaoExtenso,
-        nomeEmpresa
+        nomeEmpresa,
+        baixarPdf,
+        onCaptchaStage,
+        {
+          executionId: String(execucaoDbId ?? key),
+          empresaId: key,
+          batchId: batchId || undefined,
+          captchaMode: info.captchaMode || 'TWO_CAPTCHA',
+          empresaNome: nomeEmpresa,
+          cnpj,
+        }
       );
       info.qtdNotasEmitidas = resEmitidas.qtd_baixadas;
       info.qtdNotasCanceladas += resEmitidas.qtd_canceladas ?? 0;
@@ -518,11 +881,12 @@ async function executarFluxoCompleto(
         message: 'Acessando notas recebidas…',
       });
       info.mensagem = 'Acessando notas recebidas…';
-      const menuRecebidas = resultadoAuth.page.locator('li:nth-of-type(4) img').nth(0);
-      await menuRecebidas.click();
-      await resultadoAuth.page.waitForURL('**/Notas/Recebidas', { timeout: 15000 });
-      await resultadoAuth.page.waitForLoadState('networkidle', { timeout: 15000 });
-      await resultadoAuth.page.waitForTimeout(1000);
+      assertPageUsable(page);
+      const menuRecebidas = page.locator('li:nth-of-type(4) img').nth(0);
+      await clicarMenuNotasEAguardar(page, menuRecebidas, 'Recebidas', {
+        timeout: PLAYWRIGHT_TIMEOUT,
+        log: adicionarLog,
+      });
 
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
@@ -531,7 +895,7 @@ async function executarFluxoCompleto(
         message: 'Pesquisando notas recebidas…',
       });
       info.mensagem = 'Pesquisando notas recebidas…';
-      await preencherDatasEFiltrar(resultadoAuth.page, dataInicio, dataFim);
+      await preencherDatasEFiltrar(page, dataInicio, dataFim);
 
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
@@ -540,11 +904,31 @@ async function executarFluxoCompleto(
         message: 'Baixando notas recebidas…',
       });
       info.mensagem = 'Baixando notas recebidas…';
+      const onCaptchaStage = (stage: string, message: string) => {
+        info.mensagem = message;
+        emitirEventoExecucao(batchId, {
+          type: 'execution:stage',
+          empresa_id: key,
+          stage,
+          message,
+        });
+      };
       const resRecebidas = await processarTabelaRecebidas(
-        resultadoAuth.page,
+        page,
+        basePath,
         nomeContabilidade,
         mesExecucaoExtenso,
-        nomeEmpresa
+        nomeEmpresa,
+        baixarPdf,
+        onCaptchaStage,
+        {
+          executionId: String(execucaoDbId ?? key),
+          empresaId: key,
+          batchId: batchId || undefined,
+          captchaMode: info.captchaMode || 'TWO_CAPTCHA',
+          empresaNome: nomeEmpresa,
+          cnpj,
+        }
       );
       info.qtdNotasRecebidas = resRecebidas.qtd_baixadas;
       info.qtdNotasCanceladas += resRecebidas.qtd_canceladas ?? 0;
@@ -575,6 +959,8 @@ async function executarFluxoCompleto(
       resultadoFinal = 'NOTAS_RECEBIDAS';
     }
 
+    logWorker(empresaId, 'DOWNLOADS DONE');
+
     emitirEventoExecucao(batchId, {
       type: 'execution:stage',
       empresa_id: key,
@@ -588,54 +974,65 @@ async function executarFluxoCompleto(
     info.mensagem = 'Execução concluída com sucesso';
     info.resultadoFinal = resultadoFinal;
     adicionarLog('Execução concluída com sucesso');
-
-    emitirEventoExecucao(batchId, {
-      type: 'execution:finished',
-      empresa_id: key,
-      status: 'OK',
-      qtd_emitidas: info.qtdNotasEmitidas,
-      qtd_recebidas: info.qtdNotasRecebidas,
-      qtd_canceladas: info.qtdNotasCanceladas,
-    });
-
-    await execucoesRepo.atualizar(execucaoDbId, {
-      status: 'concluido',
-      etapaAtual: 'finalizacao',
-      progresso: 100,
-      mensagem: info.mensagem,
-      dataFim: new Date(),
-      qtdNotasEmitidas: info.qtdNotasEmitidas,
-      qtdNotasRecebidas: info.qtdNotasRecebidas,
-      resultadoFinal,
-    });
   } catch (e) {
     const err = e as Error;
-    const msg = err.message || 'Erro desconhecido';
+    const msg = isTargetClosedError(e)
+      ? 'Navegador/página fechou durante a automação — execução abortada'
+      : err.message || 'Erro desconhecido';
     adicionarLog(`ERRO: ${msg}`);
-    const msgResumo = msg.length > 80 ? msg.slice(0, 77) + '...' : msg;
-    emitirEventoExecucao(batchId, {
-      type: 'execution:finished',
-      empresa_id: key,
-      status: 'ERRO',
-      message: msgResumo,
-    });
     info.status = 'falhou';
     info.mensagem = msg;
-
-    await execucoesRepo.atualizar(execucaoDbId, {
-      status: 'falhou',
-      mensagemErro: msg.slice(0, 500),
-      dataFim: new Date(),
-    });
+    info.resultadoFinal = 'ERRO';
   } finally {
-    try {
-      if (info.page) await info.page.close().catch(() => {});
-      if (info.browser) await info.browser.close().catch(() => {});
-    } catch {
-      /* ignore */
-    }
-    const statusFinal = info.status === 'concluido' ? 'OK' : 'ERRO';
-    persistirMetrica(statusFinal, statusFinal === 'ERRO' ? (info.mensagem?.slice(0, 200) ?? undefined) : undefined);
-    execucoesAtivas.delete(key);
+    const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
+    const resultadoFinal = info.resultadoFinal ?? 'ERRO';
+    await finalizarExecucao({
+      execucaoId: execucaoDbId,
+      empresaId,
+      cnpj,
+      batchId,
+      statusFinal,
+      message: info.mensagem || (statusFinal === 'falhou' ? 'Erro desconhecido' : 'Concluído'),
+      contagens: {
+        emitidas: info.qtdNotasEmitidas,
+        recebidas: info.qtdNotasRecebidas,
+        canceladas: info.qtdNotasCanceladas,
+      },
+      resultado_final: resultadoFinal,
+      page: info.page,
+      browser: info.browser,
+      windowSlot: info.windowSlot,
+      startedAt,
+      persistirMetrica,
+    });
+  }
+  } catch (outerErr) {
+    const err = outerErr as Error;
+    logger.error({ err, empresaId, execucaoDbId }, '[worker] Erro antes do fluxo principal');
+    info.status = 'falhou';
+    info.mensagem = err.message || 'Erro inesperado';
+    info.resultadoFinal = 'ERRO';
+  } finally {
+    const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
+    const resultadoFinal = info.resultadoFinal ?? 'ERRO';
+    await finalizarExecucao({
+      execucaoId: execucaoDbId,
+      empresaId,
+      cnpj,
+      batchId,
+      statusFinal,
+      message: info.mensagem || (statusFinal === 'falhou' ? 'Erro desconhecido' : 'Concluído'),
+      contagens: {
+        emitidas: info.qtdNotasEmitidas,
+        recebidas: info.qtdNotasRecebidas,
+        canceladas: info.qtdNotasCanceladas,
+      },
+      resultado_final: resultadoFinal,
+      page: info.page,
+      browser: info.browser,
+      windowSlot: info.windowSlot,
+      startedAt,
+      persistirMetrica,
+    });
   }
 }

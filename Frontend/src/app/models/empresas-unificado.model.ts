@@ -6,6 +6,27 @@ export type StatusGeral =
   | 'INOPERANTE'
   | 'ATENCAO';
 
+export type CertificateStatusApi =
+  | 'MISSING'
+  | 'EXPIRED'
+  | 'EXPIRING_SOON'
+  | 'VALID'
+  | 'ERROR';
+
+export type CredentialStatusNormalized =
+  | 'MISSING'
+  | 'NOT_TESTED'
+  | 'VALID'
+  | 'INVALID'
+  | 'VALIDATION_ERROR'
+  | 'INACTIVE'
+  | 'TESTING';
+
+export type AutomationEligibility =
+  | 'ELIGIBLE'
+  | 'ELIGIBLE_WITH_WARNING'
+  | 'NOT_ELIGIBLE';
+
 export type CredStatusApi =
   | 'SEM_CREDENCIAIS'
   | 'INATIVA'
@@ -47,6 +68,15 @@ export interface EmpresaListagemItem {
   cred_ultima_mensagem?: string | null;
   status_geral?: StatusGeral | null;
   status_geral_motivo?: string | null;
+  certificate_status?: CertificateStatusApi | null;
+  credential_status?: CredentialStatusNormalized | null;
+  credential_requires_revalidation?: boolean;
+  credential_revalidation_reason?: string | null;
+  automation_eligibility?: AutomationEligibility | null;
+  issue_codes?: string[];
+  issue_messages?: string[];
+  recommended_action?: string | null;
+  certificate_days_delta?: number | null;
 }
 
 /**
@@ -100,6 +130,13 @@ export interface EmpresaListagemResponse {
   total: number;
   page: number;
   limit: number;
+}
+
+export interface EmpresasSummaryResponse {
+  total_empresas: number;
+  certificados_vencidos: number;
+  credenciais_para_validar: number;
+  operacionais: number;
 }
 
 export interface EmpresaDetalhes {
@@ -158,29 +195,59 @@ export interface CadastroResult {
 }
 
 // Imports - Certificados
+export type PreviewCertAction =
+  | 'NEW'
+  | 'UPDATE_AVAILABLE'
+  | 'EXACT_DUPLICATE'
+  | 'OLDER_CERTIFICATE'
+  | 'EXPIRED_CERTIFICATE'
+  | 'INVALID_FILE'
+  | 'DOCUMENT_MISMATCH'
+  | 'ERROR';
+
+export type ConfirmCertAction = 'CREATE' | 'REPLACE_EXISTING' | 'SKIP';
+
+export interface PreviewCertificadosItem {
+  indice: number;
+  cnpj: string;
+  razao_social: string;
+  data_validade: string | null;
+  existe_empresa: boolean;
+  existe_certificado?: boolean;
+  action: PreviewCertAction;
+  can_confirm: boolean;
+  default_confirm_action: ConfirmCertAction;
+  message: string;
+  days_delta: number | null;
+  existing_cert_id: number | null;
+  existing_valid_until: string | null;
+  /** Legado */
+  acao?:
+    | 'IMPORTAR'
+    | 'ERRO'
+    | 'DUPLICADO'
+    | 'UPDATE_AVAILABLE'
+    | 'OLDER_CERTIFICATE'
+    | 'EXPIRED_CERTIFICATE';
+  erro?: string;
+}
+
 export interface PreviewCertificadosResponse {
   session_id: string;
-  items: Array<{
-    indice: number;
-    cnpj: string;
-    razao_social: string;
-    data_validade: string | null;
-    existe_empresa: boolean;
-    existe_certificado?: boolean;
-    acao: 'IMPORTAR' | 'ERRO' | 'DUPLICADO';
-    erro?: string;
-  }>;
+  items: PreviewCertificadosItem[];
 }
 
 export interface ConfirmarCertificadosPayload {
   session_id: string;
   senha: string;
-  itens: Array<{ indice: number }>;
+  itens: Array<{ indice: number; action: ConfirmCertAction }>;
   contabilidade_id?: number | null;
 }
 
 export interface ConfirmarCertificadosResponse {
   importados: number;
+  atualizados: number;
+  ignorados: number;
   erros: Array<{ indice: number; mensagem: string }>;
 }
 

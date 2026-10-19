@@ -4,12 +4,10 @@
  */
 import { Router, Request, Response } from 'express';
 import { getLogger } from '../infrastructure/logger';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as repo from '../repositories/certificados';
 import * as empresasRepo from '../repositories/empresas';
 import { extrairInformacoesCertificado } from '../utils/certificado-utils';
-import { CERTIFICATES_DIR } from '../infrastructure/config';
+import { getCertificateStorage } from '../storage';
 import { uploadSingle, uploadArray } from '../middleware/upload';
 
 const logger = getLogger('certificados');
@@ -130,11 +128,8 @@ router.post('/importar', uploadSingle('certificado'), async (req: Request, res: 
       res.status(400).json({ success: false, message: `Certificado para CNPJ ${cnpjLimpo} já existe` });
       return;
     }
-    const dir = CERTIFICATES_DIR;
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const nomeArquivo = `${cnpjLimpo}.pfx`;
-    const caminho = path.join(dir, nomeArquivo);
-    fs.writeFileSync(caminho, file.buffer);
+    await getCertificateStorage().save(nomeArquivo, file.buffer);
     await repo.criar({
       cnpj: cnpjLimpo,
       arquivo: nomeArquivo,
@@ -160,8 +155,7 @@ router.post('/importar-lote', uploadArray('certificados', 50), async (req: Reque
     const senha = (req.body?.senha ?? '').trim();
     const contabilidadeId = parseInt(String(req.body?.contabilidade_id ?? 0), 10);
     const resultados: Array<{ nome_arquivo: string; sucesso: boolean; cnpj?: string; empresa?: string; data_vencimento?: string; mensagem_erro?: string }> = [];
-    const dir = CERTIFICATES_DIR;
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const storage = getCertificateStorage();
 
     for (const file of files) {
       try {
@@ -180,7 +174,7 @@ router.post('/importar-lote', uploadArray('certificados', 50), async (req: Reque
           continue;
         }
         const nomeArquivo = `${info.cnpj_limpo}.pfx`;
-        fs.writeFileSync(path.join(dir, nomeArquivo), file.buffer);
+        await storage.save(nomeArquivo, file.buffer);
         await repo.criar({
           cnpj: info.cnpj_limpo,
           arquivo: nomeArquivo,
@@ -268,13 +262,29 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
-// DELETE /cnpj/:cnpj - Deletar por CNPJ (compatível com frontend)
+// DELETE /cnpj/:cnpj - Deletar TODOS os certificados do CNPJ + Storage
 router.delete('/cnpj/:cnpj', async (req: Request, res: Response) => {
   try {
     const cnpj = limparCnpj(String(req.params.cnpj ?? ''));
-    const ok = await repo.deletarPorCnpj(cnpj);
-    if (!ok) {
+    const result = await repo.removerTodosPorCnpj(cnpj);
+    if (!result) {
       res.status(404).json({ detail: `Certificado com CNPJ ${cnpj} não encontrado` });
+      return;
+    }
+    if (result.storage.failed.length > 0) {
+      logger.warn(
+        {
+          deletedCount: result.deletedCount,
+          storageFailed: result.storage.failed.length,
+        },
+        'Certificados removidos do banco; falha parcial na limpeza do Storage'
+      );
+      res.status(200).json({
+        deleted: result.deletedCount,
+        storage_cleanup_failed: result.storage.failed.length,
+        warning:
+          'Registros removidos do banco, mas alguns arquivos do Storage não puderam ser excluídos',
+      });
       return;
     }
     res.status(204).send();

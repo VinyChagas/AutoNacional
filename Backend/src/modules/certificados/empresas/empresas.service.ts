@@ -3,6 +3,14 @@
  */
 import * as repo from './empresas.repo';
 import type { EmpresaListagemParams } from './empresas.repo';
+import { parseEmpresaSegment } from './empresas-segment';
+import {
+  buildEmpresasWorkbookBuffer,
+  buildExportFilename,
+  filterEmpresasForReport,
+  parseEmpresaExportReport,
+  type EmpresaExportReport,
+} from './empresas-export';
 
 const SORT_WHITELIST = [
   'cnpj',
@@ -21,6 +29,9 @@ export interface ListarEmpresasQuery {
   sem_cert?: string;
   sem_cred?: string;
   sem_metodo?: string;
+  segment?: string;
+  report?: string;
+  format?: string;
   page?: string;
   limit?: string;
   sort?: string;
@@ -46,6 +57,7 @@ export function parseListarParams(query: ListarEmpresasQuery): EmpresaListagemPa
     : undefined;
   const orderRaw = (query.order ?? '').toLowerCase();
   const order = orderRaw === 'asc' || orderRaw === 'desc' ? orderRaw : 'asc';
+  const segment = parseEmpresaSegment(query.segment);
 
   return {
     search: query.search?.trim() || undefined,
@@ -54,11 +66,12 @@ export function parseListarParams(query: ListarEmpresasQuery): EmpresaListagemPa
     has_cred: hasCred,
     sem_cert: semCert,
     sem_cred: semCred,
-  sem_metodo: semMetodo,
-  page: isNaN(page) ? 1 : page,
-  limit: isNaN(limit) ? 20 : limit,
-  sort,
-  order,
+    sem_metodo: semMetodo,
+    segment,
+    page: isNaN(page) ? 1 : page,
+    limit: isNaN(limit) ? 20 : limit,
+    sort,
+    order,
   };
 }
 
@@ -80,4 +93,61 @@ export async function listarEmpresas(params: EmpresaListagemParams) {
 
 export async function obterEmpresaPorId(id: number) {
   return repo.obterPorIdComDetalhes(id);
+}
+
+export async function obterSummary(
+  params: Pick<EmpresaListagemParams, 'search' | 'contabilidade_id' | 'has_cert' | 'has_cred' | 'sem_cert' | 'sem_cred' | 'sem_metodo'>
+) {
+  return repo.obterSummary(params);
+}
+
+export interface ExportEmpresasResult {
+  buffer: Buffer;
+  filename: string;
+  report: EmpresaExportReport;
+  total: number;
+}
+
+/**
+ * Exporta empresas em XLSX usando a mesma listagem/status da tela.
+ * - NOT_ELIGIBLE / ALL_PENDING: filtros-base (sem segment dos cards)
+ * - FILTERED: filtros-base + segment ativo
+ */
+export async function exportarEmpresas(
+  query: ListarEmpresasQuery
+): Promise<ExportEmpresasResult | { error: string; status: number }> {
+  const report = parseEmpresaExportReport(query.report);
+  if (!report) {
+    return {
+      error:
+        'report é obrigatório e deve ser NOT_ELIGIBLE, ALL_PENDING ou FILTERED',
+      status: 400,
+    };
+  }
+  const format = (query.format ?? 'xlsx').toLowerCase();
+  if (format !== 'xlsx') {
+    return { error: 'format suportado: xlsx', status: 400 };
+  }
+
+  const params = parseListarParams(query);
+  const conflito = validarFiltrosConflitantes(params);
+  if (conflito) {
+    return { error: conflito, status: 400 };
+  }
+
+  const listParams: EmpresaListagemParams = {
+    ...params,
+    segment: report === 'FILTERED' ? params.segment : 'ALL',
+    force_full_scan: true,
+    page: 1,
+    limit: 50_000,
+  };
+
+  const result = await repo.listarComAgregados(listParams);
+  const filtered = filterEmpresasForReport(result.items, report);
+  const generatedAt = new Date();
+  const buffer = buildEmpresasWorkbookBuffer(filtered, generatedAt);
+  const filename = buildExportFilename(report, generatedAt);
+
+  return { buffer, filename, report, total: filtered.length };
 }

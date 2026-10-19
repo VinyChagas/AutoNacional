@@ -41,13 +41,21 @@ export interface ExecutionEventFinished {
   qtd_emitidas?: number;
   qtd_recebidas?: number;
   qtd_canceladas?: number;
+  resultado_final?: string;
+}
+
+export interface ExecutionEventLoginReady {
+  type: 'execution:login_ready';
+  empresa_id: string;
+  message: string;
 }
 
 export type ExecutionEvent =
   | ExecutionEventStarted
   | ExecutionEventStage
   | ExecutionEventCounts
-  | ExecutionEventFinished;
+  | ExecutionEventFinished
+  | ExecutionEventLoginReady;
 
 interface BatchClients {
   clients: Set<Response>;
@@ -105,7 +113,7 @@ export function emitirEventoExecucao(batchId: string | undefined, evento: Execut
   const batch = batchClients.get(batchId);
   if (!batch) return;
 
-  const eventType = evento.type.replace('execution:', '') as 'started' | 'stage' | 'counts' | 'finished';
+  const eventType = evento.type.replace('execution:', '') as 'started' | 'stage' | 'counts' | 'finished' | 'login_ready';
   for (const res of batch.clients) {
     if (!res.writableEnded) {
       emitEvent(res, eventType, evento);

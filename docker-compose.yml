@@ -1,0 +1,61 @@
+# Produção na VPS.
+# O PostgreSQL já existe como container vinylab-postgres na rede vinylab_internal.
+# Este arquivo não cria outro banco.
+
+services:
+  backend:
+    build:
+      context: ./Backend
+    image: autonacional-backend:local
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./Backend/.env
+    environment:
+      PORT: "4321"
+      NODE_ENV: production
+      PLAYWRIGHT_HEADLESS: ${PLAYWRIGHT_HEADLESS:-true}
+      PLAYWRIGHT_NO_SANDBOX: "true"
+      CERT_STORAGE_DRIVER: ${CERT_STORAGE_DRIVER:-local}
+      CERT_STORAGE_PATH: /srv/data/autonacional/certificados
+    volumes:
+      - /srv/data/autonacional/certificados:/srv/data/autonacional/certificados
+      - /srv/data/autonacional/downloads:/app/downloads
+      - /srv/data/autonacional/logs:/app/logs
+      - /srv/data/autonacional/temp:/app/temp
+    ports:
+      - "127.0.0.1:4321:4321"
+    networks:
+      - vinylab_internal
+    shm_size: "1gb"
+    stop_grace_period: 40s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4321/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./Frontend
+    image: autonacional-frontend:local
+    restart: unless-stopped
+    init: true
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    networks:
+      - vinylab_internal
+    stop_grace_period: 15s
+
+networks:
+  vinylab_internal:
+    external: true
+    name: vinylab_internal

@@ -28,6 +28,15 @@ function toListagemItem(row: {
   cred_ultima_mensagem?: string | null;
   status_geral: string;
   status_geral_motivo?: string | null;
+  certificate_status?: string;
+  credential_status?: string;
+  credential_requires_revalidation?: boolean;
+  credential_revalidation_reason?: string | null;
+  automation_eligibility?: string;
+  issue_codes?: string[];
+  issue_messages?: string[];
+  recommended_action?: string | null;
+  certificate_days_delta?: number | null;
 }) {
   return {
     id: String(row.id),
@@ -47,6 +56,15 @@ function toListagemItem(row: {
     cred_ultima_mensagem: row.cred_ultima_mensagem ?? null,
     status_geral: row.status_geral ?? null,
     status_geral_motivo: row.status_geral_motivo ?? null,
+    certificate_status: row.certificate_status ?? null,
+    credential_status: row.credential_status ?? null,
+    credential_requires_revalidation: Boolean(row.credential_requires_revalidation),
+    credential_revalidation_reason: row.credential_revalidation_reason ?? null,
+    automation_eligibility: row.automation_eligibility ?? null,
+    issue_codes: row.issue_codes ?? [],
+    issue_messages: row.issue_messages ?? [],
+    recommended_action: row.recommended_action ?? null,
+    certificate_days_delta: row.certificate_days_delta ?? null,
   };
 }
 
@@ -172,6 +190,48 @@ export async function excluirEmMassa(req: Request, res: Response): Promise<void>
 
   const deleted = await repo.deletarEmMassa(ids);
   jsonSuccess(res, { deleted });
+}
+
+export async function summary(req: Request, res: Response): Promise<void> {
+  const queryParams = service.parseListarParams(req.query as service.ListarEmpresasQuery);
+  const conflito = service.validarFiltrosConflitantes(queryParams);
+  if (conflito) {
+    jsonError(res, conflito, 400);
+    return;
+  }
+  const summaryParams = {
+    search: queryParams.search,
+    contabilidade_id: queryParams.contabilidade_id,
+    has_cert: queryParams.has_cert,
+    has_cred: queryParams.has_cred,
+    sem_cert: queryParams.sem_cert,
+    sem_cred: queryParams.sem_cred,
+    sem_metodo: queryParams.sem_metodo,
+  };
+  const data = await service.obterSummary(summaryParams);
+  jsonSuccess(res, data);
+}
+
+export async function exportar(req: Request, res: Response): Promise<void> {
+  const result = await service.exportarEmpresas(
+    req.query as service.ListarEmpresasQuery
+  );
+  if ('error' in result) {
+    jsonError(res, result.error, result.status);
+    return;
+  }
+
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${result.filename}"`
+  );
+  res.setHeader('X-Export-Total', String(result.total));
+  res.setHeader('X-Export-Report', result.report);
+  res.send(result.buffer);
 }
 
 export async function cadastroCredencial(req: Request, res: Response): Promise<void> {

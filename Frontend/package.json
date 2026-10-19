@@ -10,8 +10,7 @@
     "build:prod": "ng build --configuration production",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
-    "test:ci": "ng test --no-watch --code-coverage",
-    "lint": "ng lint"
+    "test:ci": "ng test --no-watch --code-coverage"
   },
   "private": true,
   "engines": {
@@ -20,6 +19,7 @@
   },
   "dependencies": {
     "@angular/animations": "^17.3.0",
+    "@angular/cdk": "^17.3.0",
     "@angular/common": "^17.3.0",
     "@angular/core": "^17.3.0",
     "@angular/forms": "^17.3.0",
@@ -31,6 +31,7 @@
     "jspdf-autotable": "^5.0.2",
     "ng2-charts": "^5.0.4",
     "rxjs": "~7.8.0",
+    "socket.io-client": "^4.8.3",
     "tslib": "^2.3.0",
     "xlsx": "^0.18.5",
     "zone.js": "~0.14.3"

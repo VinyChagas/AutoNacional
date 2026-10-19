@@ -1,0 +1,73 @@
+# Desenvolvimento local, separado da VPS.
+# Sobe um PostgreSQL próprio. Não usa vinylab_internal e não fala com produção.
+#
+# Uso:
+#   docker compose -f docker-compose.local.yml up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: autonacional
+      POSTGRES_PASSWORD: autonacional
+      POSTGRES_DB: autonacional
+    volumes:
+      - autonacional_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autonacional -d autonacional"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./Backend
+    image: autonacional-backend:local
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: "4321"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://autonacional:autonacional@postgres:5432/autonacional?schema=public
+      CERT_STORAGE_DRIVER: local
+      CERT_STORAGE_PATH: /srv/data/autonacional/certificados
+      CRYPTO_KEY: local-dev-crypto-key-not-for-production
+      APP_CRED_KEY: local-dev-crypto-key-not-for-production
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      PLAYWRIGHT_HEADLESS: "true"
+      PLAYWRIGHT_NO_SANDBOX: "true"
+      TWOCAPTCHA_API_KEY: ""
+    volumes:
+      - autonacional_certificados:/srv/data/autonacional/certificados
+      - autonacional_downloads:/app/downloads
+      - autonacional_logs:/app/logs
+      - autonacional_temp:/app/temp
+    ports:
+      - "127.0.0.1:4321:4321"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    shm_size: "1gb"
+    stop_grace_period: 40s
+
+  frontend:
+    build:
+      context: ./Frontend
+    image: autonacional-frontend:local
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    stop_grace_period: 15s
+
+volumes:
+  autonacional_pgdata:
+  autonacional_certificados:
+  autonacional_downloads:
+  autonacional_logs:
+  autonacional_temp:

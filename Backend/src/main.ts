@@ -1,11 +1,28 @@
 import express from 'express';
 import cors from 'cors';
-import './config/env'; // Valida env quando USE_SUPABASE=true
+import http from 'http';
+import { describeDatabaseTarget } from './config/env';
 import { CORS_ORIGINS, PORT } from './infrastructure/config';
 import { getLogger } from './infrastructure/logger';
-import { initDb } from './db/client';
+import { initSocketIo } from './infrastructure/socket';
+import { disconnectDb, initDb, prisma } from './db/client';
 import { seedDefaultSettings } from './db/init';
-import { ensureCertificadosBucket } from './config/supabase';
+import * as settingsRepo from './repositories/settings';
+import {
+  obterEstadoFila,
+  pararFilaExecucao,
+  setCertificateLoader,
+} from './services/execution-service';
+import {
+  garantirDiretorio,
+  limparDiretorioPorIdade,
+} from './services/runtime-cleanup';
+import {
+  assertCertificateStorageReady,
+  closeCertificateStorage,
+  getCertificateStorageArchitectureLabel,
+  getCertificateStorageDriverLabel,
+} from './storage';
 import { errorHandler } from './middleware/error-handler';
 import settingsRouter from './routers/settings';
 import configRouter from './routers/config';
@@ -24,8 +41,8 @@ import relatoriosRouter from './routers/relatorios';
 import dashboardRouter from './routers/dashboard';
 import nfseRouter from './routers/nfse';
 import metricsRouter from './routers/metrics';
-import { setCertificateLoader } from './services/execution-service';
 import { carregarCertificadoPorCnpj } from './services/certificate-loader';
+import { iniciarRelatorio2Captcha } from './automation/captcha-report';
 
 if (!process.stdin.isTTY) {
   process.stdin.resume();
@@ -33,6 +50,9 @@ if (!process.stdin.isTTY) {
 
 const logger = getLogger('main');
 const app = express();
+let cleanupTimer: NodeJS.Timeout | undefined;
+let httpServer: http.Server | undefined;
+let shuttingDown = false;
 
 app.use(
   cors({
@@ -49,8 +69,23 @@ app.get('/', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', message: 'AutoNacional API está funcionando' });
+app.get('/health', async (_req, res) => {
+  const queue = obterEstadoFila();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'ok',
+      database: 'ok',
+      queue,
+    });
+  } catch (err) {
+    logger.error({ err }, 'Healthcheck: PostgreSQL indisponível');
+    res.status(503).json({
+      status: 'degraded',
+      database: 'error',
+      queue,
+    });
+  }
 });
 
 app.use('/api/settings', settingsRouter);
@@ -72,28 +107,123 @@ app.use('/api/metrics', metricsRouter);
 app.use(errorHandler);
 
 async function bootstrap() {
+  const dbTarget = describeDatabaseTarget();
+  let databaseOk = false;
+
   try {
     await initDb();
     await seedDefaultSettings();
-    logger.info('Banco inicializado');
+    databaseOk = true;
+    logger.info('Database: PostgreSQL próprio conectado');
+    logger.info(`Database host: ${dbTarget.host}`);
+    logger.info(`Database: ${dbTarget.database}`);
   } catch (err) {
     logger.warn({ err }, 'Erro ao inicializar banco - continuando');
+    logger.warn(
+      `Database: falha ao conectar (host=${dbTarget.host}, database=${dbTarget.database})`
+    );
   }
 
+  let storageOk = false;
   try {
-    await ensureCertificadosBucket();
+    await assertCertificateStorageReady();
+    storageOk = true;
+    logger.info(`Certificate Storage: ${getCertificateStorageDriverLabel()}`);
   } catch (err) {
-    logger.warn({ err }, 'Supabase Storage: bucket certificados não criado - cadastro de certificados pode falhar');
+    logger.warn(
+      { err: (err as Error).message },
+      'Certificate storage inacessível — cadastro de certificados pode falhar'
+    );
+  }
+
+  if (databaseOk && storageOk) {
+    logger.info(`Arquitetura: ${getCertificateStorageArchitectureLabel()}`);
+  }
+
+  if (databaseOk) {
+    try {
+      const settings = await settingsRepo.obterConfiguracoes();
+      const logsPath = settings?.logsPath ?? './logs';
+      const tempPath = settings?.tempPath ?? './temp';
+      const downloadsPath = settings?.downloadsBasePath ?? './downloads';
+      const retentionDays = settings?.logRetentionDays ?? 30;
+      await garantirDiretorio(logsPath);
+      await garantirDiretorio(tempPath);
+      await garantirDiretorio(downloadsPath);
+      await limparDiretorioPorIdade(logsPath, retentionDays);
+      await limparDiretorioPorIdade(tempPath, retentionDays);
+      cleanupTimer = setInterval(() => {
+        void limparDiretorioPorIdade(logsPath, retentionDays).catch((err) => {
+          logger.warn({ err }, 'Falha na limpeza periódica de logs');
+        });
+        void limparDiretorioPorIdade(tempPath, retentionDays).catch((err) => {
+          logger.warn({ err }, 'Falha na limpeza periódica de temporários');
+        });
+      }, 24 * 60 * 60 * 1000);
+      cleanupTimer.unref();
+    } catch (err) {
+      logger.warn({ err }, 'Não foi possível preparar diretórios de dados');
+    }
   }
 
   setCertificateLoader(carregarCertificadoPorCnpj);
 
-  const server = app.listen(PORT, () => {
+  const reportPath = iniciarRelatorio2Captcha();
+  logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
+
+  httpServer = http.createServer(app);
+  initSocketIo(httpServer);
+
+  httpServer.listen(PORT, () => {
     logger.info(`AutoNacional API rodando em http://localhost:${PORT}`);
   });
 
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, 'Encerrando Backend');
+    if (cleanupTimer) clearInterval(cleanupTimer);
+
+    const forceExit = setTimeout(() => {
+      logger.error('Encerramento excedeu o tempo limite');
+      process.exit(1);
+    }, 30_000);
+    forceExit.unref();
+
+    if (httpServer) {
+      httpServer.close();
+      httpServer.closeAllConnections?.();
+    }
+
+    try {
+      await pararFilaExecucao(20_000);
+    } catch (err) {
+      logger.error({ err }, 'Falha ao parar a fila de execução');
+    }
+
+    await closeCertificateStorage().catch((err) => {
+      logger.warn({ err }, 'Falha ao fechar storage de certificados');
+    });
+
+    try {
+      await disconnectDb();
+    } catch (err) {
+      logger.error({ err }, 'Falha ao desconectar Prisma');
+    }
+
+    clearTimeout(forceExit);
+    process.exit(0);
+  };
+
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+
   // Mantém o processo ativo (evita exit em alguns ambientes)
-  server.ref();
+  httpServer.ref();
 }
 
 bootstrap().catch((err) => {

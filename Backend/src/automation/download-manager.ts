@@ -23,7 +23,7 @@ let _downloadsBasePath: string | null = null;
  */
 export function setDownloadsBasePath(basePath: string): void {
   _downloadsBasePath = resolveStoragePath(basePath);
-  logger.info({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
+  logger.debug({ path: _downloadsBasePath }, 'Caminho base de downloads configurado');
 }
 
 /**
@@ -193,8 +193,102 @@ export async function salvarDownloadDireto(
   const caminhoFinal = path.join(dirDestino, nomeArquivo);
   await download.saveAs(caminhoFinal);
 
-  logger.info({ caminho: caminhoFinal }, 'Arquivo salvo com sucesso');
+  logger.debug({ caminho: caminhoFinal }, 'Arquivo salvo com sucesso');
   return caminhoFinal;
+}
+
+export interface FileValidationResult {
+  valid: boolean;
+  path?: string;
+  reason?: string;
+  size?: number;
+}
+
+/**
+ * Valida arquivo baixado (existência, tamanho e assinatura mínima XML/PDF).
+ */
+export async function validarArquivoBaixado(
+  filePath: string,
+  tipoArquivo: 'xml' | 'pdf'
+): Promise<FileValidationResult> {
+  try {
+    const st = await fs.stat(filePath);
+    if (!st.isFile() || st.size <= 0) {
+      return { valid: false, path: filePath, reason: 'arquivo vazio ou inexistente', size: st.size };
+    }
+
+    const buf = await fs.readFile(filePath);
+    const head = buf.subarray(0, Math.min(512, buf.length));
+
+    if (tipoArquivo === 'pdf') {
+      const sig = head.toString('ascii', 0, 4);
+      if (sig !== '%PDF') {
+        return { valid: false, path: filePath, reason: 'arquivo sem assinatura %PDF', size: st.size };
+      }
+      return { valid: true, path: filePath, size: st.size };
+    }
+
+    // XML
+    const text = head.toString('utf8').trimStart();
+    if (!text || text.startsWith('<!DOCTYPE html') || /^<html[\s>]/i.test(text)) {
+      return { valid: false, path: filePath, reason: 'conteudo parece HTML de erro, nao XML', size: st.size };
+    }
+    if (!text.startsWith('<') && !text.startsWith('<?xml')) {
+      return { valid: false, path: filePath, reason: 'conteudo nao parece XML', size: st.size };
+    }
+    return { valid: true, path: filePath, size: st.size };
+  } catch (e) {
+    return {
+      valid: false,
+      path: filePath,
+      reason: (e as Error).message,
+    };
+  }
+}
+
+/** Remove arquivo inválido (best-effort) antes de retry. */
+export async function removerArquivoInvalido(filePath: string): Promise<void> {
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Procura arquivo válido já existente na pasta destino (idempotência).
+ * Usa prefixo do número da nota e extensão esperada.
+ */
+export async function localizarArquivoExistenteValido(
+  basePath: string,
+  nomeContabilidade: string,
+  mesExecucaoExtenso: string,
+  empresa: string,
+  tipoNota: string,
+  tipoArquivo: 'xml' | 'pdf',
+  nomeArquivoPrefixo?: string
+): Promise<FileValidationResult> {
+  const dir = montarCaminhoCompleto(basePath, nomeContabilidade, mesExecucaoExtenso, empresa, tipoNota);
+  const ext = tipoArquivo === 'pdf' ? '.pdf' : '.xml';
+  try {
+    const entries = await fs.readdir(dir);
+    const prefix = nomeArquivoPrefixo?.replace(/_$/, '') || '';
+    const candidates = entries.filter((name) => {
+      const lower = name.toLowerCase();
+      if (!lower.endsWith(ext)) return false;
+      if (!prefix) return true;
+      return lower.includes(prefix.toLowerCase().slice(0, 20));
+    });
+
+    for (const name of candidates) {
+      const full = path.join(dir, name);
+      const result = await validarArquivoBaixado(full, tipoArquivo);
+      if (result.valid) return result;
+    }
+  } catch {
+    /* pasta ainda não existe */
+  }
+  return { valid: false, reason: 'nenhum arquivo valido encontrado' };
 }
 
 /**
@@ -259,7 +353,7 @@ export async function baixarArquivoDireto(
   const caminhoFinal = path.join(pastaFinal, nomeArquivo);
 
   await fs.writeFile(caminhoFinal, content);
-  logger.info({ caminho: caminhoFinal, size: content.length }, 'Arquivo salvo com sucesso');
+  logger.debug({ caminho: caminhoFinal, size: content.length }, 'Arquivo salvo com sucesso');
 
   return caminhoFinal;
 }
