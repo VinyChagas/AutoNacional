@@ -37,12 +37,14 @@ export async function retomarExecucaoNfse(entrada: {
   checkpointStore: CheckpointStore;
   xmlStore: XmlStore;
   agora?: () => string;
+  /** Chamador já segura comTrava para este CNPJ/período. */
+  jaComTrava?: boolean;
 }): Promise<ResultadoRetomadaNfse> {
   const inventario = entrada.inventario;
   validarInventarioParaCheckpoint(inventario);
   const agora = entrada.agora ?? (() => new Date().toISOString());
 
-  return entrada.checkpointStore.comTrava(inventario.cnpj, inventario.periodoConsulta, async () => {
+  const corpo = async (): Promise<ResultadoRetomadaNfse> => {
     const checkpoint = await entrada.checkpointStore.carregar(inventario.cnpj, inventario.periodoConsulta);
     if (!checkpoint) {
       throw new CheckpointNfseError('CHECKPOINT_AUSENTE', 'Checkpoint não encontrado para este CNPJ e período.');
@@ -78,7 +80,10 @@ export async function retomarExecucaoNfse(entrada: {
       codigoBloqueio: null,
       alteracoes,
     };
-  });
+  };
+
+  if (entrada.jaComTrava) return corpo();
+  return entrada.checkpointStore.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
 }
 
 async function revisarDocumento(

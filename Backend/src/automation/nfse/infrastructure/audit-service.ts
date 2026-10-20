@@ -85,7 +85,8 @@ export function montarAuditoriaFiscal(entrada: EntradaAuditoriaFiscal): Relatori
  */
 export async function persistirAuditoriaFiscal(
   resolvedor: ResolvedorArmazenamentoFiscal,
-  relatorio: RelatorioAuditoriaFiscal
+  relatorio: RelatorioAuditoriaFiscal,
+  opcoes?: { jaComTrava?: boolean }
 ): Promise<string> {
   if (relatorio.versaoFormato !== VERSAO_FORMATO_AUDITORIA) {
     throw new InfraestruturaNfseError('AUDITORIA_INCOMPATIVEL', 'Versão de auditoria incompatível.');
@@ -97,33 +98,36 @@ export async function persistirAuditoriaFiscal(
   const destino = caminhoSnapshotAuditoria(resolvedor, relatorio);
   const buffer = Buffer.from(`${JSON.stringify(relatorio, null, 2)}\n`, 'utf8');
 
+  const corpo = async () => {
+    try {
+      const existenteBruto = await readFile(destino, 'utf8');
+      if (existenteBruto === buffer.toString('utf8')) return destino;
+      const existente = interpretarAuditoria(existenteBruto);
+      // Mesmo snapshotId = mesmo conteúdo fiscal; auditadoEm diferente não cria conflito.
+      if (existente.snapshotId === relatorio.snapshotId) return destino;
+      throw new InfraestruturaNfseError(
+        'AUDITORIA_CONFLITO',
+        'Snapshot de auditoria já existe com conteúdo divergente.'
+      );
+    } catch (erro) {
+      if (erro instanceof InfraestruturaNfseError) throw erro;
+      if ((erro as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new InfraestruturaNfseError('FALHA_LEITURA', 'Falha ao ler snapshot de auditoria.');
+      }
+    }
+    try {
+      await escreverArquivoAtomico(destino, buffer);
+    } catch {
+      throw new InfraestruturaNfseError('FALHA_ESCRITA', 'Falha ao gravar a auditoria fiscal.');
+    }
+    return destino;
+  };
+
+  if (opcoes?.jaComTrava) return corpo();
   return new CheckpointStore(resolvedor.raizCheckpoints()).comTrava(
     relatorio.cnpj,
     relatorio.periodoConsulta,
-    async () => {
-      try {
-        const existenteBruto = await readFile(destino, 'utf8');
-        if (existenteBruto === buffer.toString('utf8')) return destino;
-        const existente = interpretarAuditoria(existenteBruto);
-        // Mesmo snapshotId = mesmo conteúdo fiscal; auditadoEm diferente não cria conflito.
-        if (existente.snapshotId === relatorio.snapshotId) return destino;
-        throw new InfraestruturaNfseError(
-          'AUDITORIA_CONFLITO',
-          'Snapshot de auditoria já existe com conteúdo divergente.'
-        );
-      } catch (erro) {
-        if (erro instanceof InfraestruturaNfseError) throw erro;
-        if ((erro as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new InfraestruturaNfseError('FALHA_LEITURA', 'Falha ao ler snapshot de auditoria.');
-        }
-      }
-      try {
-        await escreverArquivoAtomico(destino, buffer);
-      } catch {
-        throw new InfraestruturaNfseError('FALHA_ESCRITA', 'Falha ao gravar a auditoria fiscal.');
-      }
-      return destino;
-    }
+    corpo
   );
 }
 

@@ -22,6 +22,7 @@ export type {
   DocumentoCheckpointNfse,
   EstadoDocumentoCheckpoint,
   OpcoesEscritaAtomica,
+  OpcoesTravaCheckpoint,
   RelatorioReconciliacaoNfse,
   ResultadoRetomadaNfse,
 } from './types';

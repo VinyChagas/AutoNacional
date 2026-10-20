@@ -109,6 +109,14 @@ export interface OpcoesEscritaAtomica {
   antesDoRename?: () => void | Promise<void>;
 }
 
+/**
+ * Quando `jaComTrava` é true, o chamador já segura `CheckpointStore.comTrava`
+ * para o mesmo CNPJ e período. Evita aquisição aninhada (deadlock no mesmo processo).
+ */
+export interface OpcoesTravaCheckpoint {
+  jaComTrava?: boolean;
+}
+
 const SEGMENTO_SEGURO = /^[A-Za-z0-9._-]+$/;
 
 export function segmentoPeriodo(periodo: PeriodoConsultaPortal): string {

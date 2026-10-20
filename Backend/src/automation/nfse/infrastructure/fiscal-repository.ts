@@ -46,19 +46,44 @@ export class RepositorioFiscalNfse {
     return this.resolvedor.raiz();
   }
 
-  async criarCheckpoint(inventario: InventarioNfse, execucaoId: string): Promise<CheckpointNfse> {
-    return this.servico.criarCheckpoint(inventario, execucaoId);
+  /**
+   * Exclusividade fiscal (Commit 05): uma trava por CNPJ+período cobrindo
+   * a sequência crítica do orquestrador. Liberada no finally de comTrava.
+   */
+  async executarComExclusividadeFiscal<T>(
+    cnpj: string,
+    periodo: PeriodoConsultaPortal,
+    operacao: () => Promise<T>
+  ): Promise<T> {
+    return this.checkpoints.comTrava(cnpj, periodo, operacao);
   }
 
-  async persistirXml(inventario: InventarioNfse, chaveNacional: string, xml: string): Promise<CheckpointNfse> {
-    return this.servico.persistirXml(inventario, chaveNacional, xml);
+  async criarCheckpoint(
+    inventario: InventarioNfse,
+    execucaoId: string,
+    opcoes?: { jaComTrava?: boolean }
+  ): Promise<CheckpointNfse> {
+    return this.servico.criarCheckpoint(inventario, execucaoId, opcoes);
   }
 
-  async retomar(inventario: InventarioNfse): Promise<ResultadoRetomadaNfse> {
+  async persistirXml(
+    inventario: InventarioNfse,
+    chaveNacional: string,
+    xml: string,
+    opcoes?: { jaComTrava?: boolean }
+  ): Promise<CheckpointNfse> {
+    return this.servico.persistirXml(inventario, chaveNacional, xml, opcoes);
+  }
+
+  async retomar(
+    inventario: InventarioNfse,
+    opcoes?: { jaComTrava?: boolean }
+  ): Promise<ResultadoRetomadaNfse> {
     return retomarExecucaoNfse({
       inventario,
       checkpointStore: this.checkpoints,
       xmlStore: this.xmls,
+      jaComTrava: opcoes?.jaComTrava,
     });
   }
 

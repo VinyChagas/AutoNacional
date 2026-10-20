@@ -40,6 +40,11 @@ import {
   type ReservedBrowserSlot,
 } from '../automation/captcha-window-manager';
 import { CAPTCHA_WINDOW_LAYOUT_ENABLED } from '../infrastructure/config';
+import {
+  OrquestracaoNfseError,
+  decidirIntegracaoNativa,
+  tentarFluxoNativoControlado,
+} from '../automation/nfse/orchestration';
 
 const logger = getLogger('execution-service');
 
@@ -796,7 +801,71 @@ async function executarFluxoCompleto(
     info.progresso = 40;
     adicionarLog(`Processando notas (${tipo})...`);
 
-    if (tipo === 'ambas' || tipo === 'emitidas') {
+    // Autorização nativa por execução NÃO é fornecida aqui (desativada por padrão).
+    // Flag global sozinha não inicia SEFIN. Testes injetam autorizacaoNativa explicitamente.
+    const contextoNativo = {
+      page,
+      cnpj,
+      dataInicio,
+      dataFim,
+      tipo,
+      baixarPdf,
+      execucaoId: String(execucaoDbId),
+      certificadoEmMemoria: certificadoFornecido ?? null,
+      tipoAutenticacao,
+    };
+    const decisaoNativa = decidirIntegracaoNativa(contextoNativo);
+
+    if (decisaoNativa.situacao === 'NATIVO_RECUSADO') {
+      throw new OrquestracaoNfseError(
+        decisaoNativa.codigoRecusa ?? 'CONTEXTO_INVALIDO',
+        decisaoNativa.motivo
+      );
+    }
+
+    if (decisaoNativa.executarNativo) {
+      emitirEventoExecucao(batchId, {
+        type: 'execution:stage',
+        empresa_id: key,
+        stage: 'nfse_nativo',
+        message: 'Recuperação fiscal nativa…',
+      });
+      info.mensagem = 'Recuperação fiscal nativa…';
+      adicionarLog(`Fluxo nativo controlado: ${decisaoNativa.motivo}`);
+
+      let resultadoNativo;
+      try {
+        const tentativa = await tentarFluxoNativoControlado(contextoNativo);
+        resultadoNativo = tentativa.resultado;
+        if (!resultadoNativo) {
+          throw new OrquestracaoNfseError(
+            'CONTEXTO_INVALIDO',
+            'Fluxo nativo decidido sem resultado estruturado.'
+          );
+        }
+      } catch (erroNativo) {
+        // Sem fallback silencioso após NATIVO_SOLICITADO / NATIVO_RECUSADO.
+        if (erroNativo instanceof OrquestracaoNfseError) throw erroNativo;
+        const msg = erroNativo instanceof Error ? erroNativo.message : 'Falha na orquestração nativa.';
+        throw new OrquestracaoNfseError('FALHA_ORQUESTRACAO', msg);
+      }
+
+      info.qtdNotasEmitidas = resultadoNativo.inventario?.totais.emitidas ?? 0;
+      info.qtdNotasRecebidas = resultadoNativo.inventario?.totais.recebidas ?? 0;
+      info.qtdNotasCanceladas = resultadoNativo.canceladas;
+      emitirEventoExecucao(batchId, {
+        type: 'execution:counts',
+        empresa_id: key,
+        qtd_emitidas: info.qtdNotasEmitidas,
+        qtd_recebidas: info.qtdNotasRecebidas,
+        qtd_canceladas: info.qtdNotasCanceladas,
+      });
+      adicionarLog(
+        `Nativo: vigentes=${resultadoNativo.vigentes} persistidos=${resultadoNativo.persistidos} ` +
+          `cobertura=${resultadoNativo.coberturaPercentual}% ` +
+          `reconciliacao=${resultadoNativo.conclusaoReconciliacao ?? 'n/a'}`
+      );
+    } else if (tipo === 'ambas' || tipo === 'emitidas') {
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
         empresa_id: key,
@@ -873,7 +942,7 @@ async function executarFluxoCompleto(
       });
     }
 
-    if (tipo === 'ambas' || tipo === 'recebidas') {
+    if (!decisaoNativa.executarNativo && (tipo === 'ambas' || tipo === 'recebidas')) {
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
         empresa_id: key,

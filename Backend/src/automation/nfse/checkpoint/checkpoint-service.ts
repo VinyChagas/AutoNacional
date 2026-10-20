@@ -15,7 +15,14 @@ import {
   periodosConsultaIguais,
 } from '../contracts/periodo';
 import type { CheckpointStore } from './checkpoint-store';
-import { CheckpointNfseError, VERSAO_FORMATO_CHECKPOINT, type CheckpointNfse, type DocumentoCheckpointNfse, type EstadoDocumentoCheckpoint } from './types';
+import {
+  CheckpointNfseError,
+  VERSAO_FORMATO_CHECKPOINT,
+  type CheckpointNfse,
+  type DocumentoCheckpointNfse,
+  type EstadoDocumentoCheckpoint,
+  type OpcoesTravaCheckpoint,
+} from './types';
 import type { XmlStore } from './xml-store';
 
 const ESTADOS_QUE_RECEBEM_XML: readonly EstadoDocumentoCheckpoint[] = [
@@ -139,10 +146,14 @@ export class CheckpointService {
    * Indeterminada gera BLOQUEADO e o arquivo pode existir para auditoria.
    * A mesma identidade não é recriada: a execução repetida devolve o checkpoint atual.
    */
-  async criarCheckpoint(inventario: InventarioNfse, execucaoId: string): Promise<CheckpointNfse> {
+  async criarCheckpoint(
+    inventario: InventarioNfse,
+    execucaoId: string,
+    opcoes?: OpcoesTravaCheckpoint
+  ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
     const id = validarExecucaoId(execucaoId);
-    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, async () => {
+    const corpo = async () => {
       const existente = await this.checkpoints.carregar(inventario.cnpj, inventario.periodoConsulta);
       if (existente) {
         conferirIdentidadeCheckpoint(existente, inventario);
@@ -151,7 +162,9 @@ export class CheckpointService {
       const novo = this.montar(inventario, id);
       await this.checkpoints.gravar(novo);
       return novo;
-    });
+    };
+    if (opcoes?.jaComTrava) return corpo();
+    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
   }
 
   /**
@@ -160,11 +173,16 @@ export class CheckpointService {
    * A chave, o CNPJ e a direção são os do documento deste checkpoint.
    * Indeterminada recusa a persistência automática do período inteiro.
    */
-  async persistirXml(inventario: InventarioNfse, chaveNacional: string, xml: string): Promise<CheckpointNfse> {
+  async persistirXml(
+    inventario: InventarioNfse,
+    chaveNacional: string,
+    xml: string,
+    opcoes?: OpcoesTravaCheckpoint
+  ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
     recusarIndeterminada(inventario);
     const chave = exigirChave(chaveNacional);
-    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, async () => {
+    const corpo = async () => {
       const atual = await this.exigirCompativel(inventario);
       const documento = this.documentoVigente(atual, inventario, chave);
       if (!ESTADOS_QUE_RECEBEM_XML.includes(documento.estado)) {
@@ -196,14 +214,20 @@ export class CheckpointService {
       }, this.agora());
       await this.checkpoints.gravar(proximo);
       return proximo;
-    });
+    };
+    if (opcoes?.jaComTrava) return corpo();
+    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
   }
 
-  async marcarEmProcessamento(inventario: InventarioNfse, chaveNacional: string): Promise<CheckpointNfse> {
+  async marcarEmProcessamento(
+    inventario: InventarioNfse,
+    chaveNacional: string,
+    opcoes?: OpcoesTravaCheckpoint
+  ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
     recusarIndeterminada(inventario);
     const chave = exigirChave(chaveNacional);
-    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, async () => {
+    const corpo = async () => {
       const atual = await this.exigirCompativel(inventario);
       const documento = this.documentoVigente(atual, inventario, chave);
       if (documento.estado !== 'PENDENTE' && documento.estado !== 'FALHA_TRANSITORIA') {
@@ -217,7 +241,9 @@ export class CheckpointService {
       }, this.agora());
       await this.checkpoints.gravar(proximo);
       return proximo;
-    });
+    };
+    if (opcoes?.jaComTrava) return corpo();
+    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
   }
 
   /**
@@ -228,7 +254,8 @@ export class CheckpointService {
     chaveNacional: string,
     classe: 'TRANSITORIA' | 'PERMANENTE',
     diagnostico: string,
-    codigo?: string
+    codigo?: string,
+    opcoes?: OpcoesTravaCheckpoint
   ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
     recusarIndeterminada(inventario);
@@ -240,7 +267,7 @@ export class CheckpointService {
     if (classe !== 'TRANSITORIA' && classe !== 'PERMANENTE') {
       throw new CheckpointNfseError('CLASSE_FALHA_INVALIDA', 'Classe de falha desconhecida.');
     }
-    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, async () => {
+    const corpo = async () => {
       const atual = await this.exigirCompativel(inventario);
       const documento = this.documentoVigente(atual, inventario, chave);
       if (documento.estado !== 'PENDENTE' && documento.estado !== 'EM_PROCESSAMENTO' && documento.estado !== 'FALHA_TRANSITORIA') {
@@ -254,7 +281,9 @@ export class CheckpointService {
       }, this.agora());
       await this.checkpoints.gravar(proximo);
       return proximo;
-    });
+    };
+    if (opcoes?.jaComTrava) return corpo();
+    return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
   }
 
   private async exigirCompativel(inventario: InventarioNfse): Promise<CheckpointNfse> {
