@@ -2,10 +2,15 @@
  * Confirmação de filtro, duplicidades e fechamento do inventário.
  * Documento sem chave válida não entra no inventário fiscal.
  */
+import {
+  CODIGO_SITUACAO_DESCONHECIDO,
+  CONFLITO_SITUACAO,
+  classificarSituacao,
+  evidenciasDaClassificacao,
+} from '../classification/situacao';
 import { criarDocumentoFiscal, type DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import { montarInventario, type EstadoCompletudeInventario } from '../contracts/inventario';
 import { criarPeriodoConsultaPortal, type PeriodoConsultaPortal } from '../contracts/periodo';
-import { descricoesDeEvidencia } from './row-parser';
 import type {
   DiagnosticoDescoberta,
   LeituraFiltroPortal,
@@ -171,19 +176,36 @@ export function fecharDescoberta(input: {
     if (!registro.chaveNacional || chavesBloqueadas.has(registro.chaveNacional)) continue;
     if (chavesIncluidas.has(registro.chaveNacional)) continue;
     chavesIncluidas.add(registro.chaveNacional);
-    const descricoes = descricoesDeEvidencia(registro.evidenciaSituacao);
+    const classificacao = classificarSituacao(registro.evidenciaSituacao);
+    if (classificacao.conflitos.includes(CONFLITO_SITUACAO)) {
+      diagnosticos.push({
+        codigo: CONFLITO_SITUACAO,
+        mensagem: 'A coluna Situação traz evidências atuais incompatíveis. A nota permanece indeterminada.',
+        direcao: registro.direcao,
+        pagina: registro.pagina,
+        linha: registro.linha,
+        chaveNacional: registro.chaveNacional,
+      });
+    }
+    if (classificacao.codigoSituacaoDesconhecido) {
+      diagnosticos.push({
+        codigo: CODIGO_SITUACAO_DESCONHECIDO,
+        mensagem: `Código data-situacao não observado: ${classificacao.codigoSituacaoDesconhecido}.`,
+        direcao: registro.direcao,
+        pagina: registro.pagina,
+        linha: registro.linha,
+        chaveNacional: registro.chaveNacional,
+      });
+    }
     documentos.push(
       criarDocumentoFiscal({
         chaveNacional: registro.chaveNacional,
         cnpj: input.cnpj,
         direcao: registro.direcao,
-        situacao: 'INDETERMINADA',
+        situacao: classificacao.situacao,
         periodoConsulta: input.periodoConsulta,
-        origemClassificacao: 'NAO_CLASSIFICADA',
-        evidencias: descricoes.map((descricao) => ({
-          origem: 'NAO_CLASSIFICADA' as const,
-          descricao,
-        })),
+        origemClassificacao: classificacao.origemClassificacao,
+        evidencias: evidenciasDaClassificacao(classificacao),
       })
     );
   }
