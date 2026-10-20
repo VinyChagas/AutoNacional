@@ -676,21 +676,23 @@ describe('integração controlada', () => {
 describe('concorrência e exclusividade 22.7.1', () => {
   it('13 duas execuções simultâneas mesmo CNPJ/período', async () => {
     const inv = inventario([documento(chave(1))]);
-    let liberarRecuperacao!: () => void;
-    const aguardar = new Promise<void>((resolve) => {
-      liberarRecuperacao = resolve;
+    const depsA = depsSimuladas(inv);
+    // Segura a trava fiscal antes da segunda execução (determinístico, sem sleep).
+    await depsA.repositorio.executarComExclusividadeFiscal(CNPJ, PERIODO, async () => {
+      await expect(
+        executarFluxoFiscalNativo({
+          page: PAGE,
+          cnpj: CNPJ,
+          periodoConsulta: PERIODO,
+          execucaoId: 'exec-conc-b',
+          tipo: 'emitidas',
+          baixarPdf: false,
+          raizFiscal: raiz,
+          dependencias: depsSimuladas(inv),
+        })
+      ).rejects.toMatchObject({ codigo: 'EXECUCAO_EM_USO' });
     });
-    const depsA = depsSimuladas(inv, {
-      recuperar: async (entrada) => {
-        await aguardar;
-        return recuperadoOk(entrada.chave);
-      },
-    });
-    const depsB = depsSimuladas(inv, {
-      recuperar: async (entrada) => recuperadoOk(entrada.chave),
-    });
-
-    const inicioA = executarFluxoFiscalNativo({
+    const resultadoA = await executarFluxoFiscalNativo({
       page: PAGE,
       cnpj: CNPJ,
       periodoConsulta: PERIODO,
@@ -700,24 +702,6 @@ describe('concorrência e exclusividade 22.7.1', () => {
       raizFiscal: raiz,
       dependencias: depsA,
     });
-
-    await new Promise((r) => setTimeout(r, 30));
-
-    await expect(
-      executarFluxoFiscalNativo({
-        page: PAGE,
-        cnpj: CNPJ,
-        periodoConsulta: PERIODO,
-        execucaoId: 'exec-conc-b',
-        tipo: 'emitidas',
-        baixarPdf: false,
-        raizFiscal: raiz,
-        dependencias: depsB,
-      })
-    ).rejects.toMatchObject({ codigo: 'EXECUCAO_EM_USO' });
-
-    liberarRecuperacao();
-    const resultadoA = await inicioA;
     expect(resultadoA.persistidos).toBe(1);
   });
 
