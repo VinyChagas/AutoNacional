@@ -92,6 +92,8 @@ function mapearErroInspecao(erro: ErroRecuperacaoSefin): InfraestruturaNfseError
       return new InfraestruturaNfseError('SENHA_INVALIDA', 'Senha do certificado A1 recusada.');
     case 'CERTIFICADO_EXPIRADO':
       return new InfraestruturaNfseError('CERTIFICADO_EXPIRADO', 'Certificado A1 expirado.');
+    case 'CERTIFICADO_AINDA_NAO_VALIDO':
+      return new InfraestruturaNfseError('CERTIFICADO_NAO_VIGENTE', 'Certificado A1 ainda não válido.');
     case 'CERTIFICADO_INDISPONIVEL':
       return new InfraestruturaNfseError('PFX_INVALIDO', 'PKCS#12 inválido ou sem certificado de cliente.');
     default:

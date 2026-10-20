@@ -3,9 +3,14 @@
  * Confirma chave e CNPJ pelo pai imediato: emit/prest/prestador e toma/tomador.
  * Ignora participante aninhado em outro (intermediário, emitente ou tomador).
  * dCompet é apenas metadado.
+ * Namespace oficial (Manual Integrado SNNFS-e): http://www.sped.fazenda.gov.br/nfse
+ * Parser próprio: não resolve entidades externas nem acessa rede.
  */
-import { ErroRecuperacaoSefin, type EstadoValidacaoXml } from './types';
+import { ErroRecuperacaoSefin, LIMITES_RECUPERACAO_PADRAO, type EstadoValidacaoXml } from './types';
 import type { DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
+
+/** URI oficial do leiaute nacional NFS-e (gov.br / Manual Integrado). */
+export const NAMESPACE_OFICIAL_NFSE = 'http://www.sped.fazenda.gov.br/nfse';
 
 export interface LeituraXmlNfse {
   validacao: EstadoValidacaoXml;
@@ -13,6 +18,7 @@ export interface LeituraXmlNfse {
   cnpjEmitente: string | null;
   cnpjTomador: string | null;
   dCompet: string | null;
+  namespace?: string | null;
 }
 
 export function validarXmlNfse(
@@ -23,8 +29,19 @@ export function validarXmlNfse(
   if (!texto) {
     throw new ErroRecuperacaoSefin('XML_VAZIO', 'PERMANENTE', 'XML vazio.');
   }
+  if (Buffer.byteLength(texto, 'utf8') > LIMITES_RECUPERACAO_PADRAO.maxBytesXml) {
+    throw new ErroRecuperacaoSefin('LIMITE_XML', 'PERMANENTE', 'O XML excede o limite configurado.');
+  }
   if (/<html[\s>]/i.test(texto)) {
     throw new ErroRecuperacaoSefin('HTML_NO_LUGAR_DE_XML', 'PERMANENTE', 'O conteúdo é HTML, não XML de NFS-e.');
+  }
+  // Sem resolução de entidade: DOCTYPE/ENTITY são recusados (mitigação XXE).
+  if (/<!DOCTYPE/i.test(texto) || /<!ENTITY/i.test(texto)) {
+    throw new ErroRecuperacaoSefin(
+      'XML_ENTIDADE_EXTERNA',
+      'PERMANENTE',
+      'XML com DOCTYPE ou ENTITY não é aceito.'
+    );
   }
 
   const arvore = lerArvore(texto);
@@ -32,7 +49,23 @@ export function validarXmlNfse(
     throw new ErroRecuperacaoSefin('XML_MALFORMADO', 'PERMANENTE', 'XML malformado.');
   }
   if (arvore.raiz !== 'NFSe' || !arvore.temInfNfse) {
-    return incompleta(arvore);
+    return incompleta(arvore, extrairNamespaceRaizNfse(texto));
+  }
+
+  const namespaceRaiz = extrairNamespaceRaizNfse(texto);
+  if (!namespaceRaiz) {
+    throw new ErroRecuperacaoSefin(
+      'NAMESPACE_AUSENTE',
+      'PERMANENTE',
+      'Raiz NFSe sem declaração de namespace oficial.'
+    );
+  }
+  if (namespaceRaiz !== NAMESPACE_OFICIAL_NFSE) {
+    throw new ErroRecuperacaoSefin(
+      'NAMESPACE_INVALIDO',
+      'PERMANENTE',
+      'Namespace da raiz NFSe diverge do leiaute nacional.'
+    );
   }
 
   const chaveXml = arvore.chave;
@@ -40,7 +73,7 @@ export function validarXmlNfse(
   const cnpjPapel = esperado.direcao === 'EMITIDA' ? arvore.cnpjEmitente : arvore.cnpjTomador;
 
   if (!chaveXml || !cnpjPapel) {
-    return incompleta(arvore);
+    return incompleta(arvore, namespaceRaiz);
   }
   if (chaveXml !== esperado.chave) {
     throw new ErroRecuperacaoSefin('CHAVE_DIVERGENTE', 'PERMANENTE', 'A chave do XML não é a chave consultada.');
@@ -61,17 +94,34 @@ export function validarXmlNfse(
     cnpjEmitente: arvore.cnpjEmitente,
     cnpjTomador: arvore.cnpjTomador,
     dCompet: arvore.dCompet,
+    namespace: namespaceRaiz,
   };
 }
 
-function incompleta(arvore: ArvoreXml): LeituraXmlNfse {
+function incompleta(arvore: ArvoreXml, namespace: string | null = null): LeituraXmlNfse {
   return {
     validacao: 'PENDENTE',
     chaveXml: arvore.chave,
     cnpjEmitente: arvore.cnpjEmitente,
     cnpjTomador: arvore.cnpjTomador,
     dCompet: arvore.dCompet,
+    namespace,
   };
+}
+
+/**
+ * Lê xmlns default ou xmlns:prefix na tag raiz NFSe.
+ * Não navega pela árvore e não resolve entidades.
+ */
+export function extrairNamespaceRaizNfse(xml: string): string | null {
+  const match = /<(?:[\w.-]+:)?NFSe\b([^>]*)>/i.exec(xml);
+  if (!match) return null;
+  const attrs = match[1] ?? '';
+  const padrao = /\sxmlns\s*=\s*["']([^"']+)["']/.exec(attrs);
+  if (padrao?.[1]) return padrao[1].trim();
+  const prefixado = /\sxmlns:[\w.-]+\s*=\s*["']([^"']+)["']/.exec(attrs);
+  if (prefixado?.[1]) return prefixado[1].trim();
+  return null;
 }
 
 interface ArvoreXml {

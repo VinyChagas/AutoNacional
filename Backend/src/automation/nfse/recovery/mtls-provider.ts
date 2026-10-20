@@ -26,8 +26,10 @@ export function inspecionarCredencialMtls(credencial: CredencialMtls, agora = ne
     );
   }
 
-  let validade: Date | null = null;
+  let notAfter: Date | null = null;
+  let notBefore: Date | null = null;
   try {
+    // node-forge espera DER. PKCS#12 BER com encoding não canônico pode falhar aqui.
     const asn1 = forge.asn1.fromDer(credencial.pfx.toString('binary'));
     const p12 = forge.pkcs12.pkcs12FromAsn1(asn1, credencial.senha);
     const certificado = certificadoDeCliente(p12);
@@ -38,7 +40,8 @@ export function inspecionarCredencialMtls(credencial: CredencialMtls, agora = ne
         'O PKCS#12 não contém certificado de cliente.'
       );
     }
-    validade = certificado.validity.notAfter ?? null;
+    notAfter = certificado.validity.notAfter ?? null;
+    notBefore = certificado.validity.notBefore ?? null;
   } catch (erro) {
     if (erro instanceof ErroRecuperacaoSefin) throw erro;
     const mensagem = erro instanceof Error ? erro.message.toLowerCase() : '';
@@ -56,7 +59,14 @@ export function inspecionarCredencialMtls(credencial: CredencialMtls, agora = ne
     );
   }
 
-  if (validade && validade.getTime() < agora.getTime()) {
+  if (notBefore && notBefore.getTime() > agora.getTime()) {
+    throw new ErroRecuperacaoSefin(
+      'CERTIFICADO_AINDA_NAO_VALIDO',
+      'PERMANENTE',
+      'Certificado A1 ainda não válido.'
+    );
+  }
+  if (notAfter && notAfter.getTime() < agora.getTime()) {
     throw new ErroRecuperacaoSefin(
       'CERTIFICADO_EXPIRADO',
       'PERMANENTE',
