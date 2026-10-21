@@ -1,6 +1,7 @@
 export { discoverNfse } from './discovery-service';
 export type { DiscoverNfseInput } from './discovery-service';
 export { executarDescoberta } from './discovery-runner';
+export { exigirControleDescoberta } from './controle-descoberta';
 export { analisarHrefDownload, extrairChaveDaLinha } from './chave';
 export { interpretarHtmlTabela, registroDaLinha } from './row-parser';
 export {
@@ -11,7 +12,9 @@ export {
 } from './pagination';
 export { confirmarFiltroAplicado, urlConfirmaPesquisa } from './discovery-validation';
 export type {
+  ControleDescoberta,
   DiagnosticoDescoberta,
+  EtapaControleDescoberta,
   EvidenciaSituacaoBruta,
   LeituraFiltroPortal,
   LinhaListagem,

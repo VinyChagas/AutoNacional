@@ -1,13 +1,12 @@
 /**
- * Adaptador injetável H2.1 — DISCOVERY_ONLY.
+ * Adaptador injetável H2.1 / H2.1.1 — DISCOVERY_ONLY.
  *
- * Reutiliza Page autenticada e discoverNfse (injetável).
- * Exige AutorizacaoHomologacaoNfse completa antes de qualquer navegação fiscal.
- * Não cria navegador, login, CAPTCHA, worker, scheduler nem cliente HTTP.
- * Não invoca SEFIN, persistência XML nem checkpoint de recuperação.
+ * Orçamento GLOBAL de páginas e documentos entre EMITIDAS e RECEBIDAS.
+ * Propaga AbortSignal + timeout cooperativo até a descoberta (por página).
+ * Não cancela Playwright em voo — apenas impede novas etapas.
  *
- * Isolamento: não está ligado ao execution-service. Sem canal seguro de
- * autorização H1, permanece inacessível às execuções normais.
+ * Isolamento: não ligado ao execution-service. Sem canal seguro H1, inacessível
+ * às execuções normais.
  */
 import type { Page } from 'playwright';
 import type { DocumentoFiscalNfse } from '../contracts/documento-fiscal';
@@ -19,6 +18,7 @@ import {
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
 import type { DiscoverNfseInput } from '../discovery/discovery-service';
 import type {
+  ControleDescoberta,
   DiagnosticoDescoberta,
   ResultadoDescobertaNfse,
   TipoConsultaDescoberta,
@@ -28,6 +28,10 @@ import {
   mascararCnpjHomologacao,
   registrarEvidenciaHomologacao,
 } from './evidencias';
+import {
+  persistirEvidenciasHomologacao,
+  type PersistenciaEvidenciasHomologacao,
+} from './evidencias-persistencia';
 import { ControladorLimitesHomologacao } from './limites';
 import { avaliarGateHomologacao } from './modos';
 import {
@@ -55,34 +59,37 @@ export type DiscoverNfseInjetavel = (
 
 export interface EntradaDiscoveryOnlyHomologacao {
   readonly autorizacao: AutorizacaoHomologacaoNfse | null | undefined;
-  /** Page já autenticada pelo AutoNacional — nunca criada aqui. */
   readonly page: Page;
   readonly cnpj: string;
   readonly periodoConsulta: PeriodoConsultaPortal;
   readonly execucaoId: string;
   readonly diretorioFiscal: string;
-  /** Obrigatório: injeta discoverNfse real ou mock offline. Sem default automático. */
   readonly discover: DiscoverNfseInjetavel;
   readonly agora?: Date;
-  /** Relógio de início dos limites (testes de timeout). Padrão: agora. */
   readonly inicioLimitesEm?: Date;
+  /** Relógio para timeout durante paginação (testes). Padrão: agora fixo. */
+  readonly relogio?: () => Date;
   readonly signal?: AbortSignal;
+  /** Se true, grava evidências no diretório autorizado (atômico). */
+  readonly persistirEvidencias?: boolean;
 }
 
 /**
  * Executa descoberta controlada EMITIDAS + RECEBIDAS sob autorização H1.
- * Qualquer falha de autorização aborta sem chamar `discover`.
  */
 export async function executarDiscoveryOnlyHomologacao(
   entrada: EntradaDiscoveryOnlyHomologacao
 ): Promise<ResultadoDiscoveryOnlyHomologacao> {
   const evidencias: EvidenciaHomologacaoSegura[] = [];
   const agora = entrada.agora ?? new Date();
+  const agoraAtual = (): Date => entrada.relogio?.() ?? agora;
   const diagnosticos: DiagnosticoDescoberta[] = [];
   let inventariosParciais: InventarioNfse[] = [];
   let paginasTotais = 0;
   let codigoErro: CodigoErroHomologacao | null = null;
+  let cancelado = false;
   let limitesAplicados = entrada.autorizacao?.limites;
+  let persistencia: PersistenciaEvidenciasHomologacao | null = null;
 
   const registrar = (
     evento: string,
@@ -95,11 +102,12 @@ export async function executarDiscoveryOnlyHomologacao(
       registrarEvidenciaHomologacao({
         execucaoId: String(base.execucaoId),
         cnpj: String(base.cnpj ?? entrada.cnpj),
-        periodoConsulta: (base as AutorizacaoHomologacaoNfse).periodoConsulta ?? entrada.periodoConsulta,
+        periodoConsulta:
+          (base as AutorizacaoHomologacaoNfse).periodoConsulta ?? entrada.periodoConsulta,
         operacao: 'DISCOVERY_ONLY',
         evento,
         detalhes,
-        agora,
+        agora: agoraAtual(),
       })
     );
   };
@@ -133,6 +141,7 @@ export async function executarDiscoveryOnlyHomologacao(
         maxPaginas: auth.limites.maxPaginas,
         timeoutMs: auth.limites.timeoutMs,
         maxRequisicoesSefin: auth.limites.maxRequisicoesSefin,
+        orcamentoPaginas: 'global',
       },
       auth
     );
@@ -142,37 +151,102 @@ export async function executarDiscoveryOnlyHomologacao(
       entrada.inicioLimitesEm ?? agora
     );
 
+    const controle: ControleDescoberta = {
+      signal: entrada.signal,
+      antesDeOperacao: () => {
+        verificarInterrupcaoExterna(entrada.signal, limites);
+        limites.exigirDentroDoTimeout(agoraAtual());
+      },
+    };
+
     for (const tipo of DIRECOES) {
       verificarInterrupcaoExterna(entrada.signal, limites);
-      // Mesmo relógio da autorização/evidências (não Date.now() absoluto).
-      limites.exigirDentroDoTimeout(agora);
+      limites.exigirDentroDoTimeout(agoraAtual());
 
-      const resultado = await entrada.discover({
-        page: entrada.page,
-        cnpj: auth.cnpj,
-        periodoConsulta: auth.periodoConsulta,
-        tipo,
-        maxPaginas: auth.limites.maxPaginas,
-      });
+      const paginasRestantes = limites.paginasRestantes();
+      const docsRestantes = limites.documentosRestantes();
+      if (paginasRestantes < 1) {
+        codigoErro = 'LIMITE_PAGINAS';
+        limites.interromper('Orçamento global de páginas esgotado.', 'LIMITE_PAGINAS');
+        registrar('discovery_only_limite_paginas', { tipo, motivo: 'orcamento_esgotado' }, auth);
+        break;
+      }
+
+      let resultado: ResultadoDescobertaNfse;
+      try {
+        resultado = await entrada.discover({
+          page: entrada.page,
+          cnpj: auth.cnpj,
+          periodoConsulta: auth.periodoConsulta,
+          tipo,
+          maxPaginas: paginasRestantes,
+          maxDocumentos: docsRestantes,
+          controle,
+        });
+      } catch (erroDiscover) {
+        if (erroDiscover instanceof HomologacaoNfseError) {
+          if (
+            erroDiscover.codigo === 'TIMEOUT' ||
+            erroDiscover.codigo === 'INTERRUPCAO' ||
+            erroDiscover.codigo === 'LIMITE_PAGINAS' ||
+            erroDiscover.codigo === 'LIMITE_DOCUMENTOS'
+          ) {
+            cancelado = true;
+            codigoErro = erroDiscover.codigo;
+            registrar(
+              'discovery_only_interrupcao',
+              { tipo, codigo: erroDiscover.codigo },
+              auth
+            );
+            break;
+          }
+          throw erroDiscover;
+        }
+        throw erroDiscover;
+      }
+
+      // Pós-direção: timeout / abort antes de registrar resultado da direção.
+      try {
+        verificarInterrupcaoExterna(entrada.signal, limites);
+        limites.exigirDentroDoTimeout(agoraAtual());
+      } catch (erroPos) {
+        if (erroPos instanceof HomologacaoNfseError) {
+          cancelado = true;
+          codigoErro = erroPos.codigo;
+          inventariosParciais.push(resultado.inventario);
+          paginasTotais += resultado.paginasPercorridas;
+          diagnosticos.push(...resultado.diagnosticos);
+          registrar(
+            'discovery_only_interrupcao',
+            { tipo, codigo: erroPos.codigo, fase: 'pos_direcao' },
+            auth
+          );
+          break;
+        }
+        throw erroPos;
+      }
 
       diagnosticos.push(...resultado.diagnosticos);
       inventariosParciais.push(resultado.inventario);
       paginasTotais += resultado.paginasPercorridas;
 
-      const incompletoPorPaginas =
-        resultado.status === 'DISCOVERY_INCOMPLETE' &&
-        resultado.diagnosticos.some((d) =>
-          /limite|página|pagina/i.test(`${d.codigo} ${d.mensagem}`)
-        );
+      const atingiuLimitePaginas = resultado.diagnosticos.some((d) => d.codigo === 'LIMITE_PAGINAS');
+      const atingiuLimiteDocs = resultado.diagnosticos.some((d) => d.codigo === 'LIMITE_DOCUMENTOS');
+      const interrompidoNaDescoberta = resultado.diagnosticos.some((d) => d.codigo === 'INTERRUPCAO');
 
       try {
-        limites.registrarPaginasDirecao(resultado.paginasPercorridas, incompletoPorPaginas);
+        limites.registrarPaginas(
+          resultado.paginasPercorridas,
+          atingiuLimitePaginas || resultado.status === 'DISCOVERY_INCOMPLETE'
+            ? atingiuLimitePaginas
+            : false
+        );
       } catch (erroLimite) {
         if (erroLimite instanceof HomologacaoNfseError && erroLimite.codigo === 'LIMITE_PAGINAS') {
           codigoErro = 'LIMITE_PAGINAS';
           registrar(
             'discovery_only_limite_paginas',
-            { tipo, paginas: resultado.paginasPercorridas },
+            { tipo, paginas: resultado.paginasPercorridas, global: limites.contagem().paginas },
             auth
           );
           break;
@@ -199,14 +273,35 @@ export async function executarDiscoveryOnlyHomologacao(
         throw erroDoc;
       }
 
+      if (atingiuLimiteDocs) {
+        codigoErro = 'LIMITE_DOCUMENTOS';
+        registrar('discovery_only_limite_documentos', { tipo, origem: 'descoberta' }, auth);
+        break;
+      }
+
+      if (interrompidoNaDescoberta) {
+        cancelado = true;
+        codigoErro = 'INTERRUPCAO';
+        registrar('discovery_only_interrupcao', { tipo, origem: 'descoberta' }, auth);
+        break;
+      }
+
       if (resultado.status === 'DISCOVERY_FAILED') {
         codigoErro = 'INVENTARIO_INCOMPLETO';
         registrar('discovery_only_falha_direcao', { tipo, status: resultado.status }, auth);
         break;
       }
 
-      if (resultado.status === 'DISCOVERY_INCOMPLETE') {
-        codigoErro = codigoErro ?? 'INVENTARIO_INCOMPLETO';
+      if (resultado.status === 'DISCOVERY_INCOMPLETE' || atingiuLimitePaginas) {
+        codigoErro = codigoErro ?? (atingiuLimitePaginas ? 'LIMITE_PAGINAS' : 'INVENTARIO_INCOMPLETO');
+        if (atingiuLimitePaginas) {
+          registrar(
+            'discovery_only_limite_paginas',
+            { tipo, paginas: resultado.paginasPercorridas },
+            auth
+          );
+          break;
+        }
       }
 
       registrar(
@@ -216,9 +311,23 @@ export async function executarDiscoveryOnlyHomologacao(
           status: resultado.status,
           documentos: resultado.inventario.totais.descobertos,
           paginas: resultado.paginasPercorridas,
+          paginasGlobais: limites.contagem().paginas,
         },
         auth
       );
+    }
+
+    // Antes do resultado final: não declarar PASS após cancelamento.
+    try {
+      verificarInterrupcaoExterna(entrada.signal, limites);
+      limites.exigirDentroDoTimeout(agoraAtual());
+    } catch (erroFinal) {
+      if (erroFinal instanceof HomologacaoNfseError) {
+        cancelado = true;
+        codigoErro = erroFinal.codigo;
+      } else {
+        throw erroFinal;
+      }
     }
 
     const inventario = consolidarInventarios(
@@ -226,10 +335,14 @@ export async function executarDiscoveryOnlyHomologacao(
       auth.cnpj,
       auth.periodoConsulta,
       inventariosParciais,
-      codigoErro != null || limites.foiInterrompido()
+      codigoErro != null || limites.foiInterrompido() || cancelado
     );
 
-    const veredito = decidirVeredito(inventario.completude, codigoErro, diagnosticos);
+    let veredito = decidirVeredito(inventario.completude, codigoErro, diagnosticos, cancelado);
+    if (cancelado && veredito === 'PASS') {
+      veredito = 'INCOMPLETO';
+      codigoErro = codigoErro ?? 'INTERRUPCAO';
+    }
     if (veredito === 'INCOMPLETO' && codigoErro == null) {
       codigoErro = 'INVENTARIO_INCOMPLETO';
     }
@@ -246,11 +359,12 @@ export async function executarDiscoveryOnlyHomologacao(
         indeterminadas: inventario.totais.indeterminadas,
         paginas: paginasTotais,
         codigoErro: codigoErro ?? null,
+        cancelado,
       },
       auth
     );
 
-    return montarResultado({
+    const resultadoBase = montarResultado({
       auth,
       inventario,
       paginasTotais,
@@ -260,6 +374,33 @@ export async function executarDiscoveryOnlyHomologacao(
       codigoErro: veredito === 'PASS' ? null : codigoErro,
       limitesAplicados: auth.limites,
     });
+
+    if (entrada.persistirEvidencias) {
+      persistencia = await persistirEvidenciasHomologacao({
+        diretorioFiscal: auth.diretorioFiscal,
+        execucaoId: auth.execucaoId,
+        evidencias,
+        resultado: resultadoBase,
+        agora: agoraAtual(),
+      });
+      evidencias.push(
+        registrarEvidenciaHomologacao({
+          execucaoId: auth.execucaoId,
+          cnpj: auth.cnpj,
+          periodoConsulta: auth.periodoConsulta,
+          operacao: 'DISCOVERY_ONLY',
+          evento: 'discovery_only_evidencia_persistida',
+          detalhes: {
+            caminho: pathBasename(persistencia.caminho),
+            bytes: persistencia.bytes,
+          },
+          agora: agoraAtual(),
+        })
+      );
+      return { ...resultadoBase, evidencias: [...evidencias] };
+    }
+
+    return resultadoBase;
   } catch (erro) {
     const codigo =
       erro instanceof HomologacaoNfseError ? erro.codigo : ('CONTEXTO_INVALIDO' as const);
@@ -279,26 +420,24 @@ export async function executarDiscoveryOnlyHomologacao(
         operacao: 'DISCOVERY_ONLY',
         evento: 'discovery_only_erro',
         detalhes: { codigo, mensagem: sanitizarMensagem(mensagem) },
-        agora,
+        agora: agoraAtual(),
       })
     );
 
     const docsParciais = inventariosParciais.flatMap((i) => i.documentos);
-    const totaisParciais = {
-      emitidas: docsParciais.filter((d) => d.direcao === 'EMITIDA').length,
-      recebidas: docsParciais.filter((d) => d.direcao === 'RECEBIDA').length,
-      vigentes: docsParciais.filter((d) => d.situacao === 'VIGENTE').length,
-      canceladas: docsParciais.filter((d) => d.situacao === 'CANCELADA').length,
-      indeterminadas: docsParciais.filter((d) => d.situacao === 'INDETERMINADA').length,
-      paginas: paginasTotais,
-    };
-
     return {
       execucaoId: entrada.execucaoId,
       cnpjMascarado: mascararCnpjHomologacao(entrada.cnpj),
       periodoConsulta: entrada.periodoConsulta,
       veredito: 'FAIL',
-      totais: totaisParciais,
+      totais: {
+        emitidas: docsParciais.filter((d) => d.direcao === 'EMITIDA').length,
+        recebidas: docsParciais.filter((d) => d.direcao === 'RECEBIDA').length,
+        vigentes: docsParciais.filter((d) => d.situacao === 'VIGENTE').length,
+        canceladas: docsParciais.filter((d) => d.situacao === 'CANCELADA').length,
+        indeterminadas: docsParciais.filter((d) => d.situacao === 'INDETERMINADA').length,
+        paginas: paginasTotais,
+      },
       estadoInventario: docsParciais.length > 0 ? 'PARCIAL' : 'INDETERMINADO',
       diagnosticos: [
         ...diagnosticos.map((d) => ({
@@ -363,8 +502,12 @@ function consolidarInventarios(
 function decidirVeredito(
   completude: EstadoCompletudeInventario,
   codigoErro: CodigoErroHomologacao | null,
-  diagnosticos: readonly DiagnosticoDescoberta[]
+  diagnosticos: readonly DiagnosticoDescoberta[],
+  cancelado: boolean
 ): VereditoDiscoveryOnly {
+  if (cancelado) {
+    return codigoErro === 'TIMEOUT' || codigoErro === 'INTERRUPCAO' ? 'FAIL' : 'INCOMPLETO';
+  }
   if (
     codigoErro &&
     codigoErro !== 'INVENTARIO_INCOMPLETO' &&
@@ -378,7 +521,9 @@ function decidirVeredito(
   if (completude !== 'COMPLETO' || codigoErro != null) {
     return 'INCOMPLETO';
   }
-  if (diagnosticos.some((d) => d.codigo === 'DUPLICIDADE' || d.codigo === 'CHAVE_EM_AMBAS_DIRECOES')) {
+  if (
+    diagnosticos.some((d) => d.codigo === 'DUPLICIDADE' || d.codigo === 'CHAVE_EM_AMBAS_DIRECOES')
+  ) {
     return 'INCOMPLETO';
   }
   return 'PASS';
@@ -430,4 +575,9 @@ function sanitizarMensagem(mensagem: string): string {
     .replace(/passphrase[=:\s]\S+/gi, 'passphrase=***')
     .replace(/\b\d{50}\b/g, '[chave-omitida]')
     .slice(0, 200);
+}
+
+function pathBasename(caminho: string): string {
+  const partes = caminho.replace(/\\/g, '/').split('/');
+  return partes[partes.length - 1] ?? caminho;
 }

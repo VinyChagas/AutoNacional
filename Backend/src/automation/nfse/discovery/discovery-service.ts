@@ -6,7 +6,11 @@ import { getLogger } from '../../../infrastructure/logger';
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
 import { executarDescoberta } from './discovery-runner';
 import { criarPortalDaPage } from './page-capture';
-import type { ResultadoDescobertaNfse, TipoConsultaDescoberta } from './types';
+import type {
+  ControleDescoberta,
+  ResultadoDescobertaNfse,
+  TipoConsultaDescoberta,
+} from './types';
 
 const logger = getLogger('nfse-discovery');
 
@@ -15,7 +19,11 @@ export interface DiscoverNfseInput {
   cnpj: string;
   periodoConsulta: PeriodoConsultaPortal;
   tipo: TipoConsultaDescoberta;
+  /** Orçamento de páginas desta chamada (restante global na homologação). */
   maxPaginas?: number;
+  /** Orçamento de documentos desta chamada (restante global). */
+  maxDocumentos?: number;
+  controle?: ControleDescoberta;
 }
 
 export async function discoverNfse(input: DiscoverNfseInput): Promise<ResultadoDescobertaNfse> {
@@ -28,6 +36,8 @@ export async function discoverNfse(input: DiscoverNfseInput): Promise<ResultadoD
     periodoConsulta: input.periodoConsulta,
     tipo: input.tipo,
     maxPaginas: input.maxPaginas,
+    maxDocumentos: input.maxDocumentos,
+    controle: input.controle,
   });
   logger.info(
     {

@@ -25,6 +25,7 @@ export type CodigoErroHomologacao =
   | 'SITUACAO_INDETERMINADA'
   | 'CERTIFICADO_INDISPONIVEL'
   | 'INTERRUPCAO'
+  | 'FALHA_EVIDENCIA'
   | 'CONTEXTO_INVALIDO';
 
 export class HomologacaoNfseError extends Error {

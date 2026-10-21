@@ -1,6 +1,6 @@
 /**
- * Controle de limites operacionais de homologação H1/H2.1.
- * Aplicado antes de cada operação correspondente. Sem retries ilimitados.
+ * Controle de limites operacionais de homologação H1/H2.1.1.
+ * maxPaginas e maxDocumentos são orçamentos GLOBAIS da execução.
  */
 import {
   HomologacaoNfseError,
@@ -36,12 +36,20 @@ export class ControladorLimitesHomologacao {
   estado(): EstadoLimitesHomologacao {
     if (this.interrompido) return this.codigoInterrupcao;
     if (this.documentos > this.limites.maxDocumentos) return 'LIMITE_DOCUMENTOS';
-    if (this.paginas > this.limites.maxPaginas * 2) return 'LIMITE_PAGINAS';
+    if (this.paginas > this.limites.maxPaginas) return 'LIMITE_PAGINAS';
     if (this.requisicoesSefin > this.limites.maxRequisicoesSefin) return 'LIMITE_REQUISICOES';
     return 'OK';
   }
 
-  /** Antes de aceitar um inventário / lote de documentos. */
+  paginasRestantes(): number {
+    return Math.max(0, this.limites.maxPaginas - this.paginas);
+  }
+
+  documentosRestantes(): number {
+    return Math.max(0, this.limites.maxDocumentos - this.documentos);
+  }
+
+  /** Antes de aceitar um inventário / lote de documentos (total acumulado). */
   exigirDocumentos(quantidade: number): void {
     this.garantirAtivo();
     if (!Number.isInteger(quantidade) || quantidade < 0) {
@@ -58,23 +66,31 @@ export class ControladorLimitesHomologacao {
   }
 
   /**
-   * Registra páginas percorridas em uma direção.
-   * Se a descoberta atingiu o teto sem completar, marca interrupção de páginas
-   * para o adaptador declarar inventário INCOMPLETO (nunca cobertura 100%).
+   * Registra páginas no orçamento GLOBAL.
+   * `descobertaIncompletaPorPaginas` força inventário incompleto (nunca cobertura 100%).
    */
-  registrarPaginasDirecao(paginasPercorridas: number, descobertaIncompletaPorPaginas: boolean): void {
+  registrarPaginas(paginasPercorridas: number, descobertaIncompletaPorPaginas: boolean): void {
     this.garantirAtivo();
     if (!Number.isInteger(paginasPercorridas) || paginasPercorridas < 0) {
       throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'Quantidade de páginas inválida.');
     }
-    this.paginas += paginasPercorridas;
-    if (descobertaIncompletaPorPaginas || paginasPercorridas > this.limites.maxPaginas) {
-      this.interromper('Limite de páginas atingido.', 'LIMITE_PAGINAS');
+    const total = this.paginas + paginasPercorridas;
+    this.paginas = total;
+    if (descobertaIncompletaPorPaginas || total > this.limites.maxPaginas) {
+      this.interromper('Limite global de páginas atingido.', 'LIMITE_PAGINAS');
       throw new HomologacaoNfseError(
         'LIMITE_PAGINAS',
-        `Limite de páginas atingido (${paginasPercorridas} / max ${this.limites.maxPaginas} por direção).`
+        `Limite global de páginas atingido (${total} / max ${this.limites.maxPaginas}).`
       );
     }
+  }
+
+  /** @deprecated Use registrarPaginas — mantido para compatibilidade H1/H2.1. */
+  registrarPaginasDirecao(
+    paginasPercorridas: number,
+    descobertaIncompletaPorPaginas: boolean
+  ): void {
+    this.registrarPaginas(paginasPercorridas, descobertaIncompletaPorPaginas);
   }
 
   /** Antes de cada requisição SEFIN simulada ou real. */
@@ -91,7 +107,7 @@ export class ControladorLimitesHomologacao {
     this.requisicoesSefin = proxima;
   }
 
-  /** Antes de nova direção / navegação fiscal. */
+  /** Antes de nova direção / página / navegação fiscal. */
   exigirDentroDoTimeout(agora?: Date): void {
     this.garantirAtivo();
     const agoraMs = (agora ?? new Date()).getTime();

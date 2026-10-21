@@ -101,3 +101,22 @@ export interface PortalListagem {
   capturar(pagina: number, direcao: DirecaoDocumentoFiscal): Promise<PaginaListagem>;
   avancar(direcao: DirecaoDocumentoFiscal): Promise<boolean>;
 }
+
+/** Etapas cooperativas para timeout / AbortSignal (H2.1.1). */
+export const ETAPAS_CONTROLE_DESCOBERTA = [
+  'antes_navegacao',
+  'antes_pagina',
+  'antes_extracao',
+  'apos_pagina',
+  'antes_avancar',
+] as const;
+export type EtapaControleDescoberta = (typeof ETAPAS_CONTROLE_DESCOBERTA)[number];
+
+/**
+ * Controle cooperativo injetável.
+ * Não cancela Playwright em voo — apenas impede novas etapas.
+ */
+export interface ControleDescoberta {
+  readonly signal?: AbortSignal;
+  readonly antesDeOperacao?: (etapa: EtapaControleDescoberta) => void;
+}

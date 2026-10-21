@@ -10,6 +10,8 @@ export {
   registrarEvidenciaHomologacao,
   evidenciaContemSegredo,
 } from './evidencias';
+export { persistirEvidenciasHomologacao } from './evidencias-persistencia';
+export type { PersistenciaEvidenciasHomologacao } from './evidencias-persistencia';
 export {
   avaliarGateHomologacao,
   prepararDiscoveryOnly,

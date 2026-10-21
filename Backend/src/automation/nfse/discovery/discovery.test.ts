@@ -572,7 +572,7 @@ describe('descoberta da listagem', () => {
       tipo: 'EMITIDAS',
       maxPaginas: 1,
     });
-    expect(resultado.status).toBe('DISCOVERY_FAILED');
+    expect(resultado.status).toBe('DISCOVERY_INCOMPLETE');
     expect(resultado.diagnosticos.some((item) => item.codigo === 'LIMITE_PAGINAS')).toBe(true);
     expect(controle.avancos).toBe(0);
   });

@@ -241,8 +241,8 @@ describe('H2.1 DISCOVERY_ONLY — autorização e isolamento', () => {
         paginasPercorridas: input.maxPaginas ?? 1,
         diagnosticos: [
           {
-            codigo: 'LIMITE_SEGURANCA_PAGINAS',
-            mensagem: `Limite de segurança de ${input.maxPaginas} páginas atingido.`,
+            codigo: 'LIMITE_PAGINAS',
+            mensagem: `Limite de ${input.maxPaginas} páginas atingido.`,
           },
         ],
       });
@@ -366,7 +366,8 @@ describe('H2.1 DISCOVERY_ONLY — autorização e isolamento', () => {
       discover,
       agora: AGORA,
     });
-    expect(maxRecebidos).toEqual([7, 7]);
+    // Orçamento GLOBAL: 1ª direção recebe 7; após 1 página restam 6.
+    expect(maxRecebidos).toEqual([7, 6]);
   });
 
   it('16 canceladas permanecem no inventário', async () => {
