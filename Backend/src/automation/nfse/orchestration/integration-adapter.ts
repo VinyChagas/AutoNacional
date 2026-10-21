@@ -204,6 +204,7 @@ export async function tentarFluxoNativoControlado(
     tipo,
     baixarPdf: ctx.baixarPdf,
     raizFiscal: raiz,
+    liberarNavegadorAposDescoberta: ctx.liberarNavegadorAposDescoberta,
     dependencias: {
       descobrir: discoverNfse,
       recuperar: recuperarXmlNfse,

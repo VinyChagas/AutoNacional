@@ -15,10 +15,17 @@ import type { CompetenciaFiscalXml, PeriodoConsultaPortal } from '../contracts/p
 export const CODIGO_DATA_SITUACAO_CANCELADA = 'P104_NFSE_CANCELADA';
 
 /**
- * Nenhum código data-situacao de vigência foi observado.
- * A lista fica vazia de propósito: código desconhecido não vira vigente.
+ * Código observado no Portal (piloto 7610) para NFS-e gerada/válida.
+ * Alinha ao ícone `tb-gerada.svg` / título "NFS-e Gerada" já tratados como VIGENTE.
+ * Outros códigos data-situacao continuam indeterminados até observação explícita.
  */
-export const CODIGOS_DATA_SITUACAO_VIGENTE: readonly string[] = [];
+export const CODIGO_DATA_SITUACAO_GERADA = 'P100_GERADA';
+
+/**
+ * Códigos data-situacao de vigência observados no Portal.
+ * Código fora desta lista (e ≠ cancelada) permanece INDETERMINADA — sem auto-validar.
+ */
+export const CODIGOS_DATA_SITUACAO_VIGENTE: readonly string[] = [CODIGO_DATA_SITUACAO_GERADA];
 
 export const CONFLITO_SITUACAO = 'CONFLITO_SITUACAO';
 export const CODIGO_SITUACAO_DESCONHECIDO = 'CODIGO_SITUACAO_DESCONHECIDO';
@@ -79,6 +86,17 @@ export function classificarSituacao(evidencia: EvidenciaColunaSituacao): Classif
       fonte: 'tr.data-situacao',
       evidenciaDeterminante: `data-situacao=${codigo}`,
       evidencias: [`data-situacao=${codigo}`, ...brutas, ...notasDeHistorico(sinais)],
+      conflitos: [],
+      codigoSituacaoDesconhecido: null,
+    });
+  }
+
+  if (codigo === CODIGO_DATA_SITUACAO_GERADA) {
+    return fechar({
+      situacao: 'VIGENTE',
+      fonte: 'tr.data-situacao',
+      evidenciaDeterminante: `data-situacao=${codigo}`,
+      evidencias: [`data-situacao=${codigo}`, ...brutas],
       conflitos: [],
       codigoSituacaoDesconhecido: null,
     });

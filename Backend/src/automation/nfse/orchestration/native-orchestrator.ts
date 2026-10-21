@@ -65,12 +65,16 @@ export async function executarFluxoFiscalNativo(
   }
 
   const deps = entrada.dependencias;
-  const { inventario, resumoFalhasDescoberta } = await descobrirInventario(
-    entrada,
-    deps,
-    cnpj,
-    periodo
-  );
+  let inventario: InventarioNfse;
+  let resumoFalhasDescoberta: string[] = [];
+  try {
+    const descoberta = await descobrirInventario(entrada, deps, cnpj, periodo);
+    inventario = descoberta.inventario;
+    resumoFalhasDescoberta = descoberta.resumoFalhasDescoberta;
+  } finally {
+    // API-02Q — Chromium só serve à descoberta Portal; SEFIN é mTLS sem browser.
+    await liberarNavegadorAposDescoberta(entrada);
+  }
 
   if (inventario.completude !== 'COMPLETO') {
     const detalhe =
@@ -84,6 +88,19 @@ export async function executarFluxoFiscalNativo(
       'SITUACAO_INDETERMINADA',
       'Nota indeterminada bloqueia a recuperação automática.'
     );
+  }
+
+  // Descoberta completa sem documentos (ex.: emitidas+recebidas vazias) → SEM_MOVIMENTO, sem SEFIN.
+  if (inventario.totais.descobertos === 0) {
+    const resultado = resultadoSemMovimento(entrada, cnpj, periodo, inventario);
+    if (avisoPdf) {
+      resultado.compatibilidadePdf = 'PDF_NAO_RECUPERADO';
+      resultado.diagnosticos.push({
+        codigo: 'PDF_NAO_RECUPERADO',
+        mensagem: 'Fluxo Portal+SEFIN é XML-only; DANFS-e/PDF não será recuperado nesta execução.',
+      });
+    }
+    return resultado;
   }
 
   let credencial;
@@ -118,6 +135,50 @@ export async function executarFluxoFiscalNativo(
     }
     throw erro;
   }
+}
+
+async function liberarNavegadorAposDescoberta(entrada: EntradaFluxoFiscalNativo): Promise<void> {
+  if (!entrada.liberarNavegadorAposDescoberta) return;
+  try {
+    await entrada.liberarNavegadorAposDescoberta();
+  } catch {
+    /* fechamento best-effort; SEFIN/mTLS não depende da Page */
+  }
+}
+
+function resultadoSemMovimento(
+  entrada: EntradaFluxoFiscalNativo,
+  cnpj: string,
+  periodo: PeriodoConsultaPortal,
+  inventario: InventarioNfse
+): ResultadoFluxoFiscalNativo {
+  return {
+    modo: 'NATIVO_CONTROLADO',
+    execucaoId: entrada.execucaoId,
+    cnpj,
+    periodoConsulta: periodo,
+    inventario,
+    descobertos: 0,
+    vigentes: 0,
+    canceladas: 0,
+    indeterminadas: 0,
+    persistidos: 0,
+    pendentes: 0,
+    coberturaPercentual: 100,
+    conclusaoReconciliacao: 'RECONCILIADA',
+    estadoAuditoria: null,
+    caminhoAuditoria: null,
+    documentosAptos: [],
+    loteLiberado: true,
+    compatibilidadePdf: 'NAO_APLICAVEL',
+    diagnosticos: [
+      {
+        codigo: 'SEM_MOVIMENTO',
+        mensagem: 'Descoberta completa sem documentos — SEFIN não acionado.',
+      },
+    ],
+    recuperacoes: [],
+  };
 }
 
 async function executarSequenciaCritica(

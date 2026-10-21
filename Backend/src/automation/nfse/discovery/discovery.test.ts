@@ -251,6 +251,62 @@ describe('descoberta da listagem', () => {
     expect(controle.avancos).toBe(0);
   });
 
+  it('encerra paginação imediatamente em "Nenhum registro encontrado" (API-02Q)', async () => {
+    const controle = portalControlado({
+      paginas: {
+        RECEBIDA: [
+          pagina([], {
+            semRegistros: true,
+            totalizador: 0,
+            // Próxima presente no DOM não deve ser clicada quando a lista vazia está confirmada
+            proxima: { presente: true, desabilitado: false },
+          }),
+          pagina([linha({ hrefs: [href(99)] })], { totalizador: 1 }),
+        ],
+      },
+      leitura: (direcao) => leituraDe(direcao, { semRegistros: true, quantidadeLinhas: 0 }),
+    });
+    const resultado = await executarDescoberta(controle.portal, {
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      tipo: 'RECEBIDAS',
+    });
+    expect(resultado.status).toBe('DISCOVERY_COMPLETE');
+    expect(resultado.paginasPercorridas).toBe(1);
+    expect(controle.avancos).toBe(0);
+    expect(controle.capturas).toBe(1);
+    expect(resultado.inventario.totais.descobertos).toBe(0);
+  });
+
+  it('ambas: emitidas com notas e recebidas vazias concluem independentemente', async () => {
+    const controle = portalControlado({
+      paginas: {
+        EMITIDA: [pagina([linha({ hrefs: [href(7)] })], { totalizador: 1 })],
+        RECEBIDA: [
+          pagina([], {
+            semRegistros: true,
+            totalizador: 0,
+            proxima: { presente: false, desabilitado: true },
+          }),
+        ],
+      },
+      leitura: (direcao) =>
+        direcao === 'RECEBIDA'
+          ? leituraDe(direcao, { semRegistros: true, quantidadeLinhas: 0 })
+          : leituraDe(direcao),
+    });
+    const resultado = await executarDescoberta(controle.portal, {
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      tipo: 'AMBAS',
+    });
+    expect(resultado.status).toBe('DISCOVERY_COMPLETE');
+    expect(controle.abertas).toEqual(['EMITIDA', 'RECEBIDA']);
+    expect(resultado.inventario.totais.emitidas).toBe(1);
+    expect(resultado.inventario.totais.recebidas).toBe(0);
+    expect(resultado.inventario.completude).toBe('COMPLETO');
+  });
+
   it('percorre várias páginas e para na última', async () => {
     const primeira = pagina([linha({ hrefs: [href(1)] })], {
       paginaIndicador: 1,

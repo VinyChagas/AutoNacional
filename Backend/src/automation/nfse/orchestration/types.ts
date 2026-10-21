@@ -127,6 +127,11 @@ export interface EntradaFluxoFiscalNativo {
   baixarPdf: boolean;
   raizFiscal: string;
   dependencias: DependenciasFluxoFiscalNativo;
+  /**
+   * API-02Q — fecha Chromium após as descobertas e antes do SEFIN (mTLS).
+   * Opcional: testes unitários sem browser real.
+   */
+  liberarNavegadorAposDescoberta?: () => Promise<void>;
 }
 
 export interface DecisaoIntegracaoNativa {
@@ -158,6 +163,8 @@ export interface ContextoIntegracaoExecution {
    * API-02K — produto Iniciar A1: Portal+SEFIN sem flag/autorização manual.
    */
   modoProdutoPortalSefin?: boolean;
+  /** Fecha Chromium após descoberta Portal (antes do SEFIN). Só no fluxo A1/Portal+SEFIN. */
+  liberarNavegadorAposDescoberta?: () => Promise<void>;
 }
 
 export function autorizacaoNativaAtiva(

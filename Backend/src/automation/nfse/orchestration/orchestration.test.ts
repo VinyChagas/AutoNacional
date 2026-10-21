@@ -348,6 +348,69 @@ describe('orquestrador nativo offline', () => {
     ).rejects.toMatchObject({ codigo: 'SITUACAO_INDETERMINADA' });
   });
 
+  it('API-02Q — descoberta completa vazia encerra SEM_MOVIMENTO sem SEFIN', async () => {
+    const deps = depsSimuladas(inventario([]));
+    const liberar = vi.fn(async () => undefined);
+    const resultado = await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      execucaoId: 'exec-sem-mov',
+      tipo: 'ambas',
+      baixarPdf: false,
+      raizFiscal: raiz,
+      liberarNavegadorAposDescoberta: liberar,
+      dependencias: deps,
+    });
+    expect(resultado.descobertos).toBe(0);
+    expect(resultado.vigentes).toBe(0);
+    expect(resultado.conclusaoReconciliacao).toBe('RECONCILIADA');
+    expect(resultado.loteLiberado).toBe(true);
+    expect(resultado.diagnosticos.some((d) => d.codigo === 'SEM_MOVIMENTO')).toBe(true);
+    expect(deps.recuperar).not.toHaveBeenCalled();
+    expect(liberar).toHaveBeenCalledTimes(1);
+  });
+
+  it('API-02Q — só emitidas vigentes recupera sem exigir recebidas', async () => {
+    const inv = inventario([documento(chave(41), { direcao: 'EMITIDA' })]);
+    const deps = depsSimuladas(inv, {
+      recuperar: async (entrada) => recuperadoOk(entrada.chave),
+    });
+    const resultado = await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      execucaoId: 'exec-so-emit',
+      tipo: 'emitidas',
+      baixarPdf: false,
+      raizFiscal: raiz,
+      dependencias: deps,
+    });
+    expect(resultado.vigentes).toBe(1);
+    expect(resultado.persistidos).toBe(1);
+    expect(deps.recuperar).toHaveBeenCalledTimes(1);
+    expect(deps.recuperar.mock.calls[0][0].chave).toBe(chave(41));
+  });
+
+  it('API-02Q — libera navegador após descoberta mesmo com falha de inventário', async () => {
+    const liberar = vi.fn(async () => undefined);
+    const inv = inventario([documento(chave(1))], 'PARCIAL');
+    await expect(
+      executarFluxoFiscalNativo({
+        page: PAGE,
+        cnpj: CNPJ,
+        periodoConsulta: PERIODO,
+        execucaoId: 'exec-lib-fail',
+        tipo: 'emitidas',
+        baixarPdf: false,
+        raizFiscal: raiz,
+        liberarNavegadorAposDescoberta: liberar,
+        dependencias: depsSimuladas(inv, { statusDescoberta: 'DISCOVERY_INCOMPLETE' }),
+      })
+    ).rejects.toMatchObject({ codigo: 'DESCOBERTA_INCOMPLETA' });
+    expect(liberar).toHaveBeenCalledTimes(1);
+  });
+
   it('17 cancelada excluída do plano e permanece no inventário', async () => {
     const inv = inventario([
       documento(chave(1)),

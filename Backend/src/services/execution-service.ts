@@ -1449,6 +1449,19 @@ async function executarFluxoCompleto(
     } else {
     // API-02K — A1 padrão: modoProdutoPortalSefin (sem flag/autorização manual).
     // Credenciais / exceção Playwright: legado (sem modo produto).
+    // API-02Q — fecha Chromium após descoberta Portal; SEFIN segue sem browser.
+    // Não altera o ramo credenciais/Playwright legado.
+    const liberarNavegadorAposDescoberta = decisaoMotor.executarPortalSefin
+      ? async () => {
+          const pg = info.page;
+          const br = info.browser;
+          info.page = undefined;
+          info.browser = undefined;
+          if (pg) await pg.close().catch(() => undefined);
+          if (br) await br.close().catch(() => undefined);
+          adicionarLog('Chromium encerrado após descoberta Portal (SEFIN sem browser).');
+        }
+      : undefined;
     const contextoNativo = {
       page,
       cnpj,
@@ -1460,6 +1473,7 @@ async function executarFluxoCompleto(
       certificadoEmMemoria: certificadoFornecido ?? null,
       tipoAutenticacao,
       modoProdutoPortalSefin: decisaoMotor.executarPortalSefin,
+      liberarNavegadorAposDescoberta,
     };
     const decisaoNativa = decidirIntegracaoNativa(contextoNativo);
 
@@ -1526,28 +1540,31 @@ async function executarFluxoCompleto(
         throw new OrquestracaoNfseError(avaliacao.codigo, avaliacao.mensagem);
       }
 
-      emitirEventoExecucao(batchId, {
-        type: 'execution:stage',
-        empresa_id: key,
-        stage: 'sefin_exportacao_downloads',
-        message: 'Exportando XMLs SEFIN para downloads…',
-      });
-      const raizFiscal = resolverRaizFiscalNativaProduto();
-      const repositorioExport = new RepositorioFiscalNfse(criarResolvedorRaizInjetada(raizFiscal));
-      const exportacao = await exportarSefinParaDownloadsOperacionais({
-        inventario: resultadoNativo.inventario!,
-        documentosAptos: resultadoNativo.documentosAptos,
-        repositorio: repositorioExport,
-        periodoConsulta: resultadoNativo.periodoConsulta,
-        downloadsBasePath: basePath,
-        nomeContabilidade,
-        mesExecucaoExtenso,
-        nomeEmpresa,
-      });
-      if (!exportacao.ok) {
-        throw new OrquestracaoNfseError('FALHA_EXPORTACAO', exportacao.motivo);
+      // SEM_MOVIMENTO (0 docs) ou só canceladas: sem XML vigente para exportar.
+      if (resultadoNativo.documentosAptos.length > 0) {
+        emitirEventoExecucao(batchId, {
+          type: 'execution:stage',
+          empresa_id: key,
+          stage: 'sefin_exportacao_downloads',
+          message: 'Exportando XMLs SEFIN para downloads…',
+        });
+        const raizFiscal = resolverRaizFiscalNativaProduto();
+        const repositorioExport = new RepositorioFiscalNfse(criarResolvedorRaizInjetada(raizFiscal));
+        const exportacao = await exportarSefinParaDownloadsOperacionais({
+          inventario: resultadoNativo.inventario!,
+          documentosAptos: resultadoNativo.documentosAptos,
+          repositorio: repositorioExport,
+          periodoConsulta: resultadoNativo.periodoConsulta,
+          downloadsBasePath: basePath,
+          nomeContabilidade,
+          mesExecucaoExtenso,
+          nomeEmpresa,
+        });
+        if (!exportacao.ok) {
+          throw new OrquestracaoNfseError('FALHA_EXPORTACAO', exportacao.motivo);
+        }
+        adicionarLog(exportacao.motivo);
       }
-      adicionarLog(exportacao.motivo);
 
       info.resultadoFinal = avaliacao.resultadoFinal;
       adicionarLog(avaliacao.mensagem);

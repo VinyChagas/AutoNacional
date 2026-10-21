@@ -10,7 +10,9 @@ import type { DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import type { LeituraFiltroPortal, LinhaListagem, PaginaListagem, PortalListagem } from '../discovery/types';
 import {
   CODIGO_DATA_SITUACAO_CANCELADA,
+  CODIGO_DATA_SITUACAO_GERADA,
   CODIGO_SITUACAO_DESCONHECIDO,
+  CODIGOS_DATA_SITUACAO_VIGENTE,
   CONFLITO_SITUACAO,
   classificarSituacao,
   documentoClassificado,
@@ -57,6 +59,33 @@ describe('classificação da coluna Situação', () => {
     expect(resultado.situacao).toBe('CANCELADA');
     expect(resultado.fonte).toBe('tr.data-situacao');
     expect(resultado.evidenciaDeterminante).toBe('data-situacao=P104_NFSE_CANCELADA');
+  });
+
+  it('classifica P100_GERADA como vigente (código observado no Portal)', () => {
+    expect(CODIGOS_DATA_SITUACAO_VIGENTE).toContain(CODIGO_DATA_SITUACAO_GERADA);
+    const resultado = classificar({ dataSituacao: CODIGO_DATA_SITUACAO_GERADA });
+    expect(resultado.situacao).toBe('VIGENTE');
+    expect(resultado.fonte).toBe('tr.data-situacao');
+    expect(resultado.evidenciaDeterminante).toBe(`data-situacao=${CODIGO_DATA_SITUACAO_GERADA}`);
+    expect(resultado.codigoSituacaoDesconhecido).toBeNull();
+    expect(entraNaRecuperacaoSefin(
+      documentoClassificado({
+        chaveNacional: chave(100),
+        cnpj: CNPJ,
+        direcao: 'EMITIDA',
+        periodoConsulta: PERIODO,
+        evidencia: evidencia({ dataSituacao: CODIGO_DATA_SITUACAO_GERADA }),
+      })
+    )).toBe(true);
+  });
+
+  it('não trata código data-situacao desconhecido como vigente automaticamente', () => {
+    const resultado = classificar({
+      dataSituacao: 'P999_NAO_OBSERVADO',
+      icones: GERADA.icones,
+    });
+    expect(resultado.situacao).toBe('INDETERMINADA');
+    expect(resultado.codigoSituacaoDesconhecido).toBe('P999_NAO_OBSERVADO');
   });
 
   it('classifica o ícone tb-cancelada.svg como cancelada', () => {
