@@ -45,6 +45,14 @@ export interface ConsolidacaoInventarioPersistidoAdn {
     totalDocumentos: number;
     novosPersistiveis: number;
   };
+  /**
+   * Estado da distribuição ADN desta sessão.
+   * Nunca misturar com inventário da competência para resultado_final.
+   */
+  distribuicao: {
+    status: ResultadoSyncAdn['status'];
+    fimDistribuicaoConfirmado: boolean;
+  };
   /** Consulta ao índice/disco bem-sucedida. */
   evidenciaPersistenciaOk: boolean;
 }
@@ -368,6 +376,10 @@ export async function consolidarInventarioPersistidoAdn(params: {
       chavesIndice,
     },
     sessao,
+    distribuicao: {
+      status: params.sync.status,
+      fimDistribuicaoConfirmado: params.sync.fimDistribuicaoConfirmado,
+    },
     evidenciaPersistenciaOk,
   };
 }
@@ -380,23 +392,25 @@ export type ResultadoFinalAdnIniciar =
   | 'ADN_INVENTARIO_INDETERMINADO';
 
 /**
- * Zero docs novos na sessão NÃO implica SEM_MOVIMENTO.
- * SEM_MOVIMENTO só com evidência de persistência na competência solicitada.
+ * resultado_final usa EXCLUSIVAMENTE o inventário da competência solicitada.
+ * Contagens globais da sessão ADN (outros meses/NSUs) nunca alteram o resultado.
+ * Competência vazia + distribuição ainda PARCIAL → ADN_INVENTARIO_INDETERMINADO
+ * (nunca SEM_MOVIMENTO enquanto o cursor NSU não esgotou).
  */
 export function decidirResultadoFinalAdnIniciar(
   consolidacao: ConsolidacaoInventarioPersistidoAdn
 ): ResultadoFinalAdnIniciar {
-  const { periodo, sessao, evidenciaPersistenciaOk } = consolidacao;
+  const { periodo, evidenciaPersistenciaOk, distribuicao } = consolidacao;
 
-  const emitidas = Math.max(periodo.emitidas, sessao.emitidas);
-  const recebidas = Math.max(periodo.recebidas, sessao.recebidas);
+  const emitidas = periodo.emitidas;
+  const recebidas = periodo.recebidas;
 
   if (emitidas > 0 && recebidas > 0) return 'NFS_ENCONTRADAS';
   if (emitidas > 0) return 'NOTAS_EMITIDAS';
   if (recebidas > 0) return 'NOTAS_RECEBIDAS';
 
-  // Intermediadas/eventos na competência: há movimento fiscal rastreável, não SEM_MOVIMENTO.
-  if (periodo.intermediadas > 0 || periodo.eventos > 0 || sessao.intermediadas > 0 || sessao.eventos > 0) {
+  // Intermediadas/eventos na competência: há movimento fiscal rastreável.
+  if (periodo.intermediadas > 0 || periodo.eventos > 0) {
     return 'NFS_ENCONTRADAS';
   }
 
@@ -404,7 +418,15 @@ export function decidirResultadoFinalAdnIniciar(
     return 'ADN_INVENTARIO_INDETERMINADO';
   }
 
-  // Evidência: varredura do período concluída e vazia.
+  // Competência vazia, mas distribuição ADN ainda incompleta → indeterminado.
+  if (
+    !distribuicao.fimDistribuicaoConfirmado ||
+    distribuicao.status === 'PARCIAL'
+  ) {
+    return 'ADN_INVENTARIO_INDETERMINADO';
+  }
+
+  // Evidência: varredura do período concluída e vazia + fim NSU confirmado.
   return 'SEM_MOVIMENTO';
 }
 

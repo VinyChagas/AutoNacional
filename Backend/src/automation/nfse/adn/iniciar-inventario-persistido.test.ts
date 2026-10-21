@@ -125,7 +125,7 @@ describe('API-01U — competências e decisão de resultado', () => {
     ]);
   });
 
-  it('SEM_MOVIMENTO só com evidência de período vazio', () => {
+  it('SEM_MOVIMENTO só com evidência de período vazio e fim NSU', () => {
     const fonte = new InventarioPersistidoMemoriaAdn();
     fonte.seed(CNPJ_A, 'producao', [comp('2026-01')], 1736);
     const consolidacao = {
@@ -162,6 +162,10 @@ describe('API-01U — competências e decisão de resultado', () => {
         xmlInvalidos: 0,
         totalDocumentos: 0,
         novosPersistiveis: 0,
+      },
+      distribuicao: {
+        status: 'COMPLETO' as const,
+        fimDistribuicaoConfirmado: true,
       },
       evidenciaPersistenciaOk: true,
     };
@@ -204,6 +208,10 @@ describe('API-01U — competências e decisão de resultado', () => {
         totalDocumentos: 0,
         novosPersistiveis: 0,
       },
+      distribuicao: {
+        status: 'COMPLETO' as const,
+        fimDistribuicaoConfirmado: true,
+      },
       evidenciaPersistenciaOk: true,
     };
     expect(decidirResultadoFinalAdnIniciar(consolidacao)).toBe('NFS_ENCONTRADAS');
@@ -245,9 +253,60 @@ describe('API-01U — competências e decisão de resultado', () => {
         totalDocumentos: 0,
         novosPersistiveis: 0,
       },
+      distribuicao: {
+        status: 'PARCIAL' as const,
+        fimDistribuicaoConfirmado: false,
+      },
       evidenciaPersistenciaOk: false,
     };
     expect(decidirResultadoFinalAdnIniciar(consolidacao)).toBe('ADN_INVENTARIO_INDETERMINADO');
+  });
+
+  it('sessão com emitidas de outros NSUs não altera resultado da competência vazia', () => {
+    const consolidacao = {
+      cnpj: '19903461000100',
+      ambiente: 'producao' as const,
+      competenciasSolicitadas: ['2026-09'],
+      porCompetencia: [comp('2026-09')],
+      periodo: {
+        emitidas: 0,
+        recebidas: 0,
+        intermediadas: 0,
+        eventos: 0,
+        naoClassificados: 0,
+        xmlInvalidos: 0,
+        totalArquivos: 0,
+        nfsEmitidasRecebidas: 0,
+      },
+      armazenadoTotal: {
+        emitidas: 50,
+        recebidas: 0,
+        intermediadas: 0,
+        eventos: 0,
+        naoClassificados: 0,
+        xmlInvalidos: 0,
+        totalArquivos: 50,
+        chavesIndice: 50,
+      },
+      sessao: {
+        emitidas: 50,
+        recebidas: 0,
+        intermediadas: 0,
+        eventos: 0,
+        naoClassificados: 0,
+        xmlInvalidos: 0,
+        totalDocumentos: 50,
+        novosPersistiveis: 50,
+      },
+      distribuicao: {
+        status: 'PARCIAL' as const,
+        fimDistribuicaoConfirmado: false,
+      },
+      evidenciaPersistenciaOk: true,
+    };
+    expect(decidirResultadoFinalAdnIniciar(consolidacao)).toBe(
+      'ADN_INVENTARIO_INDETERMINADO'
+    );
   });
 });
 
@@ -419,5 +478,200 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
     expect(b.resultadoFinal).toBe('NOTAS_RECEBIDAS');
     expect(a.consolidacao?.cnpj).toBe(CNPJ_A);
     expect(b.consolidacao?.cnpj).toBe(CNPJ_B);
+  });
+});
+
+describe('API-02B — resultado_final só pela competência (cenários reais)', () => {
+  afterEach(() => {
+    resetIniciarAdnRuntimeParaTestes();
+    limparRetencaoProgressoFiscal();
+    limparRevisoesProgressoFiscal();
+  });
+
+  const CNPJ_274 = '19903461000100';
+  const CNPJ_139 = '24762400000100';
+  const CNPJ_226 = '46704878000109';
+
+  /** Lote ADN PARCIAL (MAX_REQUESTS=1) com docs de competências antigas na sessão. */
+  function syncParcialSessaoAntiga(
+    cnpj: string,
+    docs: ResultadoSyncAdn['documentos']
+  ): ResultadoSyncAdn {
+    const contagens = {
+      emitidas: docs.filter((d) => d.classificacao === 'emitida').length,
+      recebidas: docs.filter((d) => d.classificacao === 'recebida').length,
+      intermediadas: docs.filter((d) => d.classificacao === 'intermediada').length,
+      eventos: docs.filter((d) => d.classificacao === 'evento').length,
+      naoClassificados: 0,
+    };
+    return {
+      cnpj,
+      ambiente: 'producao',
+      documentos: docs,
+      nsuInicial: 1,
+      ultimoNsuProcessado: 51,
+      lotesProcessados: 1,
+      requests: 1,
+      status: 'PARCIAL',
+      fimDistribuicaoConfirmado: false,
+      inventarioMensalCompletoDeclarado: false,
+      motivoParada: 'lote_cheio_continuar',
+      duplicidades: 0,
+      xmlsInvalidos: 0,
+      contagens,
+    };
+  }
+
+  async function rodarCompetencia202609(params: {
+    cnpj: string;
+    sync: ResultadoSyncAdn;
+    seed: ContagensCompetenciaAdn[];
+    chavesIndice?: number;
+  }) {
+    const decisao = decidirAdnIniciar({
+      tipoAutenticacao: 'certificado',
+      cnpj: params.cnpj,
+      env: envFlagOn(params.cnpj),
+    });
+    expect(decisao.executarAdn).toBe(true);
+    const fonte = new InventarioPersistidoMemoriaAdn();
+    fonte.seed(
+      params.cnpj,
+      'producao',
+      params.seed,
+      params.chavesIndice ?? params.seed.reduce((n, c) => n + c.totalArquivos, 0)
+    );
+    return executarFluxoAdnIniciar(
+      {
+        cnpj: params.cnpj,
+        dataInicio: '01/09/2026',
+        dataFim: '30/09/2026',
+        identidade: {
+          batchId: 'lote-02b',
+          empresaId: '02b',
+          execucaoId: params.cnpj.slice(-4),
+          cnpj: params.cnpj,
+        },
+        decisao,
+        env: envFlagOn(params.cnpj),
+      },
+      {
+        executarSync: syncAdnIniciarFixoParaTestes(params.sync),
+        fonteInventarioPersistido: fonte,
+        exigirGateLive: false,
+      }
+    );
+  }
+
+  it('274: competência 2026-09 vazia + sessão com emitidas antigas + PARCIAL → ADN_INVENTARIO_INDETERMINADO', async () => {
+    const r = await rodarCompetencia202609({
+      cnpj: CNPJ_274,
+      sync: syncParcialSessaoAntiga(CNPJ_274, [
+        {
+          nsu: 1,
+          chaveAcesso: '41069022219903461000100000000000004924013996222523',
+          classificacao: 'emitida',
+          papeis: ['emitente'],
+          sha256: 'a'.repeat(64),
+          xmlValido: true,
+          competencia: '2024-01',
+        },
+        {
+          nsu: 2,
+          chaveAcesso: '41069022219903461000100000000000003023112664269089',
+          classificacao: 'emitida',
+          papeis: ['emitente'],
+          sha256: 'b'.repeat(64),
+          xmlValido: true,
+          competencia: '2023-11',
+        },
+      ]),
+      seed: [
+        comp('2024-01', { emitidas: 5 }),
+        comp('2023-11', { emitidas: 45 }),
+        comp('2026-09'), // vazia
+      ],
+      chavesIndice: 50,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.consolidacao?.periodo.emitidas).toBe(0);
+    expect(r.consolidacao?.periodo.recebidas).toBe(0);
+    expect(r.consolidacao?.sessao.emitidas).toBe(2);
+    expect(r.consolidacao?.distribuicao.status).toBe('PARCIAL');
+    expect(r.contagens.emitidas).toBe(0);
+    expect(r.contagens.recebidas).toBe(0);
+    expect(r.resultadoFinal).toBe('ADN_INVENTARIO_INDETERMINADO');
+    expect(r.resultadoFinal).not.toBe('NOTAS_EMITIDAS');
+    expect(r.resultadoFinal).not.toBe('SEM_MOVIMENTO');
+  });
+
+  it('139: competência 2026-09 com 0 emitidas / 4 recebidas → NFS_ENCONTRADAS (NOTAS_RECEBIDAS)', async () => {
+    const r = await rodarCompetencia202609({
+      cnpj: CNPJ_139,
+      sync: syncParcialSessaoAntiga(CNPJ_139, [
+        {
+          nsu: 10,
+          chaveAcesso: '41069022275055772000120000000112766126096266847663',
+          classificacao: 'recebida',
+          papeis: ['tomador'],
+          sha256: 'c'.repeat(64),
+          xmlValido: true,
+          competencia: '2026-09',
+        },
+      ]),
+      seed: [
+        comp('2025-01', { recebidas: 46 }),
+        comp('2026-09', { recebidas: 4 }),
+      ],
+      chavesIndice: 50,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.consolidacao?.periodo.emitidas).toBe(0);
+    expect(r.consolidacao?.periodo.recebidas).toBe(4);
+    expect(r.contagens.emitidas).toBe(0);
+    expect(r.contagens.recebidas).toBe(4);
+    expect(r.resultadoFinal).toBe('NOTAS_RECEBIDAS');
+  });
+
+  it('226: competência 2026-09 vazia + sessão mista + PARCIAL → ADN_INVENTARIO_INDETERMINADO', async () => {
+    const r = await rodarCompetencia202609({
+      cnpj: CNPJ_226,
+      sync: syncParcialSessaoAntiga(CNPJ_226, [
+        {
+          nsu: 1,
+          chaveAcesso: '41069022246704878000109000000000000125118197875491',
+          classificacao: 'emitida',
+          papeis: ['emitente'],
+          sha256: 'd'.repeat(64),
+          xmlValido: true,
+          competencia: '2025-11',
+        },
+        {
+          nsu: 2,
+          chaveAcesso: '41069021202862447000103000000189439024031657989522',
+          classificacao: 'recebida',
+          papeis: ['tomador'],
+          sha256: 'e'.repeat(64),
+          xmlValido: true,
+          competencia: '2024-03',
+        },
+      ]),
+      seed: [
+        comp('2025-11', { emitidas: 20 }),
+        comp('2024-03', { recebidas: 25 }),
+        comp('2026-09'),
+      ],
+      chavesIndice: 45,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.consolidacao?.periodo.emitidas).toBe(0);
+    expect(r.consolidacao?.periodo.recebidas).toBe(0);
+    expect(r.consolidacao?.sessao.emitidas).toBe(1);
+    expect(r.consolidacao?.sessao.recebidas).toBe(1);
+    expect(r.contagens.emitidas).toBe(0);
+    expect(r.contagens.recebidas).toBe(0);
+    expect(r.resultadoFinal).toBe('ADN_INVENTARIO_INDETERMINADO');
+    expect(r.resultadoFinal).not.toBe('NFS_ENCONTRADAS');
+    expect(r.resultadoFinal).not.toBe('SEM_MOVIMENTO');
   });
 });
