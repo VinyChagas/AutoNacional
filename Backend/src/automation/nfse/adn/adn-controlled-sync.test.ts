@@ -184,6 +184,10 @@ describe('autorização / gate sync controlada', () => {
   });
 });
 
+const depsEspaco = {
+  obterEspacoLivreBytes: () => 10 * 1024 * 1024 * 1024,
+};
+
 describe('limites e persistência sync controlada', () => {
   const base = {
     cnpj: CNPJ,
@@ -204,6 +208,7 @@ describe('limites e persistência sync controlada', () => {
       {
         obterCredencial: async () => credencialOk(),
         criarTransporte: () => transporte,
+        ...depsEspaco,
       }
     );
 
@@ -219,6 +224,7 @@ describe('limites e persistência sync controlada', () => {
     const arvore = garantirArvoreHomologacaoAdn(raiz);
     expect(fs.existsSync(path.join(arvore.checkpoints, `${CNPJ}-producao.json`))).toBe(true);
     expect(fs.existsSync(path.join(arvore.documentos, CNPJ, 'producao'))).toBe(true);
+    expect(fs.existsSync(arvore.relatorios)).toBe(true);
     // Lock liberado ao final.
     expect(fs.existsSync(path.join(arvore.locks, `${CNPJ}-producao.lock`))).toBe(false);
   });
@@ -250,6 +256,7 @@ describe('limites e persistência sync controlada', () => {
       {
         obterCredencial: async () => credencialOk(),
         criarTransporte: () => transporte,
+        ...depsEspaco,
       }
     );
 
@@ -272,6 +279,7 @@ describe('limites e persistência sync controlada', () => {
             throw new ErroAdn('HANDSHAKE_TLS', 'BLOQUEANTE', 'TLS falhou');
           },
         }),
+        ...depsEspaco,
       }
     );
     expect(r.ok).toBe(false);
@@ -289,7 +297,7 @@ describe('limites e persistência sync controlada', () => {
     ]);
     const r1 = await executarSyncControladaAdn(
       { ...base, nsu: 1, raizHomologacao: raiz },
-      { obterCredencial: async () => credencialOk(), criarTransporte: () => t1 }
+      { obterCredencial: async () => credencialOk(), criarTransporte: () => t1, ...depsEspaco }
     );
     expect(r1.ultimoNsuConfirmado).toBe(2);
 
@@ -299,7 +307,7 @@ describe('limites e persistência sync controlada', () => {
     ]);
     const r2 = await executarSyncControladaAdn(
       { ...base, resume: true, raizHomologacao: raiz },
-      { obterCredencial: async () => credencialOk(), criarTransporte: () => t2 }
+      { obterCredencial: async () => credencialOk(), criarTransporte: () => t2, ...depsEspaco }
     );
     expect(hits()).toBe(1);
     expect(r2.nsuInicial).toBe(2);
@@ -320,7 +328,7 @@ describe('limites e persistência sync controlada', () => {
     ]);
     const r = await executarSyncControladaAdn(
       { ...base, nsu: 1, raizHomologacao: raiz },
-      { obterCredencial: async () => credencialOk(), criarTransporte: () => transporte }
+      { obterCredencial: async () => credencialOk(), criarTransporte: () => transporte, ...depsEspaco }
     );
     const texto = formatarResumoSyncControladaAdn(r);
     expect(texto).toContain('persistidos=1');

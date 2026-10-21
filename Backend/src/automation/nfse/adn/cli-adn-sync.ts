@@ -1,21 +1,25 @@
 #!/usr/bin/env npx ts-node
 /**
- * CLI sync ADN controlada — exatamente 1 GET /DFe/{NSU}, persistência em homologação.
+ * CLI sync ADN controlada — multi-lote com limites configuráveis.
  *
- * Homologação (quando autorizada — NÃO executar nesta etapa de implementação):
+ * Homologação (quando autorizada):
  *   NFSE_ALLOW_LIVE=true ADN_HOMOLOG_ROOT=/caminho/isolado npm run adn:sync -- \
- *     --cnpj 00000000000000 --nsu 1 --ambiente producao --confirm-live
+ *     --cnpj 00000000000000 --ambiente producao --confirm-live \
+ *     --max-requests 5 --rate-limit-ms 250
  *
  * Regras:
- * - Certificado A1 do cadastro AutoNacional + validação de CNPJ
+ * - Certificado A1 do cadastro + validação de CNPJ
  * - Gate NFSE_ALLOW_LIVE + --confirm-live
- * - 1 requisição, até 50 documentos
- * - Checkpoint/documentos/locks sob raiz de homologação isolada
+ * - max-requests 1..20 (padrão 1); rate-limit-ms >= 250; max-bytes-cnpj <= 512MB
+ * - SIGINT: conclui persistência do lote atual e não inicia nova GET
+ * - Checkpoint/documentos/locks/relatorios sob raiz isolada
  * - Sem Playwright, SEFIN, Iniciar, Angular, legado
- * - Saída sanitizada
  */
 import type { AmbienteAdn } from './endpoints';
 import {
+  MAX_BYTES_CNPJ_HARNESS_ADN,
+  MAX_REQUESTS_HARNESS_ADN,
+  MIN_RATE_LIMIT_MS_HARNESS_ADN,
   executarSyncControladaAdn,
   formatarResumoSyncControladaAdn,
 } from './controlled-sync-service';
@@ -45,16 +49,28 @@ function uso(): never {
       'Uso:',
       '  NFSE_ALLOW_LIVE=true npm run adn:sync -- \\',
       '    --cnpj <14dig> --ambiente producao|producao-restrita --confirm-live \\',
-      '    [--nsu <n>] [--raiz <dir>] [--resume]',
+      '    [--nsu <n>] [--raiz <dir>] [--max-requests 1..20] \\',
+      `    [--rate-limit-ms >=${MIN_RATE_LIMIT_MS_HARNESS_ADN}] [--max-bytes-cnpj <=${MAX_BYTES_CNPJ_HARNESS_ADN}]`,
       '',
       'Obrigatório: --cnpj --ambiente --confirm-live',
       'Gate: NFSE_ALLOW_LIVE=true|1',
-      'Raiz: --raiz ou ADN_HOMOLOG_ROOT (senão .adn-homologacao no cwd)',
-      'Limite: 1 GET /DFe/{NSU}?lote=true — até 50 docs — com checkpoint/lock isolados.',
+      `Padrões: max-requests=1, rate-limit-ms=${MIN_RATE_LIMIT_MS_HARNESS_ADN}, max-bytes-cnpj=${MAX_BYTES_CNPJ_HARNESS_ADN}`,
+      `Teto max-requests: ${MAX_REQUESTS_HARNESS_ADN}`,
+      'SIGINT: finaliza lote em andamento e não inicia nova requisição.',
       'Sem SEFIN/Playwright/Iniciar.',
     ].join('\n')
   );
   process.exit(2);
+}
+
+function parseInteiro(raw: string | undefined, nome: string): number | undefined {
+  if (raw == null || raw === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    console.error(`${nome} inválido.`);
+    process.exit(2);
+  }
+  return n;
 }
 
 async function main(): Promise<void> {
@@ -90,18 +106,46 @@ async function main(): Promise<void> {
     }
   }
 
-  const resumo = await executarSyncControladaAdn({
-    cnpj,
-    ambiente,
-    confirmLive,
-    nsu,
-    resume,
-    raizHomologacao: raiz,
-    env: process.env,
-  });
+  const maxRequests = parseInteiro(
+    typeof args['max-requests'] === 'string' ? args['max-requests'] : undefined,
+    '--max-requests'
+  );
+  const rateLimitMs = parseInteiro(
+    typeof args['rate-limit-ms'] === 'string' ? args['rate-limit-ms'] : undefined,
+    '--rate-limit-ms'
+  );
+  const maxBytesCnpj = parseInteiro(
+    typeof args['max-bytes-cnpj'] === 'string' ? args['max-bytes-cnpj'] : undefined,
+    '--max-bytes-cnpj'
+  );
 
-  console.log(formatarResumoSyncControladaAdn(resumo));
-  process.exit(resumo.ok ? 0 : 1);
+  let interromper = false;
+  const onSigInt = () => {
+    interromper = true;
+    console.error('SIGINT recebido — concluindo lote atual sem nova requisição ADN...');
+  };
+  process.on('SIGINT', onSigInt);
+
+  try {
+    const resumo = await executarSyncControladaAdn({
+      cnpj,
+      ambiente,
+      confirmLive,
+      nsu,
+      resume,
+      raizHomologacao: raiz,
+      env: process.env,
+      maxRequests,
+      rateLimitMs,
+      maxBytesCnpj,
+      deveInterromper: () => interromper,
+    });
+
+    console.log(formatarResumoSyncControladaAdn(resumo));
+    process.exit(resumo.ok ? 0 : 1);
+  } finally {
+    process.off('SIGINT', onSigInt);
+  }
 }
 
 main().catch((erro) => {

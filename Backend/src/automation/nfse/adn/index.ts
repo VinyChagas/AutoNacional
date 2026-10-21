@@ -93,6 +93,7 @@ export {
 export {
   LIMITES_SMOKE_ADN,
   TransporteUmaRequisicaoAdn,
+  TransporteLimiteRequisicoesAdn,
   executarSmokeAdn,
   formatarResumoSmokeAdn,
   type DependenciasSmokeAdn,
@@ -102,13 +103,22 @@ export {
 export {
   LIMITES_SYNC_CONTROLADA_ADN,
   MAX_DOCS_SYNC_CONTROLADA,
+  MAX_DOCS_POR_LOTE_SYNC_CONTROLADA,
+  MAX_REQUESTS_HARNESS_ADN,
+  MIN_RATE_LIMIT_MS_HARNESS_ADN,
+  MAX_BYTES_CNPJ_HARNESS_ADN,
   ENV_ADN_HOMOLOG_ROOT,
   resolverRaizHomologacaoAdn,
   garantirArvoreHomologacaoAdn,
+  normalizarLimitesHarnessAdn,
+  verificarEspacoHomologacaoAdn,
+  consolidarRelatorioSyncAdn,
+  lerRelatorioConsolidadoAdn,
   executarSyncControladaAdn,
   formatarResumoSyncControladaAdn,
   type EntradaSyncControladaAdn,
   type DependenciasSyncControladaAdn,
   type ResumoSyncControladaAdn,
+  type RelatorioConsolidadoAdn,
 } from './controlled-sync-service';
 export type { PersistenciaSyncAdnResumo, MotivoXmlInvalidoAdn } from './types';

@@ -38,6 +38,11 @@ export interface SyncAdnOptions {
   descartarXmlEmMemoriaAposPersistir?: boolean;
   /** Override pontual do rate limit (ms). */
   rateLimitMs?: number;
+  /**
+   * Se retornar true antes de iniciar nova requisição, encerra com PARCIAL
+   * após concluir o lote corrente (não aborta persistência em andamento).
+   */
+  deveInterromper?: () => boolean;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -120,11 +125,23 @@ export class SyncServiceAdn {
     const descartarXml = opts.descartarXmlEmMemoriaAposPersistir !== false;
 
     while (requests < maxRequests) {
+      if (opts.deveInterromper?.()) {
+        status = 'PARCIAL';
+        motivoParada = 'interrupcao_solicitada';
+        break;
+      }
+
       try {
         if (rateLimitMs > 0 && ultimoRequestAt > 0) {
           const elapsed = Date.now() - ultimoRequestAt;
           if (elapsed < rateLimitMs) {
             await sleep(rateLimitMs - elapsed);
+          }
+          // Reavalia após espera: não inicia nova GET se SIGINT chegou no sleep.
+          if (opts.deveInterromper?.()) {
+            status = 'PARCIAL';
+            motivoParada = 'interrupcao_solicitada';
+            break;
           }
         }
 
@@ -312,7 +329,9 @@ export class SyncServiceAdn {
 
     if (!fimDistribuicaoConfirmado && status !== 'ERRO') {
       status = 'PARCIAL';
-      if (requests >= maxRequests) motivoParada = 'limite_max_requests';
+      if (motivoParada !== 'interrupcao_solicitada' && requests >= maxRequests) {
+        motivoParada = 'limite_max_requests';
+      }
     }
     if (status === 'COMPLETO' && !fimDistribuicaoConfirmado) {
       status = 'PARCIAL';

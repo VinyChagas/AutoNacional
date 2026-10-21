@@ -1,6 +1,7 @@
 /**
- * Harness de sincronização ADN controlada (homologação).
- * Gate duplo + 1 GET + persistência isolada + lock. Sem Iniciar/SEFIN/Playwright.
+ * Harness de sincronização ADN controlada (homologação) — multi-lote.
+ * Gate duplo + limites configuráveis + SIGINT seguro + relatório consolidado.
+ * Sem Iniciar/SEFIN/Playwright.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,26 +13,35 @@ import { CheckpointStoreArquivo } from './checkpoint-store';
 import { DocumentStoreArquivoAdn } from './document-store';
 import type { AmbienteAdn } from './endpoints';
 import { ErroAdn } from './errors';
+import { escreverArquivoAtomico } from './fs-atomic';
 import { avaliarGateLiveAdn } from './live-gate';
 import { criarTransporteHttpsMtlsAdn } from './mtls-transport';
-import { TransporteUmaRequisicaoAdn } from './smoke-service';
+import { TransporteLimiteRequisicoesAdn } from './smoke-service';
 import { SyncLockCompostoAdn, SyncLockArquivoAdn } from './sync-lock';
 import { SyncServiceAdn } from './sync-service';
 import type { LimitesAdn, TransporteHttpAdn } from './types';
 
-/** Limites do harness controlado: 1 requisição, lote ≤50 docs. */
+export const MAX_REQUESTS_HARNESS_ADN = 20;
+export const MIN_RATE_LIMIT_MS_HARNESS_ADN = 250;
+export const MAX_BYTES_CNPJ_HARNESS_ADN = 512 * 1024 * 1024;
+/** Margem mínima livre no filesystem da raiz de homologação. */
+export const MIN_ESPACO_LIVRE_HARNESS_ADN = 64 * 1024 * 1024;
+
+/** Limites padrão do harness (1 req; compatível com API-01I/J/K). */
 export const LIMITES_SYNC_CONTROLADA_ADN: LimitesAdn = {
   timeoutMs: 20_000,
   maxBytesResposta: 4_000_000,
   maxBytesGzip: 1_500_000,
   maxBytesXml: 4_000_000,
-  rateLimitMs: 250,
+  rateLimitMs: MIN_RATE_LIMIT_MS_HARNESS_ADN,
   maxRequests: 1,
-  maxBytesArmazenamentoCnpj: 512 * 1024 * 1024,
+  maxBytesArmazenamentoCnpj: MAX_BYTES_CNPJ_HARNESS_ADN,
 };
 
 export const ENV_ADN_HOMOLOG_ROOT = 'ADN_HOMOLOG_ROOT';
-export const MAX_DOCS_SYNC_CONTROLADA = 50;
+export const MAX_DOCS_POR_LOTE_SYNC_CONTROLADA = 50;
+/** @deprecated use MAX_DOCS_POR_LOTE_SYNC_CONTROLADA */
+export const MAX_DOCS_SYNC_CONTROLADA = MAX_DOCS_POR_LOTE_SYNC_CONTROLADA;
 
 export interface EntradaSyncControladaAdn {
   cnpj: string;
@@ -40,14 +50,29 @@ export interface EntradaSyncControladaAdn {
   /** NSU inicial; se omitido e resume=true, usa checkpoint. */
   nsu?: number;
   resume?: boolean;
-  /** Raiz de homologação isolada (checkpoints/documentos/locks). */
+  /** Raiz de homologação isolada (checkpoints/documentos/locks/relatorios). */
   raizHomologacao?: string;
   env?: NodeJS.ProcessEnv;
+  /** 1..20; padrão 1. */
+  maxRequests?: number;
+  /** >= 250 ms; padrão 250. */
+  rateLimitMs?: number;
+  /** 1..512MB; padrão 512MB. 0 não permitido no harness. */
+  maxBytesCnpj?: number;
+  /**
+   * Callback de interrupção (SIGINT). Se true antes de nova GET,
+   * encerra após o lote corrente.
+   */
+  deveInterromper?: () => boolean;
+  /** Se false, não grava relatório consolidado (testes pontuais). Default true. */
+  gravarRelatorio?: boolean;
 }
 
 export interface DependenciasSyncControladaAdn {
   obterCredencial?: (cnpj: string) => Promise<CredencialMtls>;
   criarTransporte?: () => TransporteHttpAdn;
+  /** Override de espaço livre (bytes) — testes. */
+  obterEspacoLivreBytes?: (raiz: string) => number;
 }
 
 export interface ResumoSyncControladaAdn {
@@ -83,7 +108,35 @@ export interface ResumoSyncControladaAdn {
   ultimoNsuConfirmado: number | null;
   raizHomologacao: string | null;
   motivoParada: string | null;
+  maxRequests: number | null;
+  rateLimitMs: number | null;
+  maxBytesCnpj: number | null;
+  caminhoRelatorio: string | null;
+  interrompido: boolean;
 }
+
+export interface RelatorioConsolidadoAdn {
+  cnpj: string;
+  ambiente: AmbienteAdn;
+  atualizadoEm: string;
+  inventarioMensalCompletoDeclarado: false;
+  totais: {
+    execucoes: number;
+    requests: number;
+    lotesProcessados: number;
+    persistidos: number;
+    duplicadosPersistencia: number;
+    xmlsInvalidos: number;
+    bytesEstimados: number;
+  };
+  ultimaExecucao: ResumoSyncControladaAdnSanitizado;
+  execucoes: ResumoSyncControladaAdnSanitizado[];
+}
+
+export type ResumoSyncControladaAdnSanitizado = Omit<
+  ResumoSyncControladaAdn,
+  'caminhoRelatorio'
+> & { executadoEm: string };
 
 function resumoFalha(
   codigo: string,
@@ -111,13 +164,51 @@ function resumoFalha(
     ultimoNsuConfirmado: parcial.ultimoNsuConfirmado ?? null,
     raizHomologacao: parcial.raizHomologacao ?? null,
     motivoParada: parcial.motivoParada ?? null,
+    maxRequests: parcial.maxRequests ?? null,
+    rateLimitMs: parcial.rateLimitMs ?? null,
+    maxBytesCnpj: parcial.maxBytesCnpj ?? null,
+    caminhoRelatorio: parcial.caminhoRelatorio ?? null,
+    interrompido: parcial.interrompido ?? false,
   };
 }
 
-/**
- * Resolve raiz de homologação isolada.
- * Prioridade: parâmetro explícito → ADN_HOMOLOG_ROOT → .adn-homologacao no cwd.
- */
+export function normalizarLimitesHarnessAdn(entrada: {
+  maxRequests?: number;
+  rateLimitMs?: number;
+  maxBytesCnpj?: number;
+}): { maxRequests: number; rateLimitMs: number; maxBytesCnpj: number } {
+  const maxRequests = entrada.maxRequests ?? 1;
+  const rateLimitMs = entrada.rateLimitMs ?? MIN_RATE_LIMIT_MS_HARNESS_ADN;
+  const maxBytesCnpj = entrada.maxBytesCnpj ?? MAX_BYTES_CNPJ_HARNESS_ADN;
+
+  if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > MAX_REQUESTS_HARNESS_ADN) {
+    throw new ErroAdn(
+      'LIMITE_INVALIDO',
+      'PERMANENTE',
+      `--max-requests deve ser inteiro entre 1 e ${MAX_REQUESTS_HARNESS_ADN}.`
+    );
+  }
+  if (!Number.isFinite(rateLimitMs) || rateLimitMs < MIN_RATE_LIMIT_MS_HARNESS_ADN) {
+    throw new ErroAdn(
+      'LIMITE_INVALIDO',
+      'PERMANENTE',
+      `--rate-limit-ms deve ser >= ${MIN_RATE_LIMIT_MS_HARNESS_ADN}.`
+    );
+  }
+  if (
+    !Number.isFinite(maxBytesCnpj) ||
+    maxBytesCnpj < 1 ||
+    maxBytesCnpj > MAX_BYTES_CNPJ_HARNESS_ADN
+  ) {
+    throw new ErroAdn(
+      'LIMITE_INVALIDO',
+      'PERMANENTE',
+      `--max-bytes-cnpj deve ser entre 1 e ${MAX_BYTES_CNPJ_HARNESS_ADN}.`
+    );
+  }
+  return { maxRequests, rateLimitMs, maxBytesCnpj };
+}
+
 export function resolverRaizHomologacaoAdn(params: {
   raizHomologacao?: string;
   env?: NodeJS.ProcessEnv;
@@ -136,6 +227,7 @@ export function garantirArvoreHomologacaoAdn(raiz: string): {
   checkpoints: string;
   documentos: string;
   locks: string;
+  relatorios: string;
 } {
   const resolved = path.resolve(raiz);
   if (!resolved || resolved.includes('\0')) {
@@ -144,14 +236,175 @@ export function garantirArvoreHomologacaoAdn(raiz: string): {
   const checkpoints = path.join(resolved, 'checkpoints');
   const documentos = path.join(resolved, 'documentos');
   const locks = path.join(resolved, 'locks');
-  for (const d of [resolved, checkpoints, documentos, locks]) {
+  const relatorios = path.join(resolved, 'relatorios');
+  for (const d of [resolved, checkpoints, documentos, locks, relatorios]) {
     fs.mkdirSync(d, { recursive: true, mode: 0o700 });
   }
-  return { raiz: resolved, checkpoints, documentos, locks };
+  return { raiz: resolved, checkpoints, documentos, locks, relatorios };
+}
+
+function somarBytesDir(dir: string): number {
+  if (!fs.existsSync(dir)) return 0;
+  let total = 0;
+  const stack = [dir];
+  while (stack.length) {
+    const atual = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(atual, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const p = path.join(atual, e.name);
+      if (e.isDirectory()) stack.push(p);
+      else if (e.isFile()) {
+        try {
+          total += fs.statSync(p).size;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  return total;
+}
+
+export function obterEspacoLivreBytesPadrao(raiz: string): number {
+  const statfs = (fs as typeof fs & { statfsSync?: (p: string) => { bavail: number; bsize: number } })
+    .statfsSync;
+  if (typeof statfs === 'function') {
+    const s = statfs(raiz);
+    return Number(s.bavail) * Number(s.bsize);
+  }
+  // Fallback conservador: assume espaço suficiente se statfs indisponível.
+  return Number.MAX_SAFE_INTEGER;
 }
 
 /**
- * Executa sync controlada: gate → A1 → 1 GET → persistência sob lock.
+ * Verifica cota CNPJ e espaço livre no filesystem antes da sync.
+ */
+export function verificarEspacoHomologacaoAdn(params: {
+  raiz: string;
+  documentosCnpjDir: string;
+  maxBytesCnpj: number;
+  obterEspacoLivreBytes?: (raiz: string) => number;
+  margemMinimaLivreBytes?: number;
+}): { ok: true; usadoBytes: number; livreBytes: number } | { ok: false; codigo: string; motivo: string; usadoBytes: number; livreBytes: number } {
+  const usadoBytes = somarBytesDir(params.documentosCnpjDir);
+  const livreBytes = (params.obterEspacoLivreBytes ?? obterEspacoLivreBytesPadrao)(params.raiz);
+  const margem = params.margemMinimaLivreBytes ?? MIN_ESPACO_LIVRE_HARNESS_ADN;
+
+  if (usadoBytes >= params.maxBytesCnpj) {
+    return {
+      ok: false,
+      codigo: 'LIMITE_ARMAZENAMENTO',
+      motivo: `Armazenamento CNPJ já no teto (${usadoBytes} >= ${params.maxBytesCnpj}).`,
+      usadoBytes,
+      livreBytes,
+    };
+  }
+  if (livreBytes < margem) {
+    return {
+      ok: false,
+      codigo: 'ESPACO_INSUFICIENTE',
+      motivo: `Espaço livre insuficiente na raiz de homologação (${livreBytes} < ${margem}).`,
+      usadoBytes,
+      livreBytes,
+    };
+  }
+  return { ok: true, usadoBytes, livreBytes };
+}
+
+function sanitizarResumoParaRelatorio(
+  resumo: ResumoSyncControladaAdn
+): ResumoSyncControladaAdnSanitizado {
+  const { caminhoRelatorio: _c, ...resto } = resumo;
+  return { ...resto, executadoEm: new Date().toISOString() };
+}
+
+export function caminhoRelatorioConsolidadoAdn(
+  relatoriosDir: string,
+  cnpj: string,
+  ambiente: AmbienteAdn
+): string {
+  return path.join(relatoriosDir, `${cnpj.replace(/\D/g, '')}-${ambiente}.json`);
+}
+
+export function lerRelatorioConsolidadoAdn(
+  file: string
+): RelatorioConsolidadoAdn | null {
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as RelatorioConsolidadoAdn;
+  } catch {
+    throw new ErroAdn('RELATORIO_CORROMPIDO', 'BLOQUEANTE', 'Relatório consolidado ADN ilegível.');
+  }
+}
+
+export function consolidarRelatorioSyncAdn(params: {
+  relatoriosDir: string;
+  resumo: ResumoSyncControladaAdn;
+}): { caminho: string; relatorio: RelatorioConsolidadoAdn } {
+  if (!params.resumo.cnpj || !params.resumo.ambiente) {
+    throw new ErroAdn('RELATORIO_INVALIDO', 'PERMANENTE', 'Resumo sem CNPJ/ambiente para relatório.');
+  }
+  const caminho = caminhoRelatorioConsolidadoAdn(
+    params.relatoriosDir,
+    params.resumo.cnpj,
+    params.resumo.ambiente
+  );
+  const anterior = (() => {
+    try {
+      return lerRelatorioConsolidadoAdn(caminho);
+    } catch {
+      return null;
+    }
+  })();
+  const entrada = sanitizarResumoParaRelatorio(params.resumo);
+  const execucoes = [...(anterior?.execucoes ?? []), entrada];
+  const totais = execucoes.reduce(
+    (acc, e) => {
+      acc.execucoes += 1;
+      acc.requests += e.requests;
+      acc.lotesProcessados += e.lotesProcessados;
+      acc.persistidos += e.persistencia?.persistidos ?? 0;
+      acc.duplicadosPersistencia += e.persistencia?.duplicadosPersistencia ?? 0;
+      acc.xmlsInvalidos += e.xmlsInvalidos;
+      acc.bytesEstimados += e.persistencia?.bytesEstimados ?? 0;
+      return acc;
+    },
+    {
+      execucoes: 0,
+      requests: 0,
+      lotesProcessados: 0,
+      persistidos: 0,
+      duplicadosPersistencia: 0,
+      xmlsInvalidos: 0,
+      bytesEstimados: 0,
+    }
+  );
+
+  const relatorio: RelatorioConsolidadoAdn = {
+    cnpj: params.resumo.cnpj,
+    ambiente: params.resumo.ambiente,
+    atualizadoEm: new Date().toISOString(),
+    inventarioMensalCompletoDeclarado: false,
+    totais,
+    ultimaExecucao: entrada,
+    execucoes,
+  };
+
+  const json = JSON.stringify(relatorio, null, 2);
+  if (/ArquivoXml|nfseXmlGZip|BEGIN CERTIFICATE|passphrase|\.pfx\b/i.test(json)) {
+    throw new ErroAdn('RELATORIO_SENSIVEL', 'BLOQUEANTE', 'Relatório bloqueado por sanitização.');
+  }
+  escreverArquivoAtomico(caminho, json, 0o600);
+  return { caminho, relatorio };
+}
+
+/**
+ * Executa sync controlada multi-lote sob gate/lock/limites.
  */
 export async function executarSyncControladaAdn(
   entrada: EntradaSyncControladaAdn,
@@ -165,9 +418,25 @@ export async function executarSyncControladaAdn(
     return resumoFalha(gate.codigo, gate.motivo);
   }
 
+  let limitesNorm: { maxRequests: number; rateLimitMs: number; maxBytesCnpj: number };
+  try {
+    limitesNorm = normalizarLimitesHarnessAdn({
+      maxRequests: entrada.maxRequests,
+      rateLimitMs: entrada.rateLimitMs,
+      maxBytesCnpj: entrada.maxBytesCnpj,
+    });
+  } catch (erro) {
+    if (erro instanceof ErroAdn) return resumoFalha(erro.codigo, erro.message);
+    return resumoFalha('LIMITE_INVALIDO', 'Limites do harness inválidos.');
+  }
+
   const cnpj = entrada.cnpj.replace(/\D/g, '');
   if (!/^\d{14}$/.test(cnpj)) {
-    return resumoFalha('CNPJ_INVALIDO', 'CNPJ deve ter 14 dígitos.');
+    return resumoFalha('CNPJ_INVALIDO', 'CNPJ deve ter 14 dígitos.', {
+      maxRequests: limitesNorm.maxRequests,
+      rateLimitMs: limitesNorm.rateLimitMs,
+      maxBytesCnpj: limitesNorm.maxBytesCnpj,
+    });
   }
   if (entrada.ambiente !== 'producao' && entrada.ambiente !== 'producao-restrita') {
     return resumoFalha('AMBIENTE_INVALIDO', 'Ambiente ADN inválido.');
@@ -184,6 +453,24 @@ export async function executarSyncControladaAdn(
   } catch (erro) {
     if (erro instanceof ErroAdn) return resumoFalha(erro.codigo, erro.message);
     return resumoFalha('RAIZ_INVALIDA', 'Falha ao preparar raiz de homologação.');
+  }
+
+  const docsCnpjDir = path.join(arvore.documentos, cnpj, entrada.ambiente);
+  const espaco = verificarEspacoHomologacaoAdn({
+    raiz: arvore.raiz,
+    documentosCnpjDir: docsCnpjDir,
+    maxBytesCnpj: limitesNorm.maxBytesCnpj,
+    obterEspacoLivreBytes: deps.obterEspacoLivreBytes,
+  });
+  if (!espaco.ok) {
+    return resumoFalha(espaco.codigo, espaco.motivo, {
+      cnpj,
+      ambiente: entrada.ambiente,
+      raizHomologacao: arvore.raiz,
+      maxRequests: limitesNorm.maxRequests,
+      rateLimitMs: limitesNorm.rateLimitMs,
+      maxBytesCnpj: limitesNorm.maxBytesCnpj,
+    });
   }
 
   const obterCredencial =
@@ -203,6 +490,9 @@ export async function executarSyncControladaAdn(
       cnpj,
       ambiente: entrada.ambiente,
       raizHomologacao: arvore.raiz,
+      maxRequests: limitesNorm.maxRequests,
+      rateLimitMs: limitesNorm.rateLimitMs,
+      maxBytesCnpj: limitesNorm.maxBytesCnpj,
     });
   }
 
@@ -214,28 +504,40 @@ export async function executarSyncControladaAdn(
         cnpj,
         ambiente: entrada.ambiente,
         raizHomologacao: arvore.raiz,
+        maxRequests: limitesNorm.maxRequests,
+        rateLimitMs: limitesNorm.rateLimitMs,
+        maxBytesCnpj: limitesNorm.maxBytesCnpj,
       });
     }
     return resumoFalha('CNPJ_INCOMPATIVEL', 'CNPJ incompatível com o certificado.', {
       cnpj,
       ambiente: entrada.ambiente,
       raizHomologacao: arvore.raiz,
+      maxRequests: limitesNorm.maxRequests,
+      rateLimitMs: limitesNorm.rateLimitMs,
+      maxBytesCnpj: limitesNorm.maxBytesCnpj,
     });
   }
 
+  const limitesSessao: LimitesAdn = {
+    ...LIMITES_SYNC_CONTROLADA_ADN,
+    maxRequests: limitesNorm.maxRequests,
+    rateLimitMs: limitesNorm.rateLimitMs,
+    maxBytesArmazenamentoCnpj: limitesNorm.maxBytesCnpj,
+  };
+
   const inner = deps.criarTransporte?.() ?? criarTransporteHttpsMtlsAdn();
-  const transporte = new TransporteUmaRequisicaoAdn(inner);
-  const client = new AdnClient(transporte, credencial, LIMITES_SYNC_CONTROLADA_ADN);
-  const checkpoint = new CheckpointStoreArquivo(arvore.checkpoints);
-  const documentos = new DocumentStoreArquivoAdn(arvore.documentos, LIMITES_SYNC_CONTROLADA_ADN);
-  const lock = new SyncLockCompostoAdn(new SyncLockArquivoAdn(arvore.locks));
-  const sync = new SyncServiceAdn(
-    client,
-    checkpoint,
-    LIMITES_SYNC_CONTROLADA_ADN,
-    documentos,
-    lock
+  const transporte = new TransporteLimiteRequisicoesAdn(
+    inner,
+    limitesNorm.maxRequests,
+    'LIMITE_REQUISICOES',
+    `Harness ADN permite no máximo ${limitesNorm.maxRequests} requisição(ões) HTTP.`
   );
+  const client = new AdnClient(transporte, credencial, limitesSessao);
+  const checkpoint = new CheckpointStoreArquivo(arvore.checkpoints);
+  const documentos = new DocumentStoreArquivoAdn(arvore.documentos, limitesSessao);
+  const lock = new SyncLockCompostoAdn(new SyncLockArquivoAdn(arvore.locks));
+  const sync = new SyncServiceAdn(client, checkpoint, limitesSessao, documentos, lock);
 
   const resume = entrada.resume !== false;
   const forcarNsu =
@@ -243,30 +545,39 @@ export async function executarSyncControladaAdn(
       ? entrada.nsu
       : undefined;
 
+  const montarBase = (): Partial<ResumoSyncControladaAdn> => ({
+    cnpj,
+    ambiente: entrada.ambiente,
+    raizHomologacao: arvore.raiz,
+    maxRequests: limitesNorm.maxRequests,
+    rateLimitMs: limitesNorm.rateLimitMs,
+    maxBytesCnpj: limitesNorm.maxBytesCnpj,
+  });
+
   try {
     const resultado = await sync.syncDistribuicao({
       cnpj,
       ambiente: entrada.ambiente,
       forcarNsu,
       resume: forcarNsu != null ? false : resume,
-      maxRequests: 1,
-      rateLimitMs: LIMITES_SYNC_CONTROLADA_ADN.rateLimitMs,
+      maxRequests: limitesNorm.maxRequests,
+      rateLimitMs: limitesNorm.rateLimitMs,
       descartarXmlEmMemoriaAposPersistir: true,
+      deveInterromper: entrada.deveInterromper,
     });
 
-    if (resultado.documentos.length > MAX_DOCS_SYNC_CONTROLADA) {
+    const tetoDocs = MAX_DOCS_POR_LOTE_SYNC_CONTROLADA * limitesNorm.maxRequests;
+    if (resultado.documentos.length > tetoDocs) {
       return resumoFalha(
         'LIMITE_DOCUMENTOS',
-        `Sync controlada aceita no máximo ${MAX_DOCS_SYNC_CONTROLADA} documentos por execução.`,
+        `Sync controlada aceita no máximo ${tetoDocs} documentos por execução.`,
         {
-          cnpj,
-          ambiente: entrada.ambiente,
+          ...montarBase(),
           nsuInicial: resultado.nsuInicial,
           ultimoNsuProcessado: resultado.ultimoNsuProcessado,
           requests: resultado.requests,
           lotesProcessados: resultado.lotesProcessados,
           statusSync: resultado.status,
-          raizHomologacao: arvore.raiz,
           checkpointGravado: Boolean(resultado.checkpoint),
           ultimoNsuConfirmado: resultado.checkpoint?.ultimoNsuConfirmado ?? null,
           motivoParada: resultado.motivoParada,
@@ -274,8 +585,9 @@ export async function executarSyncControladaAdn(
       );
     }
 
+    const interrompido = resultado.motivoParada === 'interrupcao_solicitada';
     const ok = resultado.status !== 'ERRO';
-    return {
+    let resumo: ResumoSyncControladaAdn = {
       ok,
       codigoErro: ok ? null : 'SYNC_ERRO',
       motivo: ok ? null : resultado.motivoParada,
@@ -304,24 +616,41 @@ export async function executarSyncControladaAdn(
       ultimoNsuConfirmado: resultado.checkpoint?.ultimoNsuConfirmado ?? null,
       raizHomologacao: arvore.raiz,
       motivoParada: resultado.motivoParada,
+      maxRequests: limitesNorm.maxRequests,
+      rateLimitMs: limitesNorm.rateLimitMs,
+      maxBytesCnpj: limitesNorm.maxBytesCnpj,
+      caminhoRelatorio: null,
+      interrompido,
     };
+
+    if (entrada.gravarRelatorio !== false) {
+      try {
+        const { caminho } = consolidarRelatorioSyncAdn({
+          relatoriosDir: arvore.relatorios,
+          resumo,
+        });
+        resumo = { ...resumo, caminhoRelatorio: caminho };
+      } catch (erro) {
+        if (erro instanceof ErroAdn) {
+          return resumoFalha(erro.codigo, erro.message, { ...resumo, ok: false });
+        }
+      }
+    }
+
+    return resumo;
   } catch (erro) {
     if (erro instanceof ErroAdn) {
       return resumoFalha(erro.codigo, erro.message, {
-        cnpj,
-        ambiente: entrada.ambiente,
+        ...montarBase(),
         requests: transporte.requisicoes,
-        raizHomologacao: arvore.raiz,
       });
     }
     return resumoFalha(
       'FALHA_SYNC_CONTROLADA',
       erro instanceof Error ? erro.message : 'Falha na sync controlada ADN.',
       {
-        cnpj,
-        ambiente: entrada.ambiente,
+        ...montarBase(),
         requests: transporte.requisicoes,
-        raizHomologacao: arvore.raiz,
       }
     );
   }
@@ -347,6 +676,11 @@ export function formatarResumoSyncControladaAdn(resumo: ResumoSyncControladaAdn)
     `ultimoNsuConfirmado: ${resumo.ultimoNsuConfirmado ?? 'n/a'}`,
     `raizHomologacao: ${resumo.raizHomologacao ?? 'n/a'}`,
     `motivoParada: ${resumo.motivoParada ?? 'n/a'}`,
+    `maxRequests: ${resumo.maxRequests ?? 'n/a'}`,
+    `rateLimitMs: ${resumo.rateLimitMs ?? 'n/a'}`,
+    `maxBytesCnpj: ${resumo.maxBytesCnpj ?? 'n/a'}`,
+    `interrompido: ${resumo.interrompido}`,
+    `caminhoRelatorio: ${resumo.caminhoRelatorio ?? 'n/a'}`,
   ];
   if (resumo.contagens) {
     linhas.push(
@@ -363,7 +697,7 @@ export function formatarResumoSyncControladaAdn(resumo: ResumoSyncControladaAdn)
     linhas.push(`motivo: ${resumo.motivo ?? ''}`);
   }
   const texto = linhas.join('\n');
-  if (/ArquivoXml|nfseXmlGZip|BEGIN |password|passphrase|pfx|\.xml\b/i.test(texto)) {
+  if (/ArquivoXml|nfseXmlGZip|BEGIN |password|passphrase|pfx/i.test(texto)) {
     return '=== Sync ADN controlada ===\nerro: saída bloqueada por sanitização.';
   }
   return texto;

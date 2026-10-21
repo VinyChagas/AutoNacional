@@ -52,12 +52,22 @@ export interface DependenciasSmokeAdn {
 }
 
 /**
- * Transporte que bloqueia qualquer 2ª requisição HTTP.
+ * Transporte que limita o número absoluto de GETs HTTP.
+ * Smoke usa max=1; harness multi-lote usa o mesmo teto de maxRequests.
  */
-export class TransporteUmaRequisicaoAdn implements TransporteHttpAdn {
+export class TransporteLimiteRequisicoesAdn implements TransporteHttpAdn {
   private contagem = 0;
 
-  constructor(private readonly inner: TransporteHttpAdn) {}
+  constructor(
+    private readonly inner: TransporteHttpAdn,
+    private readonly maxRequisicoes = 1,
+    private readonly codigoLimite = 'LIMITE_SMOKE',
+    private readonly mensagemLimite = 'Limite absoluto de requisições HTTP ADN atingido.'
+  ) {
+    if (!Number.isInteger(maxRequisicoes) || maxRequisicoes < 1) {
+      throw new ErroAdn('LIMITE_INVALIDO', 'PERMANENTE', 'maxRequisicoes deve ser >= 1.');
+    }
+  }
 
   get requisicoes(): number {
     return this.contagem;
@@ -69,14 +79,22 @@ export class TransporteUmaRequisicaoAdn implements TransporteHttpAdn {
     limites: Pick<LimitesAdn, 'timeoutMs' | 'maxBytesResposta'>
   ) {
     this.contagem += 1;
-    if (this.contagem > 1) {
-      throw new ErroAdn(
-        'LIMITE_SMOKE',
-        'BLOQUEANTE',
-        'Smoke ADN permite exatamente 1 requisição HTTP.'
-      );
+    if (this.contagem > this.maxRequisicoes) {
+      throw new ErroAdn(this.codigoLimite, 'BLOQUEANTE', this.mensagemLimite);
     }
     return this.inner.get(url, credencial, limites);
+  }
+}
+
+/** Alias histórico do smoke (exatamente 1 GET). */
+export class TransporteUmaRequisicaoAdn extends TransporteLimiteRequisicoesAdn {
+  constructor(inner: TransporteHttpAdn) {
+    super(
+      inner,
+      1,
+      'LIMITE_SMOKE',
+      'Smoke ADN permite exatamente 1 requisição HTTP.'
+    );
   }
 }
 
