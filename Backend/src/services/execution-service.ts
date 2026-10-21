@@ -386,6 +386,37 @@ function depsPreparacaoLiberacaoProducao(): DependenciasPreparacaoLiberacao {
   };
 }
 
+function coerirHeadlessAdmin(valor: unknown): boolean | undefined {
+  if (valor === undefined || valor === null) return undefined;
+  if (typeof valor === 'boolean') return valor;
+  if (typeof valor === 'string') {
+    const n = valor.trim().toLowerCase();
+    if (n === 'true') return true;
+    if (n === 'false') return false;
+  }
+  throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'headless deve ser boolean true|false.');
+}
+
+function coerirCaptchaModeAdmin(valor: unknown): CaptchaMode | undefined {
+  if (valor === undefined || valor === null) return undefined;
+  if (typeof valor !== 'string') {
+    throw new HomologacaoNfseError(
+      'CONTEXTO_INVALIDO',
+      'captchaMode deve ser MANUAL ou TWO_CAPTCHA.'
+    );
+  }
+  const modo = valor.trim().toUpperCase().replace(/-/g, '_');
+  const normalizado =
+    modo === 'TWOCAPTCHA' || modo === '2CAPTCHA' ? 'TWO_CAPTCHA' : modo;
+  if (normalizado !== 'MANUAL' && normalizado !== 'TWO_CAPTCHA') {
+    throw new HomologacaoNfseError(
+      'CONTEXTO_INVALIDO',
+      'captchaMode deve ser MANUAL ou TWO_CAPTCHA.'
+    );
+  }
+  return normalizado;
+}
+
 function paramsAdminPreparar(params: Record<string, unknown>) {
   const empresaId = Number(params.empresaId);
   const cnpj = String(params.cnpj ?? '');
@@ -403,12 +434,9 @@ function paramsAdminPreparar(params: Record<string, unknown>) {
       tipo: params.tipo != null ? String(params.tipo) : 'DISCOVERY_ONLY',
       tipoAutenticacao:
         params.tipoAutenticacao === 'credenciais' ? 'credenciais' : 'certificado',
-      headless: typeof params.headless === 'boolean' ? params.headless : undefined,
+      headless: coerirHeadlessAdmin(params.headless),
       baixarPdf: typeof params.baixarPdf === 'boolean' ? params.baixarPdf : undefined,
-      captchaMode:
-        typeof params.captchaMode === 'string'
-          ? (params.captchaMode as CaptchaMode)
-          : undefined,
+      captchaMode: coerirCaptchaModeAdmin(params.captchaMode),
     },
     depsPreparacaoLiberacaoProducao()
   );

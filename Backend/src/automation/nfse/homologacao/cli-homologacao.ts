@@ -30,6 +30,7 @@ import {
 } from './admin';
 import type { AdminOp } from './admin';
 import { carregarSegredoAdmin } from './admin/admin-seguranca';
+import { parseFlagCaptchaMode, parseFlagHeadless } from './cli-homologacao-flags';
 
 type Args = Record<string, string | boolean>;
 
@@ -252,6 +253,8 @@ async function rodarAdmin(sub: string, args: Args): Promise<void> {
   const token = await resolverTokenAdmin(args);
   let params: Record<string, unknown> | undefined;
   if (op === 'preparar') {
+    const headless = parseFlagHeadless(args);
+    const captchaMode = parseFlagCaptchaMode(args);
     params = {
       empresaId: Number(str(args, 'empresa-id')),
       cnpj: str(args, 'cnpj'),
@@ -263,6 +266,8 @@ async function rodarAdmin(sub: string, args: Args): Promise<void> {
           ? args['tipo-autenticacao']
           : 'certificado',
     };
+    if (headless !== undefined) params.headless = headless;
+    if (captchaMode !== undefined) params.captchaMode = captchaMode;
   } else if (op === 'liberar') {
     params = { execucaoId: str(args, 'execucao-id') };
   }
@@ -287,10 +292,14 @@ Comandos admin UDS (Backend em execução):
   admin status   --socket-dir PATH --secret-file PATH
   admin preparar --socket-dir PATH --secret-file PATH \\
                  --empresa-id N --cnpj CNPJ \\
-                 --periodo-inicio DD/MM/YYYY --periodo-fim DD/MM/YYYY
+                 --periodo-inicio DD/MM/YYYY --periodo-fim DD/MM/YYYY \\
+                 [--headless true|false] [--captcha-mode MANUAL|TWO_CAPTCHA] \\
+                 [--tipo-autenticacao certificado|credenciais]
   admin liberar  --socket-dir PATH --secret-file PATH --execucao-id ID
 
 Fluxo: preparar → emitir/ativar ticket → liberar → PQueue.
+--headless / --captcha-mode são opcionais; ausentes → defaults do Backend.
+MANUAL força navegador visível no worker (comportamento existente).
 Ticket NÃO é consumido em preparar/liberar (consumo na ponte).
 Não passe segredo em argv (--secret é recusado).
 Env store: ${ENV_HOMOLOGACAO_STORE}

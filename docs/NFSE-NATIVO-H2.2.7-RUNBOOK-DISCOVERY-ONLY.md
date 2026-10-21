@@ -130,9 +130,33 @@ npm run homologacao:cli -- admin preparar \
   --periodo-fim 31/01/2024
 ```
 
-Opcional: `--tipo DISCOVERY_ONLY` (default), `--tipo-autenticacao certificado|credenciais`.
+Opcionais (protocolo UDS / CLI H2.2.7-A):
 
-Esperado: `enfileirado: false`, status `homologacao_preparada`, **sem** navegador/login.
+| Flag | Valores | Default se omitido |
+|------|---------|-------------------|
+| `--tipo` | `DISCOVERY_ONLY` | `DISCOVERY_ONLY` |
+| `--tipo-autenticacao` | `certificado` \| `credenciais` | `certificado` |
+| `--headless` | `true` \| `false` (**explícito**) | default do Backend (`PLAYWRIGHT_HEADLESS` / payload) |
+| `--captcha-mode` | `MANUAL` \| `TWO_CAPTCHA` | `TWO_CAPTCHA` na preparação |
+
+Exemplo teste visual local (Chrome visível + CAPTCHA manual):
+
+```bash
+npm run homologacao:cli -- admin preparar \
+  --socket-dir /ABS/ADMIN \
+  --secret-file /ABS/SECRET \
+  --empresa-id EMPRESA_ID \
+  --cnpj CNPJ_DEMO \
+  --periodo-inicio 01/01/2024 \
+  --periodo-fim 31/01/2024 \
+  --headless false \
+  --captcha-mode MANUAL
+```
+
+`headless=false` permanece `false` no payload até o enqueue.  
+`captchaMode=MANUAL` permanece `MANUAL`; o worker existente força navegador visível quando o modo é MANUAL.
+
+Esperado: `enfileirado: false`, status `homologacao_preparada`, **sem** navegador/login na preparação.
 
 ### 4.4 Obter execucaoId
 
