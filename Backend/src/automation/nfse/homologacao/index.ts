@@ -30,6 +30,24 @@ export {
   criarCanalAutorizacaoArquivo,
   criarAutorizacaoId,
 } from './canal-autorizacao';
+export {
+  aplicarBootstrapCanalHomologacao,
+} from './bootstrap-canal-homologacao';
+export type { ResultadoBootstrapCanal } from './bootstrap-canal-homologacao';
+export {
+  ENV_HOMOLOGACAO_STORE,
+  lerCaminhoStorePrivilegiado,
+  prepararStoreHomologacaoSeguro,
+  modoArquivoEsperado,
+  modoDiretorioEsperado,
+} from './store-homologacao-seguro';
+export {
+  cliConsultar,
+  cliEmitir,
+  cliAtivar,
+  cliCancelar,
+} from './cli-homologacao-ops';
+export type { EntradaEmitirCli } from './cli-homologacao-ops';
 export type {
   CanalAutorizacaoHomologacao,
   TicketAutorizacaoOperacional,

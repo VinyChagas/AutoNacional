@@ -43,6 +43,7 @@ import nfseRouter from './routers/nfse';
 import metricsRouter from './routers/metrics';
 import { carregarCertificadoPorCnpj } from './services/certificate-loader';
 import { iniciarRelatorio2Captcha } from './automation/captcha-report';
+import { aplicarBootstrapCanalHomologacao } from './automation/nfse/homologacao/bootstrap-canal-homologacao';
 
 if (!process.stdin.isTTY) {
   process.stdin.resume();
@@ -167,6 +168,21 @@ async function bootstrap() {
   }
 
   setCertificateLoader(carregarCertificadoPorCnpj);
+
+  // H2.2.4-A — canal Discovery-Only: só monta store se env privilegiada presente.
+  // Não emite/ativa tickets, não abre gate, não executa descoberta.
+  const bootstrapHomologacao = await aplicarBootstrapCanalHomologacao();
+  if (bootstrapHomologacao.status === 'configurado') {
+    logger.info(
+      { store: bootstrapHomologacao.store },
+      'Homologação: canal arquivo disponível (sem autorização automática)'
+    );
+  } else if (bootstrapHomologacao.status === 'recusado') {
+    logger.warn(
+      { codigo: bootstrapHomologacao.codigo, motivo: bootstrapHomologacao.motivo },
+      'Homologação: bootstrap recusado — legado preservado'
+    );
+  }
 
   const reportPath = iniciarRelatorio2Captcha();
   logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');

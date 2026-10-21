@@ -11,7 +11,6 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { validarAutorizacaoHomologacao } from './autorizacao';
-import { validarDiretorioFiscalSeguro } from './diretorio-seguro';
 import {
   HomologacaoNfseError,
   type AutorizacaoHomologacaoNfse,
@@ -24,6 +23,10 @@ import type {
   TicketEmissaoEntrada,
   TicketAutorizacaoOperacional,
 } from './canal-autorizacao-types';
+import {
+  escreverArquivoStoreSeguro,
+  prepararStoreHomologacaoSeguro,
+} from './store-homologacao-seguro';
 
 let canalAtivo: CanalAutorizacaoHomologacao | null = null;
 
@@ -260,10 +263,8 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
 
   const raiz = async (): Promise<string> => {
     if (raizPronta) return raizPronta;
-    raizPronta = await validarDiretorioFiscalSeguro({
-      diretorioFiscal: storeRoot,
-      criarSeAusente: true,
-    });
+    // Exige store seguro (0700, sem symlink). Não remove leases órfãos.
+    raizPronta = await prepararStoreHomologacaoSeguro(storeRoot);
     return raizPronta;
   };
 
@@ -279,8 +280,9 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
 
   const escreverTicket = async (arquivo: string, ticket: TicketAutorizacaoOperacional) => {
     const tmp = `${arquivo}.tmp-${process.pid}`;
-    await fs.writeFile(tmp, `${JSON.stringify(ticket, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    await escreverArquivoStoreSeguro(tmp, `${JSON.stringify(ticket, null, 2)}\n`, 'wx');
     await fs.rename(tmp, arquivo);
+    await fs.chmod(arquivo, 0o600).catch(() => undefined);
   };
 
   return {
@@ -290,8 +292,9 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
       const arquivo = caminhoTicket(ticket.autorizacaoId, base);
       const indice = caminhoIndice(ticket.autorizacao.execucaoId, base);
       try {
-        await fs.writeFile(indice, ticket.autorizacaoId, { encoding: 'utf8', flag: 'wx' });
-      } catch {
+        await escreverArquivoStoreSeguro(indice, ticket.autorizacaoId, 'wx');
+      } catch (erro) {
+        if (erro instanceof HomologacaoNfseError) throw erro;
         throw new HomologacaoNfseError(
           'AUTORIZACAO_MALFORMADA',
           'Já existe ticket para este execucaoId no store.'
@@ -364,7 +367,7 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
         ativacaoMotivo: motivo.trim().slice(0, 200),
         ativacaoEm: (agora ?? new Date()).toISOString(),
       };
-      await fs.writeFile(arquivo, `${JSON.stringify(ativado, null, 2)}\n`, 'utf8');
+      await escreverArquivoStoreSeguro(arquivo, `${JSON.stringify(ativado, null, 2)}\n`, 'w');
       return ativado;
     },
 
@@ -390,7 +393,7 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
       }
 
       try {
-        await fs.writeFile(
+        await escreverArquivoStoreSeguro(
           lease,
           JSON.stringify({
             execucaoId,
@@ -398,9 +401,12 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
             em: (contexto.agora ?? new Date()).toISOString(),
             motivo,
           }),
-          { encoding: 'utf8', flag: 'wx' }
+          'wx'
         );
-      } catch {
+      } catch (erro) {
+        if (erro instanceof HomologacaoNfseError && erro.codigo === 'DIRETORIO_INSEGURO') {
+          throw erro;
+        }
         throw new HomologacaoNfseError(
           'AUTORIZACAO_CONCORRENCIA',
           'Outro processo já consumiu ou está consumindo este ticket.'
@@ -416,7 +422,7 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
           consumidoEm: (contexto.agora ?? new Date()).toISOString(),
           motivoConsumo: `falha_validacao:${erro instanceof HomologacaoNfseError ? erro.codigo : 'ERRO'}`,
         };
-        await fs.writeFile(arquivo, `${JSON.stringify(falho, null, 2)}\n`, 'utf8');
+        await escreverArquivoStoreSeguro(arquivo, `${JSON.stringify(falho, null, 2)}\n`, 'w');
         throw erro;
       }
 
@@ -426,7 +432,7 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
         consumidoEm: (contexto.agora ?? new Date()).toISOString(),
         motivoConsumo: motivo,
       };
-      await fs.writeFile(arquivo, `${JSON.stringify(consumido, null, 2)}\n`, 'utf8');
+      await escreverArquivoStoreSeguro(arquivo, `${JSON.stringify(consumido, null, 2)}\n`, 'w');
       return { ticket: consumido, consumidoAgora: true };
     },
 
@@ -442,11 +448,15 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
         );
       }
       try {
-        await fs.writeFile(lease, JSON.stringify({ cancel: true, motivo }), {
-          encoding: 'utf8',
-          flag: 'wx',
-        });
-      } catch {
+        await escreverArquivoStoreSeguro(
+          lease,
+          JSON.stringify({ cancel: true, motivo }),
+          'wx'
+        );
+      } catch (erro) {
+        if (erro instanceof HomologacaoNfseError && erro.codigo === 'DIRETORIO_INSEGURO') {
+          throw erro;
+        }
         throw new HomologacaoNfseError(
           'AUTORIZACAO_CONCORRENCIA',
           'Cancelamento concorrente recusado.'
@@ -458,7 +468,7 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
         consumidoEm: new Date().toISOString(),
         motivoConsumo: motivo,
       };
-      await fs.writeFile(arquivo, `${JSON.stringify(cancelado, null, 2)}\n`, 'utf8');
+      await escreverArquivoStoreSeguro(arquivo, `${JSON.stringify(cancelado, null, 2)}\n`, 'w');
     },
   };
 }
