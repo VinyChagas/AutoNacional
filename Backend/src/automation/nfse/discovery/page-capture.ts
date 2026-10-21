@@ -3,7 +3,7 @@
  * Não lança Chromium, não clica em download e não fecha a página.
  */
 import type { Locator, Page } from 'playwright';
-import { preencherDatasEFiltrar } from '../../processar-notas-competencia';
+import { preencherDatasEFiltrar, localizarBotaoFiltrarPortal } from '../../processar-notas-competencia';
 import { aguardarEstabilizarPagina, clicarMenuNotasEAguardar } from '../../playwright-nav';
 import { DIRECAO_PARA_TIPO_NOTA_UI, type DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
@@ -15,17 +15,16 @@ import {
   textoIndicaSemRegistros,
 } from './pagination';
 import { evidenciaSituacaoVazia } from './row-parser';
+import {
+  seletoresMenuNotas,
+  urlDiagnosticoPortal,
+} from './portal-selectors';
 import type {
   LeituraFiltroPortal,
   LinhaListagem,
   PaginaListagem,
   PortalListagem,
 } from './types';
-
-const MENU: Record<DirecaoDocumentoFiscal, string> = {
-  EMITIDA: 'li:nth-of-type(3) img',
-  RECEBIDA: 'li:nth-of-type(4) img',
-};
 
 const PROXIMA = [
   'i.fa-angle-right',
@@ -40,6 +39,24 @@ interface NoDom {
   getAttribute(nome: string): string | null;
   querySelectorAll(seletor: string): ArrayLike<NoDom>;
   textContent: string | null;
+}
+
+export class PortalDescobertaError extends Error {
+  readonly etapa: string;
+  readonly seletor?: string;
+  readonly url?: string;
+
+  constructor(
+    etapa: string,
+    mensagem: string,
+    extras?: { seletor?: string; url?: string }
+  ) {
+    super(mensagem);
+    this.name = 'PortalDescobertaError';
+    this.etapa = etapa;
+    this.seletor = extras?.seletor;
+    this.url = extras?.url;
+  }
 }
 
 async function lerLinha(row: Locator, pagina: number, linha: number): Promise<LinhaListagem> {
@@ -160,21 +177,88 @@ export async function lerFiltroDaPagina(page: Page): Promise<LeituraFiltroPortal
   };
 }
 
+async function localizarMenuNotas(
+  page: Page,
+  direcao: DirecaoDocumentoFiscal
+): Promise<{ locator: Locator; seletor: string }> {
+  const tentados: string[] = [];
+  for (const seletor of seletoresMenuNotas(direcao)) {
+    tentados.push(seletor);
+    const loc = page.locator(seletor).first();
+    const n = await loc.count().catch(() => 0);
+    if (n === 0) continue;
+    const visivel = await loc.isVisible().catch(() => false);
+    if (!visivel) continue;
+    return { locator: loc, seletor };
+  }
+  throw new PortalDescobertaError(
+    'abrir_menu',
+    `Menu de notas ${DIRECAO_PARA_TIPO_NOTA_UI[direcao]} não encontrado.`,
+    {
+      seletor: tentados.join(' | '),
+      url: urlDiagnosticoPortal(page.url()),
+    }
+  );
+}
+
 export function criarPortalDaPage(page: Page): PortalListagem {
   return {
     async abrir(direcao: DirecaoDocumentoFiscal): Promise<void> {
-      const menu = page.locator(MENU[direcao]).nth(0);
-      if ((await menu.count()) === 0) {
-        throw new Error(`Menu de notas ${DIRECAO_PARA_TIPO_NOTA_UI[direcao]} não encontrado.`);
+      const { locator: menu, seletor } = await localizarMenuNotas(page, direcao);
+      try {
+        await menu.scrollIntoViewIfNeeded().catch(() => undefined);
+        await clicarMenuNotasEAguardar(page, menu, DIRECAO_PARA_TIPO_NOTA_UI[direcao]);
+      } catch (erro) {
+        throw new PortalDescobertaError(
+          'abrir_menu',
+          `Falha ao abrir ${DIRECAO_PARA_TIPO_NOTA_UI[direcao]}: ${
+            erro instanceof Error ? erro.message : String(erro)
+          }`,
+          { seletor, url: urlDiagnosticoPortal(page.url()) }
+        );
       }
-      await clicarMenuNotasEAguardar(page, menu, DIRECAO_PARA_TIPO_NOTA_UI[direcao]);
     },
-    async aplicarPeriodo(periodo: PeriodoConsultaPortal): Promise<LeituraFiltroPortal> {
-      await preencherDatasEFiltrar(page, periodo.inicio, periodo.fim);
-      const pesquisaConcluida = await page
+    async aplicarPeriodo(
+      periodo: PeriodoConsultaPortal,
+      _direcao: DirecaoDocumentoFiscal
+    ): Promise<LeituraFiltroPortal> {
+      let seletorFiltro: string | undefined;
+      try {
+        const botao = await localizarBotaoFiltrarPortal(page).catch(() => null);
+        seletorFiltro = botao?.seletor;
+        await preencherDatasEFiltrar(page, periodo.inicio, periodo.fim);
+      } catch (erro) {
+        throw new PortalDescobertaError(
+          'aplicar_filtro',
+          `Falha ao aplicar filtro de datas: ${
+            erro instanceof Error ? erro.message : String(erro)
+          }`,
+          { seletor: seletorFiltro, url: urlDiagnosticoPortal(page.url()) }
+        );
+      }
+
+      let pesquisaConcluida = await page
         .waitForURL((url) => urlConfirmaPesquisa(url.href, periodo), { timeout: 15000 })
         .then(() => true)
         .catch(() => false);
+
+      // Retentativa única: clique no filtrar de novo (Emitidas com DOM distinto / viewport).
+      if (!pesquisaConcluida) {
+        try {
+          const { locator, seletor } = await localizarBotaoFiltrarPortal(page);
+          seletorFiltro = seletor;
+          await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+          await locator.click({ timeout: 10000 });
+          await aguardarEstabilizarPagina(page, 10000);
+          pesquisaConcluida = await page
+            .waitForURL((url) => urlConfirmaPesquisa(url.href, periodo), { timeout: 15000 })
+            .then(() => true)
+            .catch(() => false);
+        } catch {
+          /* confirmação abaixo */
+        }
+      }
+
       if (pesquisaConcluida) {
         await Promise.race([
           page.locator(LINHAS).first().waitFor({ state: 'attached', timeout: 15000 }),

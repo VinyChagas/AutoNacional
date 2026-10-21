@@ -420,6 +420,9 @@ describe('descoberta da listagem', () => {
     });
     expect(resultado.status).toBe('DISCOVERY_FAILED');
     expect(resultado.diagnosticos.some((item) => item.codigo === 'FILTRO_NAO_APLICADO')).toBe(true);
+    const filtro = resultado.diagnosticos.find((item) => item.codigo === 'FILTRO_NAO_APLICADO');
+    expect(filtro?.etapa).toBe('confirmar_filtro');
+    expect(filtro?.url).toContain('/Notas/Emitidas');
     expect(capturas).toBe(0);
   });
 

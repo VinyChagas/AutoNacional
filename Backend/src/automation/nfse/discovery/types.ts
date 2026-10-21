@@ -79,6 +79,12 @@ export interface DiagnosticoDescoberta {
   pagina?: number;
   linha?: number;
   chaveNacional?: string;
+  /** Etapa da falha (abrir_menu, aplicar_filtro, …) — sem segredos. */
+  etapa?: string;
+  /** Seletor tentado (quando aplicável). */
+  seletor?: string;
+  /** URL sanitizada (path + datas públicas). */
+  url?: string;
 }
 
 export interface ResultadoDescobertaNfse {

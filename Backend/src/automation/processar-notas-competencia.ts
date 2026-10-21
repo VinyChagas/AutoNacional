@@ -15,6 +15,7 @@ import {
   PLAYWRIGHT_TIMEOUT,
 } from '../infrastructure/config';
 import { aguardarEstabilizarPagina } from './playwright-nav';
+import { SELETORES_BOTAO_FILTRAR_PORTAL } from './nfse/discovery/portal-selectors';
 import { captchaConfigurado, CaptchaError } from './captcha-solver';
 import {
   reportCaptchaDetectado,
@@ -761,6 +762,27 @@ export async function processarTabelaRecebidas(
 }
 
 /**
+ * Localiza o botão Pesquisar/Filtrar da barra de datas do Portal.
+ * O XPath absoluto histórico falha quando o DOM de Emitidas difere de Recebidas.
+ */
+export async function localizarBotaoFiltrarPortal(page: Page): Promise<{
+  locator: Locator;
+  seletor: string;
+}> {
+  for (const seletor of SELETORES_BOTAO_FILTRAR_PORTAL) {
+    const botao = page.locator(seletor).first();
+    const n = await botao.count().catch(() => 0);
+    if (n === 0) continue;
+    const visivel = await botao.isVisible().catch(() => false);
+    if (!visivel) continue;
+    return { locator: botao, seletor };
+  }
+  throw new Error(
+    'Botão filtrar/pesquisar do Portal não encontrado (searchbar / #datainicio).'
+  );
+}
+
+/**
  * Preenche datas e clica em filtrar.
  */
 export async function preencherDatasEFiltrar(
@@ -768,10 +790,12 @@ export async function preencherDatasEFiltrar(
   dataInicio: string,
   dataFim: string
 ): Promise<void> {
-  const campoInicio = page.locator('xpath=//*[@id="datainicio"]');
-  const campoFim = page.locator('xpath=//*[@id="datafim"]');
+  const campoInicio = page.locator('#datainicio');
+  const campoFim = page.locator('#datafim');
   await campoInicio.waitFor({ state: 'visible', timeout: 10000 });
   await campoFim.waitFor({ state: 'visible', timeout: 10000 });
+  await campoInicio.scrollIntoViewIfNeeded().catch(() => undefined);
+  await campoFim.scrollIntoViewIfNeeded().catch(() => undefined);
 
   await campoInicio.fill('');
   await campoInicio.fill(dataInicio);
@@ -780,8 +804,9 @@ export async function preencherDatasEFiltrar(
 
   await page.waitForTimeout(_minActionDelayMs);
 
-  const botaoFiltrar = page.locator('xpath=//*[@id="searchbar"]/form/div[2]/div[2]/div[2]/button');
-  await botaoFiltrar.click();
+  const { locator: botaoFiltrar } = await localizarBotaoFiltrarPortal(page);
+  await botaoFiltrar.scrollIntoViewIfNeeded().catch(() => undefined);
+  await botaoFiltrar.click({ timeout: 10000 });
   await aguardarEstabilizarPagina(page, Math.min(15000, PLAYWRIGHT_TIMEOUT));
   await page.waitForTimeout(_minActionDelayMs * 2);
 }

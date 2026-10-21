@@ -12,6 +12,8 @@ import {
   fecharDescoberta,
 } from './discovery-validation';
 import { LIMITE_SEGURANCA_PAGINAS } from './pagination';
+import { PortalDescobertaError } from './page-capture';
+import { urlDiagnosticoPortal } from './portal-selectors';
 import { registroDaLinha } from './row-parser';
 import type {
   ControleDescoberta,
@@ -23,6 +25,33 @@ import type {
   TipoConsultaDescoberta,
 } from './types';
 import { TIPOS_CONSULTA_DESCOBERTA } from './types';
+
+function diagnosticoDeErroPortal(
+  codigo: string,
+  mensagemBase: string,
+  direcao: DirecaoDocumentoFiscal,
+  erro: unknown,
+  extras?: { pagina?: number }
+): DiagnosticoDescoberta {
+  const detalhe = erro instanceof Error ? erro.message : String(erro);
+  if (erro instanceof PortalDescobertaError) {
+    return {
+      codigo,
+      mensagem: `${mensagemBase} [${erro.etapa}] ${erro.message}`,
+      direcao,
+      etapa: erro.etapa,
+      seletor: erro.seletor,
+      url: erro.url,
+      ...extras,
+    };
+  }
+  return {
+    codigo,
+    mensagem: `${mensagemBase} ${detalhe}`,
+    direcao,
+    ...extras,
+  };
+}
 
 function direcoesDe(tipo: TipoConsultaDescoberta): DirecaoDocumentoFiscal[] {
   if (tipo === 'EMITIDAS') return ['EMITIDA'];
@@ -67,11 +96,14 @@ async function percorrerDirecao(
       });
       return { status: 'DISCOVERY_INCOMPLETE', registros, diagnosticos, paginasPercorridas: 0 };
     }
-    diagnosticos.push({
-      codigo: 'NAV_FALHA',
-      mensagem: `Falha ao abrir ${direcao}: ${erro instanceof Error ? erro.message : String(erro)}`,
-      direcao,
-    });
+    diagnosticos.push(
+      diagnosticoDeErroPortal(
+        'NAV_FALHA',
+        `Falha ao abrir ${direcao}:`,
+        direcao,
+        erro
+      )
+    );
     return { status: 'DISCOVERY_FAILED', registros, diagnosticos, paginasPercorridas: 0 };
   }
 
@@ -88,18 +120,28 @@ async function percorrerDirecao(
       });
       return { status: 'DISCOVERY_INCOMPLETE', registros, diagnosticos, paginasPercorridas: 0 };
     }
-    diagnosticos.push({
-      codigo: 'NAV_FALHA',
-      mensagem: `Falha ao aplicar o período em ${direcao}: ${erro instanceof Error ? erro.message : String(erro)}`,
-      direcao,
-    });
+    diagnosticos.push(
+      diagnosticoDeErroPortal(
+        'NAV_FALHA',
+        `Falha ao aplicar o período em ${direcao}:`,
+        direcao,
+        erro
+      )
+    );
     return { status: 'DISCOVERY_FAILED', registros, diagnosticos, paginasPercorridas: 0 };
   }
 
   const filtro = confirmarFiltroAplicado(leitura, periodo, direcao);
   if (!filtro.ok) {
+    const url = urlDiagnosticoPortal(leitura.url);
     for (const erro of filtro.erros) {
-      diagnosticos.push({ codigo: 'FILTRO_NAO_APLICADO', mensagem: erro, direcao });
+      diagnosticos.push({
+        codigo: 'FILTRO_NAO_APLICADO',
+        mensagem: erro,
+        direcao,
+        etapa: 'confirmar_filtro',
+        url,
+      });
     }
     return { status: 'DISCOVERY_FAILED', registros, diagnosticos, paginasPercorridas: 0 };
   }
@@ -126,12 +168,15 @@ async function percorrerDirecao(
         });
         return { status: 'DISCOVERY_INCOMPLETE', registros, diagnosticos, paginasPercorridas };
       }
-      diagnosticos.push({
-        codigo: 'NAV_FALHA',
-        mensagem: `Falha ao capturar a página ${ordinal} de ${direcao}: ${erro instanceof Error ? erro.message : String(erro)}`,
-        direcao,
-        pagina: ordinal,
-      });
+      diagnosticos.push(
+        diagnosticoDeErroPortal(
+          'NAV_FALHA',
+          `Falha ao capturar a página ${ordinal} de ${direcao}:`,
+          direcao,
+          erro,
+          { pagina: ordinal }
+        )
+      );
       return { status: 'DISCOVERY_FAILED', registros, diagnosticos, paginasPercorridas };
     }
 

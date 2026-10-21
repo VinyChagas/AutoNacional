@@ -40,6 +40,7 @@ import {
   type ReservedBrowserSlot,
 } from '../automation/captcha-window-manager';
 import { CAPTCHA_WINDOW_LAYOUT_ENABLED } from '../infrastructure/config';
+import { VIEWPORT_DESCOBERTA_PORTAL_SEFIN } from '../automation/nfse/discovery/portal-selectors';
 import {
   OrquestracaoNfseError,
   decidirIntegracaoNativa,
@@ -1236,8 +1237,11 @@ async function executarFluxoCompleto(
   let resultadoAuth: Awaited<ReturnType<typeof abrirDashboardNfse>> | undefined;
 
   try {
-  // Reserva slot visual ANTES do Chromium (headless não usa layout)
-  const useWindowLayout = !headless && CAPTCHA_WINDOW_LAYOUT_ENABLED;
+  // Portal+SEFIN (A1): sem CAPTCHA — viewport de descoberta, não o slot compacto 769×679.
+  // Credenciais/Playwright: mantém layout de slots para resolução visual do CAPTCHA.
+  const usarViewportDescoberta = decisaoMotor.executarPortalSefin;
+  const useWindowLayout =
+    !headless && CAPTCHA_WINDOW_LAYOUT_ENABLED && !usarViewportDescoberta;
   if (useWindowLayout) {
     emitirEventoExecucao(batchId, {
       type: 'execution:stage',
@@ -1256,8 +1260,19 @@ async function executarFluxoCompleto(
   }
 
   const windowSlot = info.windowSlot;
-  const viewport = windowSlot?.viewport;
-  const launchArgs = windowSlot?.launchArgs;
+  const viewport = usarViewportDescoberta
+    ? { ...VIEWPORT_DESCOBERTA_PORTAL_SEFIN }
+    : windowSlot?.viewport;
+  const launchArgs = usarViewportDescoberta
+    ? [
+        `--window-size=${VIEWPORT_DESCOBERTA_PORTAL_SEFIN.width},${VIEWPORT_DESCOBERTA_PORTAL_SEFIN.height}`,
+      ]
+    : windowSlot?.launchArgs;
+  if (usarViewportDescoberta) {
+    adicionarLog(
+      `Viewport descoberta Portal+SEFIN: ${VIEWPORT_DESCOBERTA_PORTAL_SEFIN.width}×${VIEWPORT_DESCOBERTA_PORTAL_SEFIN.height} (sem slot CAPTCHA)`
+    );
+  }
 
   if (tipoAutenticacao === 'credenciais') {
     const credencial = await credenciaisRepo.obterPrimeiraPorEmpresa(empresaId);

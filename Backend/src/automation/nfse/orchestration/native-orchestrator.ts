@@ -65,10 +65,19 @@ export async function executarFluxoFiscalNativo(
   }
 
   const deps = entrada.dependencias;
-  const inventario = await descobrirInventario(entrada, deps, cnpj, periodo);
+  const { inventario, resumoFalhasDescoberta } = await descobrirInventario(
+    entrada,
+    deps,
+    cnpj,
+    periodo
+  );
 
   if (inventario.completude !== 'COMPLETO') {
-    throw new OrquestracaoNfseError('DESCOBERTA_INCOMPLETA', 'Inventário incompleto bloqueia a recuperação nativa.');
+    const detalhe =
+      resumoFalhasDescoberta.length > 0
+        ? ` Inventário incompleto: ${resumoFalhasDescoberta.join(' · ')}`
+        : ' Inventário incompleto bloqueia a recuperação nativa.';
+    throw new OrquestracaoNfseError('DESCOBERTA_INCOMPLETA', detalhe.trim());
   }
   if (inventario.totais.indeterminadas > 0) {
     throw new OrquestracaoNfseError(
@@ -282,7 +291,7 @@ async function descobrirInventario(
   deps: DependenciasFluxoFiscalNativo,
   cnpj: string,
   periodo: PeriodoConsultaPortal
-): Promise<InventarioNfse> {
+): Promise<{ inventario: InventarioNfse; resumoFalhasDescoberta: string[] }> {
   const tipos: Array<'EMITIDAS' | 'RECEBIDAS'> =
     entrada.tipo === 'ambas'
       ? ['EMITIDAS', 'RECEBIDAS']
@@ -292,6 +301,7 @@ async function descobrirInventario(
 
   const documentos = [];
   let completude: InventarioNfse['completude'] = 'COMPLETO';
+  const resumoFalhasDescoberta: string[] = [];
 
   for (const tipo of tipos) {
     const resultado = await deps.descobrir({
@@ -302,17 +312,30 @@ async function descobrirInventario(
     });
     if (resultado.status !== 'DISCOVERY_COMPLETE') {
       completude = resultado.status === 'DISCOVERY_FAILED' ? 'INDETERMINADO' : 'PARCIAL';
+      for (const d of resultado.diagnosticos.slice(0, 3)) {
+        const partes = [
+          tipo,
+          d.codigo,
+          d.etapa,
+          d.url,
+          sanitizarMensagemDiagnostico(d.mensagem),
+        ].filter(Boolean);
+        resumoFalhasDescoberta.push(partes.join(' | '));
+      }
     }
     documentos.push(...resultado.inventario.documentos);
   }
 
-  return montarInventario({
-    id: `nativo-${entrada.execucaoId}`,
-    cnpj,
-    periodoConsulta: periodo,
-    documentos,
-    completude,
-  });
+  return {
+    inventario: montarInventario({
+      id: `nativo-${entrada.execucaoId}`,
+      cnpj,
+      periodoConsulta: periodo,
+      documentos,
+      completude,
+    }),
+    resumoFalhasDescoberta,
+  };
 }
 
 /** Evita vazar senha/PFX/trechos sensíveis em diagnósticos e checkpoint. */

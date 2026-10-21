@@ -39,12 +39,22 @@ export async function discoverNfse(input: DiscoverNfseInput): Promise<ResultadoD
     maxDocumentos: input.maxDocumentos,
     controle: input.controle,
   });
+  const diagnosticosResumo = resultado.diagnosticos.slice(0, 5).map((d) => ({
+    codigo: d.codigo,
+    direcao: d.direcao,
+    etapa: d.etapa,
+    seletor: d.seletor,
+    url: d.url,
+    // Mensagem truncada — sem credenciais/tokens
+    motivo: String(d.mensagem ?? '').slice(0, 180),
+  }));
   logger.info(
     {
       status: resultado.status,
       descobertos: resultado.inventario.totais.descobertos,
       paginas: resultado.paginasPercorridas,
       diagnosticos: resultado.diagnosticos.length,
+      ...(diagnosticosResumo.length > 0 ? { diagnosticosResumo } : {}),
     },
     'Descoberta de NFS-e encerrada'
   );
