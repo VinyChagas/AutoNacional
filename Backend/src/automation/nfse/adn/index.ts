@@ -168,3 +168,12 @@ export {
   type FonteInventarioPersistidoAdn,
   type ResultadoFinalAdnIniciar,
 } from './inventario-persistido';
+export {
+  listarXmlsAdnCompetenciaOperacional,
+  exportarXmlAdnIdempotente,
+  exportarAdnParaDownloadsOperacionais,
+  validarXmlsOperacionaisExportados,
+  type EntradaExportacaoDownloadsAdn,
+  type ResultadoExportacaoDownloadsAdn,
+  type XmlAdnParaExportacao,
+} from './exportar-downloads-operacionais';

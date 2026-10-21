@@ -68,8 +68,11 @@ import {
 import {
   decidirAdnIniciar,
   executarFluxoAdnIniciar,
+  exportarAdnParaDownloadsOperacionais,
+  garantirArvoreHomologacaoAdn,
   obterAutorizacaoAdnIniciarRuntime,
   obterDependenciasAdnIniciar,
+  resolverRaizHomologacaoAdn,
 } from '../automation/nfse/adn';
 
 const logger = getLogger('execution-service');
@@ -1025,15 +1028,54 @@ async function executarFluxoCompleto(
         info.resultadoFinal = 'ERRO';
         info.progresso = 100;
       } else {
-        info.status = 'concluido';
-        info.progresso = 100;
-        info.mensagem = resultadoAdn.motivo;
-        // SEM_MOVIMENTO só com evidência na competência (ver decidirResultadoFinalAdnIniciar).
-        info.resultadoFinal = resultadoAdn.resultadoFinal;
-        adicionarLog(
-          `ADN Iniciar concluído sem Chromium; resultado=${resultadoAdn.resultadoFinal}; ` +
-            `inventário mensal permanece PARCIAL.`
+        // API-01X — exporta XMLs ADN → downloads operacionais (mesmo contrato Playwright).
+        emitirEventoExecucao(batchId, {
+          type: 'execution:stage',
+          empresa_id: key,
+          stage: 'adn_exportacao_downloads',
+          message: 'Exportando XMLs ADN para downloads…',
+        });
+        const configAdn = await settingsRepo.obterConfiguracoes();
+        const basePathAdn = resolveStoragePath(configAdn?.downloadsBasePath ?? './downloads');
+        const nomeEmpresaAdn = await obterNomeEmpresa(cnpj);
+        const empresaContabAdn = await empresasRepo.obterEmpresaComContabilidade(empresaId);
+        const nomeContabAdn =
+          empresaContabAdn?.contabilidade?.nomeContabilidade?.trim() ?? 'Sem contabilidade';
+        const agoraAdn = new Date();
+        const mesExecAdn = formatarMesExecucaoParaPasta(
+          agoraAdn.getFullYear(),
+          agoraAdn.getMonth() + 1
         );
+        const arvoreAdn = garantirArvoreHomologacaoAdn(resolverRaizHomologacaoAdn({}));
+        const exportacao = await exportarAdnParaDownloadsOperacionais({
+          cnpj,
+          ambiente: 'producao',
+          raizDocumentosAdn: arvoreAdn.documentos,
+          dataInicio,
+          dataFim,
+          downloadsBasePath: basePathAdn,
+          nomeContabilidade: nomeContabAdn,
+          mesExecucaoExtenso: mesExecAdn,
+          nomeEmpresa: nomeEmpresaAdn,
+        });
+        adicionarLog(exportacao.motivo);
+
+        if (!exportacao.ok) {
+          info.status = 'falhou';
+          info.mensagem = exportacao.motivo;
+          info.resultadoFinal = 'ERRO';
+          info.progresso = 100;
+        } else {
+          info.status = 'concluido';
+          info.progresso = 100;
+          info.mensagem = `${resultadoAdn.motivo} | ${exportacao.motivo}`;
+          info.resultadoFinal = resultadoAdn.resultadoFinal;
+          adicionarLog(
+            `ADN Iniciar concluído sem Chromium; resultado=${resultadoAdn.resultadoFinal}; ` +
+              `exportados=${exportacao.copiados + exportacao.jaIguais}; ` +
+              `inventário mensal permanece PARCIAL.`
+          );
+        }
       }
     } catch (e) {
       const err = e as Error;
