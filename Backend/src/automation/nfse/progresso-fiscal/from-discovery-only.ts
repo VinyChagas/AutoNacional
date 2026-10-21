@@ -12,6 +12,7 @@ import type {
   ProgressoFiscalNfse,
   TotaisProgressoFiscal,
 } from './types';
+import { REVISAO_FISCAL_NAO_PUBLICADA } from './revisao';
 
 export interface IdentidadeProgressoFiscal {
   /** UUID do lote SSE; null se fluxo admin sem lote. */
@@ -208,6 +209,8 @@ export function progressoFiscalDeDiscoveryOnly(
     empresa_id: identidade.empresaId,
     execucao_id: identidade.execucaoId,
     cnpj: identidade.cnpj,
+    /** Publicação atribui revisão monotônica — adaptador não incrementa. */
+    revisao: REVISAO_FISCAL_NAO_PUBLICADA,
     inventario: {
       estado: inv.estado,
       completude: inv.completude,

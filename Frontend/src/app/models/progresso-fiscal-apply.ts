@@ -1,14 +1,12 @@
 /**
- * UI-01e-C / C1 — Correlação e proteção conservadora do progresso fiscal (Frontend).
+ * UI-01e-C / C1 / D — Correlação, proteção conservadora e revisão monotônica (Frontend).
  *
- * Limitação: o Backend não envia timestamp/sequência por evento fiscal.
- * Estratégia:
+ * Com `revisao` Backend (ambas as partes):
+ * - maior → aplicar; igual → duplicata; menor → atrasado.
+ * Sem revisão (legado): proteção C1 conservadora (não inventa revisão local).
+ *
  * - Identidade: batch_id + empresa_id + execucao_id (nunca só CNPJ).
  * - Não usar contagens/páginas/% como prova de “mais recente”.
- * - Não regredir conclusão confiável (completa) para parcial/em_andamento.
- * - Não regredir falha|cancelada|timeout|limite para estados intermediários.
- * - Terminais conflitantes: preservar o existente (sem hierarquia inventada).
- * - Polling terminal sem fiscal: limpar snapshot local.
  * - fiscal_seq local só documenta aplicações aceitas; não é versão Backend.
  */
 import type { ExecutionRow } from './execution-row.model';
@@ -173,7 +171,20 @@ export function decidirAplicacaoFiscal(
     return { acao: 'ignorar', motivo: 'execucao_linha_divergente', proximoSeq: seq };
   }
 
-  if (atual) {
+  const revAtual = typeof atual?.revisao === 'number' && atual.revisao > 0 ? atual.revisao : null;
+  const revNovo = typeof fiscal.revisao === 'number' && fiscal.revisao > 0 ? fiscal.revisao : null;
+
+  // UI-01e-D — ambas com revisão Backend: ordenação monotônica (não usa fiscal_seq).
+  if (revAtual != null && revNovo != null) {
+    if (revNovo < revAtual) {
+      return { acao: 'ignorar', motivo: 'revisao_atrasada', proximoSeq: seq };
+    }
+    if (revNovo === revAtual) {
+      return { acao: 'ignorar', motivo: 'revisao_duplicata', proximoSeq: seq };
+    }
+    // revNovo > revAtual → aplicar (fonte de verdade Backend).
+  } else if (atual) {
+    // Legado / sem revisão: proteção C1 (não inventar revisão local).
     const prot = avaliarProtecaoRegressaoFiscal(atual, fiscal);
     if (!prot.permitir) {
       const diag = `exec=${fiscal.execucao_id} emp=${fiscal.empresa_id} lote=${ctx.batchIdAtual} origem=${origem} de=${atual.inventario.estado} para=${fiscal.inventario.estado} motivo=${prot.motivo}`;

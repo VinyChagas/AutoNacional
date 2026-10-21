@@ -34,3 +34,11 @@ export type {
   SnapshotProgressoFiscalPolling,
   OpcoesRetencaoProgressoFiscal,
 } from './retencao';
+export {
+  REVISAO_FISCAL_INICIAL,
+  REVISAO_FISCAL_NAO_PUBLICADA,
+  publicarProgressoFiscal,
+  obterRevisaoPublicada,
+  limparRevisoesProgressoFiscal,
+  fingerprintProgressoFiscal,
+} from './revisao';

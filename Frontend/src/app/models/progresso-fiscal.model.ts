@@ -57,6 +57,11 @@ export interface ProgressoFiscalNfse {
   empresa_id: string;
   execucao_id: string;
   cnpj: string;
+  /**
+   * Revisão monotônica Backend (UI-01e-D). Ausente em payloads legados.
+   * FE não inventa revisão local.
+   */
+  revisao?: number;
   inventario: ProgressoFaseInventario;
   validacao: ProgressoFaseValidacao;
   recuperacao: ProgressoFaseRecuperacao;
@@ -163,12 +168,21 @@ export function parseProgressoFiscalNfse(raw: unknown): ProgressoFiscalNfse | nu
   const veredito_discovery =
     vd === null || vd === 'PASS' || vd === 'FAIL' || vd === 'INCOMPLETO' ? vd : null;
 
+  // revisao: opcional (legado); 0 = não publicada → trata como ausente no FE.
+  let revisao: number | undefined;
+  if (raw['revisao'] !== undefined) {
+    const n = num(raw['revisao']);
+    if (n == null || !Number.isInteger(n) || n < 0) return null;
+    revisao = n > 0 ? n : undefined;
+  }
+
   return {
     versao: 1,
     batch_id,
     empresa_id,
     execucao_id,
     cnpj,
+    ...(revisao !== undefined ? { revisao } : {}),
     inventario: {
       estado: invRaw['estado'],
       completude: invRaw['completude'] as EstadoCompletudeInventario | null,

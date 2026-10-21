@@ -8,6 +8,7 @@
  * Não armazena Playwright, XML, PFX, senhas, tokens, cookies nem resultado bruto Discovery.
  */
 import type { ProgressoFiscalNfse } from './types';
+import { limparRevisoesProgressoFiscal } from './revisao';
 
 /** TTL após marcação de finalização. */
 export const RETENCAO_FISCAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -276,11 +277,12 @@ export function listarSnapshotsPorLote(
   return out;
 }
 
-/** Simula reinício do processo (esvazia retenção em memória). */
+/** Simula reinício do processo (esvazia retenção + revisões em memória). */
 export function limparRetencaoProgressoFiscal(): void {
   porExecucao.clear();
   porLoteEmpresa.clear();
   descartesPorLimiteAtivas = 0;
+  limparRevisoesProgressoFiscal();
 }
 
 export function tamanhoRetencaoProgressoFiscal(): number {

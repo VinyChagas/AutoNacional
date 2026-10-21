@@ -280,3 +280,87 @@ describe('UI-01e-C1 proteção regressão fiscal', () => {
     expect(dec.acao).toBe('ignorar');
   });
 });
+
+describe('UI-01e-D revisão monotônica no Angular', () => {
+  function comRev(
+    estado: ProgressoFiscalNfse['inventario']['estado'],
+    revisao: number,
+    extra?: { confiavel?: boolean; emitidas?: number }
+  ): ProgressoFiscalNfse {
+    return {
+      ...fiscal({
+        estado,
+        confiavel: extra?.confiavel ?? estado === 'completa',
+        totais: extra?.emitidas != null ? { emitidas: extra.emitidas, descobertos: extra.emitidas } : undefined,
+      }),
+      revisao,
+    };
+  }
+
+  it('revisão maior aplica; igual e menor ignoram', () => {
+    const r = row({
+      execucao_id: '42',
+      progresso_fiscal: comRev('parcial', 1, { confiavel: false }),
+    });
+    const maior = decidirAplicacaoFiscal(r, comRev('completa', 2), {
+      batchIdAtual: 'lote-1',
+      proximoSeq: 0,
+    }, 'sse');
+    expect(maior.acao).toBe('aplicar');
+
+    const base = maior.acao === 'aplicar' ? maior.row : r;
+    const igual = decidirAplicacaoFiscal(base, comRev('completa', 2), {
+      batchIdAtual: 'lote-1',
+      proximoSeq: 1,
+    }, 'polling');
+    expect(igual.acao).toBe('ignorar');
+    if (igual.acao === 'ignorar') expect(igual.motivo).toBe('revisao_duplicata');
+
+    const menor = decidirAplicacaoFiscal(base, comRev('parcial', 1, { confiavel: false }), {
+      batchIdAtual: 'lote-1',
+      proximoSeq: 2,
+    }, 'sse');
+    expect(menor.acao).toBe('ignorar');
+    if (menor.acao === 'ignorar') expect(menor.motivo).toBe('revisao_atrasada');
+  });
+
+  it('revisão maior pode avançar mesmo que C1 considerasse regressão', () => {
+    // Backend republicou com revisão maior (fonte de verdade).
+    const r = row({
+      execucao_id: '42',
+      progresso_fiscal: comRev('completa', 3, { confiavel: true }),
+    });
+    const dec = decidirAplicacaoFiscal(
+      r,
+      comRev('parcial', 4, { confiavel: false }),
+      { batchIdAtual: 'lote-1', proximoSeq: 0 },
+      'polling'
+    );
+    expect(dec.acao).toBe('aplicar');
+  });
+
+  it('evento legado sem revisão mantém proteção C1', () => {
+    const r = row({
+      execucao_id: '42',
+      progresso_fiscal: fiscal({ estado: 'completa', confiavel: true }),
+    });
+    const dec = decidirAplicacaoFiscal(
+      r,
+      fiscal({ estado: 'parcial', confiavel: false }),
+      { batchIdAtual: 'lote-1', proximoSeq: 0 },
+      'sse'
+    );
+    expect(dec.acao).toBe('ignorar');
+  });
+
+  it('não compara revisões entre execuções diferentes', () => {
+    const r = row({
+      execucao_id: '42',
+      progresso_fiscal: { ...comRev('completa', 5), execucao_id: '42' },
+    });
+    const outro = { ...comRev('parcial', 1, { confiavel: false }), execucao_id: '99' };
+    const dec = decidirAplicacaoFiscal(r, outro, { batchIdAtual: 'lote-1', proximoSeq: 0 }, 'sse');
+    expect(dec.acao).toBe('ignorar');
+    if (dec.acao === 'ignorar') expect(dec.motivo).toBe('execucao_divergente');
+  });
+});

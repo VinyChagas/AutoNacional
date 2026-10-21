@@ -70,6 +70,11 @@ export interface ProgressoFiscalNfse {
   empresa_id: string;
   execucao_id: string;
   cnpj: string;
+  /**
+   * Revisão monotônica por execucao_id (UI-01e-D).
+   * Atribuída só em `publicarProgressoFiscal` (0 = ainda não publicada).
+   */
+  revisao: number;
   inventario: ProgressoFaseInventario;
   validacao: ProgressoFaseValidacao;
   recuperacao: ProgressoFaseRecuperacao;

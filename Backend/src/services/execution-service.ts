@@ -61,6 +61,7 @@ import { HomologacaoNfseError } from '../automation/nfse/homologacao/types';
 import {
   listarSnapshotsPorLote,
   progressoFiscalDeDiscoveryOnly,
+  publicarProgressoFiscal,
   retenirProgressoFiscal,
   type ProgressoFiscalNfse,
 } from '../automation/nfse/progresso-fiscal';
@@ -1123,19 +1124,22 @@ async function executarFluxoCompleto(
       info.qtdNotasRecebidas = totais?.recebidas ?? 0;
       info.qtdNotasCanceladas = totais?.canceladas ?? 0;
 
-      // UI-01e-B — progresso fiscal estruturado a partir do resultado real Discovery-Only.
-      const fiscal = progressoFiscalDeDiscoveryOnly({
-        identidade: {
-          batchId: batchId ?? null,
-          empresaId: key,
-          execucaoId: String(execucaoDbId),
-          cnpj,
-        },
-        resultado: ponteHomologacao.resultadoDiscovery,
-        estadoOperacional: ponteHomologacao.estadoOperacional,
-        codigoErroPonte: ponteHomologacao.codigoErro,
-        motivo: ponteHomologacao.motivo,
-      });
+      // UI-01e-B/D — adaptador + ponto único de publicação (revisão monotônica).
+      // SSE e retenção/polling compartilham a mesma instância lógica (mesma revisão).
+      const fiscal = publicarProgressoFiscal(
+        progressoFiscalDeDiscoveryOnly({
+          identidade: {
+            batchId: batchId ?? null,
+            empresaId: key,
+            execucaoId: String(execucaoDbId),
+            cnpj,
+          },
+          resultado: ponteHomologacao.resultadoDiscovery,
+          estadoOperacional: ponteHomologacao.estadoOperacional,
+          codigoErroPonte: ponteHomologacao.codigoErro,
+          motivo: ponteHomologacao.motivo,
+        })
+      );
       info.progressoFiscal = fiscal;
       retenirProgressoFiscalDeInfo(info);
       const emitiuFiscal = emitirProgressoFiscalSeAssociado({
