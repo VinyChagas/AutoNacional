@@ -73,6 +73,7 @@ export function prepararDiscoveryOnly(entrada: {
     detalhes: {
       permiteSefin: false,
       maxDocumentos: auth.limites.maxDocumentos,
+      maxPaginas: auth.limites.maxPaginas,
       maxRequisicoesSefin: auth.limites.maxRequisicoesSefin,
     },
     agora: entrada.contexto.agora,

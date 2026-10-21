@@ -18,7 +18,9 @@ export type CodigoErroHomologacao =
   | 'OPERACAO_NAO_AUTORIZADA'
   | 'DIRETORIO_DIVERGENTE'
   | 'LIMITE_DOCUMENTOS'
+  | 'LIMITE_PAGINAS'
   | 'LIMITE_REQUISICOES'
+  | 'TIMEOUT'
   | 'INVENTARIO_INCOMPLETO'
   | 'SITUACAO_INDETERMINADA'
   | 'CERTIFICADO_INDISPONIVEL'
@@ -60,9 +62,11 @@ export interface AutorizacaoHomologacaoNfse {
 export interface LimitesHomologacaoNfse {
   /** Máximo de documentos no inventário / elegíveis. */
   readonly maxDocumentos: number;
+  /** Máximo de páginas de listagem por direção (H2.1). */
+  readonly maxPaginas: number;
   /** Máximo de requisições SEFIN (0 em DISCOVERY_ONLY). */
   readonly maxRequisicoesSefin: number;
-  /** Timeout operacional sugerido em ms (controle local). */
+  /** Timeout operacional em ms (controle local). */
   readonly timeoutMs: number;
 }
 
@@ -77,10 +81,48 @@ export interface ContextoValidacaoHomologacao {
 
 export interface ContagemLimitesHomologacao {
   documentos: number;
+  paginas: number;
   requisicoesSefin: number;
 }
 
-export type EstadoLimitesHomologacao = 'OK' | 'LIMITE_DOCUMENTOS' | 'LIMITE_REQUISICOES' | 'INTERRUPCAO';
+export type EstadoLimitesHomologacao =
+  | 'OK'
+  | 'LIMITE_DOCUMENTOS'
+  | 'LIMITE_PAGINAS'
+  | 'LIMITE_REQUISICOES'
+  | 'TIMEOUT'
+  | 'INTERRUPCAO';
+
+/** Veredito da homologação DISCOVERY_ONLY — nunca PASS com inventário incompleto. */
+export type VereditoDiscoveryOnly = 'PASS' | 'FAIL' | 'INCOMPLETO';
+
+export interface ResultadoDiscoveryOnlyHomologacao {
+  readonly execucaoId: string;
+  readonly cnpjMascarado: string;
+  readonly periodoConsulta: PeriodoConsultaPortal;
+  readonly veredito: VereditoDiscoveryOnly;
+  readonly totais: {
+    readonly emitidas: number;
+    readonly recebidas: number;
+    readonly vigentes: number;
+    readonly canceladas: number;
+    readonly indeterminadas: number;
+    readonly paginas: number;
+  };
+  readonly estadoInventario: 'COMPLETO' | 'PARCIAL' | 'INDETERMINADO';
+  readonly diagnosticos: readonly { codigo: string; mensagem: string }[];
+  readonly evidencias: readonly EvidenciaHomologacaoSegura[];
+  readonly limitesAplicados: LimitesHomologacaoNfse;
+  readonly codigoErro: CodigoErroHomologacao | null;
+  /** Garantias de isolamento H2.1. */
+  readonly efeitosProibidos: {
+    readonly sefin: false;
+    readonly escritaXml: false;
+    readonly checkpointRecuperacao: false;
+    readonly navegadorAdicional: false;
+    readonly loginAdicional: false;
+  };
+}
 
 export interface EvidenciaHomologacaoSegura {
   readonly versao: 1;

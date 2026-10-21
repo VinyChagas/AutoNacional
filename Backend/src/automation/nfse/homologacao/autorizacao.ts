@@ -26,12 +26,13 @@ export function criarLimitesHomologacao(
   }
 ): LimitesHomologacaoNfse {
   const maxDocumentos = exigirInteiroNaoNegativo(parcial.maxDocumentos, 'maxDocumentos');
+  const maxPaginas = exigirInteiroPositivo(parcial.maxPaginas ?? 50, 'maxPaginas');
   const maxRequisicoesSefin = exigirInteiroNaoNegativo(
     parcial.maxRequisicoesSefin,
     'maxRequisicoesSefin'
   );
   const timeoutMs = exigirInteiroPositivo(parcial.timeoutMs ?? 60_000, 'timeoutMs');
-  return { maxDocumentos, maxRequisicoesSefin, timeoutMs };
+  return { maxDocumentos, maxPaginas, maxRequisicoesSefin, timeoutMs };
 }
 
 /**
@@ -167,7 +168,12 @@ export function ehAutorizacaoHomologacaoEstruturada(
   if (!obj.periodoConsulta || typeof obj.periodoConsulta !== 'object') return false;
   if (!obj.limites || typeof obj.limites !== 'object') return false;
   const limites = obj.limites as Record<string, unknown>;
-  if (typeof limites.maxDocumentos !== 'number' || typeof limites.maxRequisicoesSefin !== 'number') {
+  if (
+    typeof limites.maxDocumentos !== 'number' ||
+    typeof limites.maxRequisicoesSefin !== 'number' ||
+    typeof limites.maxPaginas !== 'number' ||
+    typeof limites.timeoutMs !== 'number'
+  ) {
     return false;
   }
   // Recusa payloads com campos sensíveis acidentais.

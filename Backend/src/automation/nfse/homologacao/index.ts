@@ -16,6 +16,11 @@ export {
   prepararSefinRecovery,
   simularConsumoRequisicoesSefin,
 } from './modos';
+export { executarDiscoveryOnlyHomologacao } from './discovery-only-adapter';
+export type {
+  DiscoverNfseInjetavel,
+  EntradaDiscoveryOnlyHomologacao,
+} from './discovery-only-adapter';
 export { HomologacaoNfseError, OPERACOES_HOMOLOGACAO } from './types';
 export type {
   AutorizacaoHomologacaoNfse,
@@ -26,5 +31,7 @@ export type {
   EvidenciaHomologacaoSegura,
   LimitesHomologacaoNfse,
   OperacaoHomologacao,
+  ResultadoDiscoveryOnlyHomologacao,
   ResultadoGateHomologacao,
+  VereditoDiscoveryOnly,
 } from './types';
