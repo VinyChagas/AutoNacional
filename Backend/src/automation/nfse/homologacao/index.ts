@@ -40,6 +40,7 @@ export type {
 export {
   execucaoRealDiscoveryOnlyHabilitada,
   GATE_EXECUCAO_REAL_DISCOVERY_ONLY,
+  definirGateExecucaoRealSomenteTeste,
 } from './gate-execucao-real';
 export { avaliarPonteHomologacaoDiscoveryOnly } from './ponte-execution-homologacao';
 export type {
@@ -47,6 +48,11 @@ export type {
   ResultadoPonteHomologacao,
   SituacaoPonteHomologacao,
 } from './ponte-execution-homologacao';
+export {
+  ESTADOS_OPERACIONAIS_HOMOLOGACAO,
+  mapearVereditoParaEstadoOperacional,
+} from './estados-operacionais';
+export type { EstadoOperacionalHomologacao } from './estados-operacionais';
 export {
   validarDiretorioFiscalSeguro,
   garantirDentroDoDiretorioAutorizado,

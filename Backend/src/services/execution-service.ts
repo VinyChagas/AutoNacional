@@ -803,13 +803,15 @@ async function executarFluxoCompleto(
     info.progresso = 40;
     adicionarLog(`Processando notas (${tipo})...`);
 
-    // H2.2.1 — canal homologação DISCOVERY_ONLY (injetável). Sem canal/ticket = legado idêntico.
-    // Gate fechado: valida ticket SEM consumir; não navega, não discoverNfse, não SEFIN/XML.
+    // H2.2.2-A — canal + Discovery-Only. Sem canal/ticket = legado idêntico.
+    // Gate fechado por padrão: BLOQUEADA sem consumo/descoberta. Sem discoverNfse no caminho operacional.
     const ponteHomologacao = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: String(execucaoDbId),
       cnpj,
       periodoConsulta: criarPeriodoConsultaPortal(dataInicio, dataFim),
       pagePresente: Boolean(page),
+      page,
+      // discover omitido de propósito: gate fechado; caminho autorizado só em testes offline.
     });
 
     if (ponteHomologacao.encerrarEtapaFiscal) {
@@ -817,24 +819,28 @@ async function executarFluxoCompleto(
         type: 'execution:stage',
         empresa_id: key,
         stage: 'nfse_homologacao_discovery_only',
-        message: 'Homologação DISCOVERY_ONLY (gate real fechado; sem descoberta)…',
+        message: `Homologação DISCOVERY_ONLY (${ponteHomologacao.estadoOperacional ?? ponteHomologacao.situacao})…`,
       });
       info.mensagem = ponteHomologacao.motivo;
       adicionarLog(
-        `Homologação H2.2.1: ${ponteHomologacao.situacao} auth=${ponteHomologacao.autorizacaoId ?? 'n/a'} ` +
-          `cnpj=${ponteHomologacao.cnpjMascarado} ticketConsumido=${ponteHomologacao.ticketConsumido} ` +
+        `Homologação H2.2.2-A: ${ponteHomologacao.situacao}/${ponteHomologacao.estadoOperacional ?? 'n/a'} ` +
+          `auth=${ponteHomologacao.autorizacaoId ?? 'n/a'} cnpj=${ponteHomologacao.cnpjMascarado} ` +
+          `ticketConsumido=${ponteHomologacao.ticketConsumido} ` +
           `descobertaExecutada=${ponteHomologacao.descobertaExecutada} — sem legado.`
       );
-      if (ponteHomologacao.situacao === 'RECUSADA' || ponteHomologacao.situacao === 'BLOQUEADA_GATE_REAL') {
-        throw new OrquestracaoNfseError(
-          'CONTEXTO_INVALIDO',
-          ponteHomologacao.motivo
-        );
+      if (
+        ponteHomologacao.situacao === 'RECUSADA' ||
+        ponteHomologacao.situacao === 'BLOQUEADA_GATE_REAL' ||
+        ponteHomologacao.situacao === 'DESCOBERTA_FALHA' ||
+        ponteHomologacao.estadoOperacional === 'FALHA'
+      ) {
+        throw new OrquestracaoNfseError('CONTEXTO_INVALIDO', ponteHomologacao.motivo);
       }
-      // PREPARADA_GATE_FECHADO: encerra etapa fiscal sem download legado / nativo SEFIN.
-      info.qtdNotasEmitidas = 0;
-      info.qtdNotasRecebidas = 0;
-      info.qtdNotasCanceladas = 0;
+      // BLOQUEADA / CONCLUIDA / INCOMPLETA / CANCELADA: encerra sem nativo SEFIN nem download legado.
+      const totais = ponteHomologacao.resultadoDiscovery?.totais;
+      info.qtdNotasEmitidas = totais?.emitidas ?? 0;
+      info.qtdNotasRecebidas = totais?.recebidas ?? 0;
+      info.qtdNotasCanceladas = totais?.canceladas ?? 0;
     } else {
     // Autorização nativa por execução NÃO é fornecida aqui (desativada por padrão).
     // Flag global sozinha não inicia SEFIN. Testes injetam autorizacaoNativa explicitamente.
@@ -1056,8 +1062,18 @@ async function executarFluxoCompleto(
     } // fim else: sem homologação H2.2.1 — nativo ou legado
 
     let resultadoFinal = 'SEM_MOVIMENTO';
-    if (ponteHomologacao.encerrarEtapaFiscal && ponteHomologacao.situacao === 'PREPARADA_GATE_FECHADO') {
-      resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_PREPARADA';
+    if (ponteHomologacao.encerrarEtapaFiscal) {
+      if (ponteHomologacao.estadoOperacional === 'BLOQUEADA') {
+        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_BLOQUEADA';
+      } else if (ponteHomologacao.estadoOperacional === 'CONCLUIDA') {
+        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_CONCLUIDA';
+      } else if (ponteHomologacao.estadoOperacional === 'INCOMPLETA') {
+        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_INCOMPLETA';
+      } else if (ponteHomologacao.estadoOperacional === 'CANCELADA') {
+        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_CANCELADA';
+      } else {
+        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_PREPARADA';
+      }
     } else if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
       resultadoFinal = 'NFS_ENCONTRADAS';
     } else if (info.qtdNotasEmitidas > 0) {

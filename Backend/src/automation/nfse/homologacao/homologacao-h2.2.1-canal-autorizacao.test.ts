@@ -14,6 +14,7 @@ import {
   criarCanalAutorizacaoMemoria,
   criarLimitesHomologacao,
   avaliarPonteHomologacaoDiscoveryOnly,
+  definirGateExecucaoRealSomenteTeste,
   evidenciaContemSegredo,
   execucaoRealDiscoveryOnlyHabilitada,
   GATE_EXECUCAO_REAL_DISCOVERY_ONLY,
@@ -33,6 +34,7 @@ const dirs: string[] = [];
 
 afterEach(async () => {
   configurarCanalHomologacaoOperacional(null);
+  definirGateExecucaoRealSomenteTeste(null);
   while (dirs.length) {
     const d = dirs.pop();
     if (d) await rm(d, { recursive: true, force: true });
@@ -41,6 +43,7 @@ afterEach(async () => {
 
 beforeEach(() => {
   configurarCanalHomologacaoOperacional(null);
+  definirGateExecucaoRealSomenteTeste(null);
 });
 
 describe('H2.2.1 canal de autorização operacional', () => {
@@ -58,6 +61,7 @@ describe('H2.2.1 canal de autorização operacional', () => {
       agora: AGORA,
     });
     expect(r.situacao).toBe('PREPARADA_GATE_FECHADO');
+    expect(r.estadoOperacional).toBe('BLOQUEADA');
     expect(r.encerrarEtapaFiscal).toBe(true);
     expect(r.codigoErro).toBe('GATE_EXECUCAO_FECHADO');
     expect(r.ticketConsumido).toBe(false);
@@ -594,6 +598,7 @@ describe('H2.2.1 canal de autorização operacional', () => {
     expect(r.descobertaExecutada).toBe(false);
     expect(r.ticketConsumido).toBe(false);
     expect(r.codigoErro).toBe('GATE_EXECUCAO_FECHADO');
+    expect(r.estadoOperacional).toBe('BLOQUEADA');
     expect(r.efeitosProibidos).toMatchObject({
       sefin: false,
       escritaXml: false,
