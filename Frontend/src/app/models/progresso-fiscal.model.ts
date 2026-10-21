@@ -39,7 +39,7 @@ export interface ProgressoFaseInventario {
 
 export interface ProgressoFaseValidacao {
   estado: EstadoFaseFiscal;
-  origem: 'PORTAL' | 'indisponivel';
+  origem: 'PORTAL' | 'ADN' | 'indisponivel';
   vigentes: number;
   canceladas: number;
   indeterminadas: number;
@@ -147,7 +147,13 @@ export function parseProgressoFiscalNfse(raw: unknown): ProgressoFiscalNfse | nu
   if (typeof invRaw['conclusao_confiavel'] !== 'boolean') return null;
 
   if (!isEstadoFase(valRaw['estado'])) return null;
-  if (valRaw['origem'] !== 'PORTAL' && valRaw['origem'] !== 'indisponivel') return null;
+  if (
+    valRaw['origem'] !== 'PORTAL' &&
+    valRaw['origem'] !== 'ADN' &&
+    valRaw['origem'] !== 'indisponivel'
+  ) {
+    return null;
+  }
   const vVig = num(valRaw['vigentes']);
   const vCan = num(valRaw['canceladas']);
   const vInd = num(valRaw['indeterminadas']);

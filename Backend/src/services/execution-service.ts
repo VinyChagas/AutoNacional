@@ -65,6 +65,12 @@ import {
   retenirProgressoFiscal,
   type ProgressoFiscalNfse,
 } from '../automation/nfse/progresso-fiscal';
+import {
+  decidirAdnIniciar,
+  executarFluxoAdnIniciar,
+  obterAutorizacaoAdnIniciarRuntime,
+  obterDependenciasAdnIniciar,
+} from '../automation/nfse/adn';
 
 const logger = getLogger('execution-service');
 
@@ -939,6 +945,124 @@ async function executarFluxoCompleto(
       finishedAt,
     }).catch(() => {});
   };
+
+  // API-01S — Roteamento A1→ADN ANTES de qualquer Chromium/Playwright.
+  // Flag off / credenciais / empresa não autorizada → Playwright legado (abaixo).
+  // ADN selecionado + falha → ERRO tipado, SEM fallback silencioso para o legado.
+  const decisaoAdn = decidirAdnIniciar({
+    tipoAutenticacao,
+    cnpj,
+    env: process.env,
+    autorizacaoAdnIniciar: obterAutorizacaoAdnIniciarRuntime(cnpj),
+  });
+
+  if (decisaoAdn.executarAdn) {
+    emitirEventoExecucao(batchId, {
+      type: 'execution:stage',
+      empresa_id: key,
+      stage: 'adn_distribuicao',
+      message: 'Distribuição ADN (sem navegador)…',
+    });
+    logWorker(empresaId, 'ADN path — no Chromium');
+    info.status = 'em_execucao';
+    info.etapaAtual = 'adn_distribuicao';
+    info.progresso = 15;
+    info.mensagem = 'Distribuição ADN (sem navegador)…';
+    adicionarLog(`Roteamento Iniciar: ${decisaoAdn.motivo}`);
+    await execucoesRepo.atualizar(execucaoDbId, {
+      status: 'em_execucao',
+      etapaAtual: 'adn_distribuicao',
+      dataInicio: new Date(),
+    });
+
+    try {
+      const resultadoAdn = await executarFluxoAdnIniciar(
+        {
+          cnpj,
+          dataInicio,
+          dataFim,
+          identidade: {
+            batchId: batchId ?? null,
+            empresaId: key,
+            execucaoId: String(execucaoDbId),
+            cnpj,
+          },
+          decisao: decisaoAdn,
+          deveInterromper: () => encerrandoFila,
+          env: process.env,
+        },
+        obterDependenciasAdnIniciar({ exigirGateLive: true })
+      );
+
+      if (resultadoAdn.chromiumAberto || resultadoAdn.playwrightUsado || resultadoAdn.sefinChamado) {
+        throw new OrquestracaoNfseError(
+          'CONTEXTO_INVALIDO',
+          'Fluxo ADN Iniciar violou isolamento (Chromium/SEFIN). Abortando sem legado.'
+        );
+      }
+
+      if (resultadoAdn.fiscal) {
+        const fiscal = publicarProgressoFiscal(resultadoAdn.fiscal);
+        info.progressoFiscal = fiscal;
+        retenirProgressoFiscalDeInfo(info);
+        emitirProgressoFiscalSeAssociado({
+          batchId,
+          empresaId: key,
+          execucaoId: String(execucaoDbId),
+          cnpj,
+          fiscal,
+        });
+      }
+
+      info.qtdNotasEmitidas = resultadoAdn.contagens.emitidas;
+      info.qtdNotasRecebidas = resultadoAdn.contagens.recebidas;
+      info.qtdNotasCanceladas = resultadoAdn.contagens.canceladas;
+      adicionarLog(resultadoAdn.motivo);
+
+      if (!resultadoAdn.ok) {
+        info.status = 'falhou';
+        info.mensagem = resultadoAdn.motivo;
+        info.resultadoFinal = 'ERRO';
+        info.progresso = 100;
+      } else {
+        const temDocs =
+          resultadoAdn.contagens.emitidas + resultadoAdn.contagens.recebidas > 0;
+        info.status = 'concluido';
+        info.progresso = 100;
+        info.mensagem = resultadoAdn.motivo;
+        info.resultadoFinal = temDocs ? 'NFS_ENCONTRADAS' : 'SEM_MOVIMENTO';
+        adicionarLog(
+          'ADN Iniciar concluído sem Chromium; inventário mensal permanece PARCIAL.'
+        );
+      }
+    } catch (e) {
+      const err = e as Error;
+      adicionarLog(`ERRO ADN Iniciar: ${err.message}`);
+      info.status = 'falhou';
+      info.mensagem = `${err.message} Sem fallback para Playwright.`;
+      info.resultadoFinal = 'ERRO';
+      info.progresso = 100;
+    } finally {
+      const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
+      await finalizarExecucao({
+        execucaoId: execucaoDbId,
+        empresaId,
+        cnpj,
+        batchId,
+        statusFinal,
+        message: info.mensagem || (statusFinal === 'falhou' ? 'Erro ADN' : 'Concluído'),
+        contagens: {
+          emitidas: info.qtdNotasEmitidas,
+          recebidas: info.qtdNotasRecebidas,
+          canceladas: info.qtdNotasCanceladas,
+        },
+        resultado_final: info.resultadoFinal ?? 'ERRO',
+        startedAt,
+        persistirMetrica,
+      });
+    }
+    return;
+  }
 
   emitirEventoExecucao(batchId, {
     type: 'execution:stage',

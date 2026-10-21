@@ -86,6 +86,42 @@ describe('UI-01e-C progresso fiscal Frontend', () => {
     expect(v.inventario.fonteEstruturada).toBe(true);
   });
 
+  it('1b. origem ADN com inventário PARCIAL (API-01S)', () => {
+    const p = fiscal({
+      inventario: {
+        estado: 'parcial',
+        completude: 'PARCIAL',
+        conclusao_confiavel: false,
+        totais: {
+          emitidas: 2,
+          recebidas: 1,
+          canceladas: 0,
+          vigentes: 3,
+          indeterminadas: 0,
+          descobertos: 3,
+          paginas: 1,
+        },
+      },
+      validacao: {
+        estado: 'parcial',
+        origem: 'ADN',
+        vigentes: 3,
+        canceladas: 0,
+        indeterminadas: 0,
+        conclusao_confiavel: false,
+      },
+      veredito_discovery: null,
+      estado_operacional: 'COMPLETO',
+      message: 'Distribuição ADN; inventário mensal NÃO comprovado.',
+    });
+    expect(parseProgressoFiscalNfse(p)).not.toBeNull();
+    const v = mapearVisaoFiscal(row({ progresso_fiscal: p, status: 'OK' }));
+    expect(v.inventario.completude).toBe('PARCIAL');
+    expect(v.inventario.estado).toBe('Parcial');
+    expect(v.validacao.exibirContagens).toBe(true);
+    expect(v.validacao.vigentes).toBe(3);
+  });
+
   it('2. inventário parcial', () => {
     const p = fiscal({
       inventario: {

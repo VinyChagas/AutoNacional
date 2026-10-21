@@ -257,7 +257,7 @@ function validacaoDeEstruturado(p: ProgressoFiscalNfse): ValidacaoView {
     vigentes: p.validacao.vigentes,
     canceladas: p.validacao.canceladas,
     indeterminadas: p.validacao.indeterminadas,
-    exibirContagens: p.validacao.origem === 'PORTAL',
+    exibirContagens: p.validacao.origem === 'PORTAL' || p.validacao.origem === 'ADN',
     fonteEstruturada: true,
   };
 }

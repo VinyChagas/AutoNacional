@@ -44,7 +44,7 @@ export interface ProgressoFaseInventario {
 export interface ProgressoFaseValidacao {
   estado: EstadoFaseFiscal;
   /** Classificação ocorre na montagem do inventário — não é etapa DOM separada. */
-  origem: 'PORTAL' | 'indisponivel';
+  origem: 'PORTAL' | 'ADN' | 'indisponivel';
   vigentes: number;
   canceladas: number;
   indeterminadas: number;

@@ -17,6 +17,8 @@ export type {
   IdentidadeProgressoFiscal,
   EntradaAdaptadorDiscoveryOnly,
 } from './from-discovery-only';
+export { progressoFiscalDeSyncAdn } from './from-adn-sync';
+export type { EntradaAdaptadorSyncAdn } from './from-adn-sync';
 export {
   RETENCAO_FISCAL_TTL_MS,
   RETENCAO_FISCAL_MAX_SNAPSHOTS,

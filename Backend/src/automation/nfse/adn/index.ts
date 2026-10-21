@@ -1,6 +1,7 @@
 /**
  * Módulo ADN/NSU — descoberta por distribuição oficial (mTLS A1).
- * Sem Playwright. Sem ligação ao botão Iniciar. Sem chamadas reais nesta etapa.
+ * Sem Playwright. Sem SEFIN.
+ * Iniciar A1→ADN: feature flag NFSE_ADN_INICIAR_ENABLED (default off) + allowlist por empresa.
  * NFSExplorer é apenas referência de código — não há dependência runtime.
  */
 
@@ -122,3 +123,34 @@ export {
   type RelatorioConsolidadoAdn,
 } from './controlled-sync-service';
 export type { PersistenciaSyncAdnResumo, MotivoXmlInvalidoAdn } from './types';
+export {
+  NOME_FLAG_ADN_INICIAR,
+  NOME_ALLOWLIST_ADN_INICIAR,
+  lerFlagAdnIniciar,
+  flagAdnIniciarAtiva,
+  lerAllowlistAdnIniciar,
+  cnpjNaAllowlistAdnIniciar,
+} from './iniciar-feature-flag';
+export {
+  decidirAdnIniciar,
+  type ContextoRoteamentoAdnIniciar,
+  type DecisaoRoteamentoAdnIniciar,
+  type AutorizacaoAdnIniciar,
+  type SituacaoRoteamentoAdnIniciar,
+} from './iniciar-routing';
+export {
+  executarFluxoAdnIniciar,
+  type EntradaFluxoAdnIniciar,
+  type DependenciasFluxoAdnIniciar,
+  type ResultadoFluxoAdnIniciar,
+} from './iniciar-executor';
+export {
+  setSyncAdnIniciarParaTestes,
+  autorizarAdnIniciarEmpresa,
+  limparAutorizacoesAdnIniciar,
+  obterAutorizacaoAdnIniciarRuntime,
+  resetIniciarAdnRuntimeParaTestes,
+  obterDependenciasAdnIniciar,
+  criarExecutarSyncAdnIniciarPadrao,
+  syncAdnIniciarFixoParaTestes,
+} from './iniciar-runtime';
