@@ -45,6 +45,8 @@ import {
   decidirIntegracaoNativa,
   tentarFluxoNativoControlado,
 } from '../automation/nfse/orchestration';
+import { criarPeriodoConsultaPortal } from '../automation/nfse/contracts/periodo';
+import { avaliarPonteHomologacaoDiscoveryOnly } from '../automation/nfse/homologacao';
 
 const logger = getLogger('execution-service');
 
@@ -801,6 +803,39 @@ async function executarFluxoCompleto(
     info.progresso = 40;
     adicionarLog(`Processando notas (${tipo})...`);
 
+    // H2.2.1 — canal homologação DISCOVERY_ONLY (injetável). Sem canal/ticket = legado idêntico.
+    // Gate fechado: valida ticket SEM consumir; não navega, não discoverNfse, não SEFIN/XML.
+    const ponteHomologacao = await avaliarPonteHomologacaoDiscoveryOnly({
+      execucaoId: String(execucaoDbId),
+      cnpj,
+      periodoConsulta: criarPeriodoConsultaPortal(dataInicio, dataFim),
+      pagePresente: Boolean(page),
+    });
+
+    if (ponteHomologacao.encerrarEtapaFiscal) {
+      emitirEventoExecucao(batchId, {
+        type: 'execution:stage',
+        empresa_id: key,
+        stage: 'nfse_homologacao_discovery_only',
+        message: 'Homologação DISCOVERY_ONLY (gate real fechado; sem descoberta)…',
+      });
+      info.mensagem = ponteHomologacao.motivo;
+      adicionarLog(
+        `Homologação H2.2.1: ${ponteHomologacao.situacao} auth=${ponteHomologacao.autorizacaoId ?? 'n/a'} ` +
+          `cnpj=${ponteHomologacao.cnpjMascarado} ticketConsumido=${ponteHomologacao.ticketConsumido} ` +
+          `descobertaExecutada=${ponteHomologacao.descobertaExecutada} — sem legado.`
+      );
+      if (ponteHomologacao.situacao === 'RECUSADA' || ponteHomologacao.situacao === 'BLOQUEADA_GATE_REAL') {
+        throw new OrquestracaoNfseError(
+          'CONTEXTO_INVALIDO',
+          ponteHomologacao.motivo
+        );
+      }
+      // PREPARADA_GATE_FECHADO: encerra etapa fiscal sem download legado / nativo SEFIN.
+      info.qtdNotasEmitidas = 0;
+      info.qtdNotasRecebidas = 0;
+      info.qtdNotasCanceladas = 0;
+    } else {
     // Autorização nativa por execução NÃO é fornecida aqui (desativada por padrão).
     // Flag global sozinha não inicia SEFIN. Testes injetam autorizacaoNativa explicitamente.
     const contextoNativo = {
@@ -1018,9 +1053,12 @@ async function executarFluxoCompleto(
         qtd_canceladas: info.qtdNotasCanceladas,
       });
     }
+    } // fim else: sem homologação H2.2.1 — nativo ou legado
 
     let resultadoFinal = 'SEM_MOVIMENTO';
-    if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
+    if (ponteHomologacao.encerrarEtapaFiscal && ponteHomologacao.situacao === 'PREPARADA_GATE_FECHADO') {
+      resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_PREPARADA';
+    } else if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
       resultadoFinal = 'NFS_ENCONTRADAS';
     } else if (info.qtdNotasEmitidas > 0) {
       resultadoFinal = 'NOTAS_EMITIDAS';

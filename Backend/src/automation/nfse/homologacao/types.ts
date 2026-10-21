@@ -26,6 +26,10 @@ export type CodigoErroHomologacao =
   | 'CERTIFICADO_INDISPONIVEL'
   | 'INTERRUPCAO'
   | 'FALHA_EVIDENCIA'
+  | 'AUTORIZACAO_JA_CONSUMIDA'
+  | 'AUTORIZACAO_CONCORRENCIA'
+  | 'GATE_EXECUCAO_FECHADO'
+  | 'DIRETORIO_INSEGURO'
   | 'CONTEXTO_INVALIDO';
 
 export class HomologacaoNfseError extends Error {

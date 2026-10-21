@@ -23,6 +23,34 @@ export type {
   DiscoverNfseInjetavel,
   EntradaDiscoveryOnlyHomologacao,
 } from './discovery-only-adapter';
+export {
+  configurarCanalHomologacaoOperacional,
+  obterCanalHomologacaoOperacional,
+  criarCanalAutorizacaoMemoria,
+  criarCanalAutorizacaoArquivo,
+  criarAutorizacaoId,
+} from './canal-autorizacao';
+export type {
+  CanalAutorizacaoHomologacao,
+  TicketAutorizacaoOperacional,
+  ContextoConsumoAutorizacao,
+  MotivoConsumoAutorizacao,
+  EstadoTicketAutorizacao,
+} from './canal-autorizacao-types';
+export {
+  execucaoRealDiscoveryOnlyHabilitada,
+  GATE_EXECUCAO_REAL_DISCOVERY_ONLY,
+} from './gate-execucao-real';
+export { avaliarPonteHomologacaoDiscoveryOnly } from './ponte-execution-homologacao';
+export type {
+  EntradaPonteHomologacao,
+  ResultadoPonteHomologacao,
+  SituacaoPonteHomologacao,
+} from './ponte-execution-homologacao';
+export {
+  validarDiretorioFiscalSeguro,
+  garantirDentroDoDiretorioAutorizado,
+} from './diretorio-seguro';
 export { HomologacaoNfseError, OPERACOES_HOMOLOGACAO } from './types';
 export type {
   AutorizacaoHomologacaoNfse,
