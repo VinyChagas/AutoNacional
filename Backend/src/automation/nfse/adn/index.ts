@@ -64,3 +64,22 @@ export {
   type AdaptarSyncAdnParaInventarioInput,
   type ResultadoAdaptacaoInventarioAdn,
 } from './inventory-adapter';
+export {
+  ENV_ADN_ALLOW_LIVE,
+  avaliarGateLiveAdn,
+  lerAllowLiveEnv,
+  type ResultadoGateLiveAdn,
+} from './live-gate';
+export {
+  assertCnpjCompativelComCertificado,
+  extrairCnpjDoCertificadoA1,
+} from './cert-identity';
+export {
+  LIMITES_SMOKE_ADN,
+  TransporteUmaRequisicaoAdn,
+  executarSmokeAdn,
+  formatarResumoSmokeAdn,
+  type DependenciasSmokeAdn,
+  type EntradaSmokeAdn,
+  type ResumoSmokeAdn,
+} from './smoke-service';

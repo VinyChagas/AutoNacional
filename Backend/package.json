@@ -23,7 +23,8 @@
     "tunnel:db": "bash scripts/ssh-tunnel-db.sh",
     "test:smoke-storage": "node scripts/smoke-vps-storage.mjs",
     "typecheck": "tsc --noEmit",
-    "homologacao:cli": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --transpile-only src/automation/nfse/homologacao/cli-homologacao.ts"
+    "homologacao:cli": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --transpile-only src/automation/nfse/homologacao/cli-homologacao.ts",
+    "adn:smoke": "cross-env NODE_OPTIONS=--openssl-legacy-provider ts-node --transpile-only src/automation/nfse/adn/cli-adn-smoke.ts"
   },
   "keywords": [
     "autonacional",
