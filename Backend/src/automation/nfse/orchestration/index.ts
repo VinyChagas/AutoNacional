@@ -3,11 +3,23 @@ export {
   lerFlagRecuperacaoNativa,
   flagRecuperacaoNativaAtiva,
   lerRaizFiscalNativa,
+  resolverRaizFiscalNativaProduto,
+  defaultRaizFiscalNativaProduto,
   exigirFlagValidaOuDesativada,
 } from './feature-flag';
 export type { LeituraFlagRecuperacaoNativa } from './feature-flag';
 export { executarFluxoFiscalNativo } from './native-orchestrator';
 export { decidirIntegracaoNativa, tentarFluxoNativoControlado } from './integration-adapter';
+export { decidirMotorIniciar } from './iniciar-motor-routing';
+export type {
+  DecisaoMotorIniciar,
+  MotorProcessamentoIniciar,
+  SituacaoMotorIniciar,
+} from './iniciar-motor-routing';
+export {
+  exportarSefinParaDownloadsOperacionais,
+  validarXmlsOperacionaisSefin,
+} from './exportar-downloads-operacionais';
 export { OrquestracaoNfseError, autorizacaoNativaAtiva } from './types';
 export type {
   AutorizacaoExecucaoNativa,

@@ -285,9 +285,12 @@
                             class="motor-badge"
                             [class.badge-adn]="v.motor.motor === 'ADN'"
                             [class.badge-playwright]="v.motor.motor === 'PLAYWRIGHT'"
-                            [attr.title]="v.motor.motor === 'ADN'
-                              ? 'Motor ADN — sem Chromium/hCaptcha'
-                              : 'Motor Playwright — navegador'"
+                            [class.badge-portal-sefin]="v.motor.motor === 'PORTAL_SEFIN'"
+                            [attr.title]="v.motor.motor === 'PORTAL_SEFIN'
+                              ? 'Portal + SEFIN — listagem por competência e XML via API (sem CAPTCHA no download)'
+                              : v.motor.motor === 'ADN'
+                                ? 'Motor ADN complementar — sem Chromium/hCaptcha'
+                                : 'Motor Playwright — navegador'"
                           >
                             {{ v.motor.rotulo }}
                           </span>

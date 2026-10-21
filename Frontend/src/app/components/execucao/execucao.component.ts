@@ -985,7 +985,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       qtdC: number;
       etapa: string;
       resultadoFinal?: string;
-      motor?: 'ADN' | 'PLAYWRIGHT' | null;
+      motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null;
       competenciaFiscal?: string | null;
       patchFiscal?: Partial<ExecutionRow>;
     }> = [];
@@ -1048,12 +1048,15 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           }
         }
 
-        const motorInferido: 'ADN' | 'PLAYWRIGHT' | null | undefined =
-          s.motor === 'ADN' || s.motor === 'PLAYWRIGHT'
+        const motorInferido: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null | undefined =
+          s.motor === 'ADN' || s.motor === 'PLAYWRIGHT' || s.motor === 'PORTAL_SEFIN'
             ? s.motor
             : etapa.toLowerCase().startsWith('adn_')
               ? 'ADN'
-              : undefined;
+              : etapa.toLowerCase().includes('portal_sefin') ||
+                  etapa.toLowerCase().includes('sefin_')
+                ? 'PORTAL_SEFIN'
+                : undefined;
         const competenciaFiscal =
           s.competencia_fiscal ||
           (s.periodo_inicio && /^\d{2}\/\d{2}\/\d{4}$/.test(s.periodo_inicio)
@@ -1159,11 +1162,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         );
         if (rowIdxPoll >= 0) {
           const motorStatus =
-            status.motor === 'ADN' || status.motor === 'PLAYWRIGHT'
+            status.motor === 'ADN' ||
+            status.motor === 'PLAYWRIGHT' ||
+            status.motor === 'PORTAL_SEFIN'
               ? status.motor
               : (status.etapa_atual || '').toLowerCase().startsWith('adn_')
                 ? ('ADN' as const)
-                : undefined;
+                : (status.etapa_atual || '').toLowerCase().includes('portal_sefin') ||
+                    (status.etapa_atual || '').toLowerCase().startsWith('sefin_')
+                  ? ('PORTAL_SEFIN' as const)
+                  : undefined;
           const compStatus = status.competencia_fiscal || undefined;
           if (motorStatus || compStatus || status.resultado_final) {
             this.executionRows = [
@@ -1284,13 +1292,17 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
     if (ev.type === 'execution:started') {
       const motorStarted =
-        ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' ? ev.motor : row.motor;
+        ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' || ev.motor === 'PORTAL_SEFIN'
+          ? ev.motor
+          : row.motor;
       next = {
         status: 'EM_EXECUCAO',
         mensagem:
           motorStarted === 'ADN'
-            ? 'Distribuição ADN (sem navegador)…'
-            : 'Abrindo navegador…',
+            ? 'Distribuição ADN complementar (sem navegador)…'
+            : motorStarted === 'PORTAL_SEFIN'
+              ? 'Portal + SEFIN: abrindo listagem…'
+              : 'Abrindo navegador…',
         razao_social: ev.razao_social || row.razao_social,
         metodo: ev.metodo,
         ...(motorStarted ? { motor: motorStarted } : {}),
@@ -1304,9 +1316,12 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         ev.stage === 'captcha_aguardando' ||
         ev.stage === 'captcha_fallback_manual' ||
         (ev.message || '').toLowerCase().includes('aguardando resolução manual');
-      const motorStage = ev.stage?.toLowerCase().startsWith('adn_')
+      const stageLower = (ev.stage || '').toLowerCase();
+      const motorStage = stageLower.startsWith('adn_')
         ? ('ADN' as const)
-        : undefined;
+        : stageLower.includes('portal_sefin') || stageLower.startsWith('sefin_')
+          ? ('PORTAL_SEFIN' as const)
+          : undefined;
       next = {
         status: isAguardandoCaptcha ? 'AGUARDANDO_CAPTCHA' : 'EM_EXECUCAO',
         mensagem: isAguardandoCaptcha
@@ -1330,7 +1345,9 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         qtd_recebidas: ev.qtd_recebidas ?? row.qtd_recebidas,
         qtd_canceladas: ev.qtd_canceladas ?? row.qtd_canceladas ?? 0,
         ...(ev.resultado_final ? { resultado_final: ev.resultado_final } : {}),
-        ...(ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' ? { motor: ev.motor } : {}),
+        ...(ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' || ev.motor === 'PORTAL_SEFIN'
+          ? { motor: ev.motor }
+          : {}),
         ...(ev.competencia_fiscal ? { competencia_fiscal: ev.competencia_fiscal } : {}),
       };
       const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === String(empresaId) || e.cnpj === row.cnpj);

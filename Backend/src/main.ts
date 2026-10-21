@@ -133,7 +133,8 @@ async function bootstrap() {
     );
   }
 
-  // API-02D — config persistente A1→ADN (sobrevive a reinício; sem flags de piloto).
+  // API-02K — config persistente (exceções Playwright; ADN complementar).
+  // A1 padrão no Iniciar: Portal + SEFIN (não ADN automático).
   try {
     const cfgAdn = carregarConfigAdnIniciar({ criarSeAusente: true });
     aplicarHomologRootConfigNoEnv(cfgAdn);
@@ -143,8 +144,9 @@ async function bootstrap() {
         excecoesPlaywright: cfgAdn.playwrightExcecaoCnpjs.length,
         maxRequests: cfgAdn.maxRequests,
         homologRoot: cfgAdn.homologRoot,
+        motorPadraoA1: 'PORTAL_SEFIN',
       },
-      'Config ADN Iniciar carregada'
+      'Config Iniciar carregada (A1→Portal+SEFIN; ADN complementar)'
     );
   } catch (err) {
     logger.warn({ err }, 'Falha ao carregar config ADN Iniciar — usando defaults em memória');

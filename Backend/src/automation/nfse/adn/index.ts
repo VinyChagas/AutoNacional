@@ -1,7 +1,7 @@
 /**
  * Módulo ADN/NSU — descoberta por distribuição oficial (mTLS A1).
  * Sem Playwright. Sem SEFIN.
- * Iniciar A1→ADN: config persistente (adnPadraoA1 default on) + exceções Playwright.
+ * Iniciar ADN complementar (API-02K: A1 padrão é Portal+SEFIN). Exceções Playwright preservadas.
  * Kill-switch env NFSE_ADN_INICIAR_ENABLED=false força Playwright.
  * NFSExplorer é apenas referência de código — não há dependência runtime.
  */

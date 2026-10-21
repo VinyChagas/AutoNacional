@@ -177,11 +177,16 @@ describe('ativação 22.7.1 — flag + autorização', () => {
   });
 
   it('6–9 requisitos inválidos com autorização → NATIVO_RECUSADO', () => {
+    // API-02K: baixarPdf não bloqueia mais — XML-only com aviso
     expect(
       decidirIntegracaoNativa(
         baseCtx({ env: envOn(), autorizacaoNativa: auth, baixarPdf: true })
       )
-    ).toMatchObject({ situacao: 'NATIVO_RECUSADO', codigoRecusa: 'PDF_EXIGE_LEGADO' });
+    ).toMatchObject({
+      situacao: 'NATIVO_SOLICITADO',
+      executarNativo: true,
+      compatibilidadePdf: 'PDF_NAO_RECUPERADO',
+    });
 
     expect(
       decidirIntegracaoNativa(
@@ -217,11 +222,16 @@ describe('ativação 22.7.1 — flag + autorização', () => {
   });
 
   it('11–12 erro estruturado após autorização sem fallback', async () => {
+    // API-02K: PDF não recusa — ausência de raiz ainda recusa
     await expect(
       tentarFluxoNativoControlado(
-        baseCtx({ env: envOn(), autorizacaoNativa: auth, baixarPdf: true })
+        baseCtx({
+          env: { [NOME_FLAG_RECUPERACAO_NATIVA]: 'true' },
+          autorizacaoNativa: auth,
+          baixarPdf: true,
+        })
       )
-    ).rejects.toMatchObject({ codigo: 'PDF_EXIGE_LEGADO' });
+    ).rejects.toMatchObject({ codigo: 'RAIZ_FISCAL_AUSENTE' });
 
     await expect(
       tentarFluxoNativoControlado(
@@ -556,19 +566,19 @@ describe('orquestrador nativo offline', () => {
     );
   });
 
-  it('PDF_EXIGE_LEGADO no orquestrador', async () => {
-    await expect(
-      executarFluxoFiscalNativo({
-        page: PAGE,
-        cnpj: CNPJ,
-        periodoConsulta: PERIODO,
-        execucaoId: 'exec-pdf-orch',
-        tipo: 'emitidas',
-        baixarPdf: true,
-        raizFiscal: raiz,
-        dependencias: depsSimuladas(inventario([])),
-      })
-    ).rejects.toMatchObject({ codigo: 'PDF_EXIGE_LEGADO' });
+  it('API-02K — baixarPdf não bloqueia orquestrador (XML-only)', async () => {
+    const r = await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      execucaoId: 'exec-pdf-orch',
+      tipo: 'emitidas',
+      baixarPdf: true,
+      raizFiscal: raiz,
+      dependencias: depsSimuladas(inventario([])),
+    });
+    expect(r.compatibilidadePdf).toBe('PDF_NAO_RECUPERADO');
+    expect(r.diagnosticos.some((d) => d.codigo === 'PDF_NAO_RECUPERADO')).toBe(true);
   });
 
   it('certificado indisponível', async () => {

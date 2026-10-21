@@ -25,11 +25,16 @@ export type SituacaoDecisaoIntegracao =
   | 'NATIVO_SOLICITADO'
   | 'NATIVO_RECUSADO';
 
-export type CompatibilidadePdfNativo = 'LEGADO_PRESERVADO' | 'NAO_APLICAVEL' | 'BLOQUEIA_SUBSTITUICAO';
+export type CompatibilidadePdfNativo =
+  | 'LEGADO_PRESERVADO'
+  | 'NAO_APLICAVEL'
+  | 'BLOQUEIA_SUBSTITUICAO'
+  /** baixarPdf=true ignorado: nativo é XML-only (API-02K). */
+  | 'PDF_NAO_RECUPERADO';
 
 /**
- * Autorização explícita por execução. Ausente ou `autorizada !== true` = desativada.
- * Não é inferida por A1, storage, PDF ou login.
+ * Autorização explícita por execução (piloto/homologação via flag).
+ * API-02K: Iniciar A1 padrão usa `modoProdutoPortalSefin` e não exige isto.
  */
 export interface AutorizacaoExecucaoNativa {
   readonly autorizada: true;
@@ -51,11 +56,13 @@ export type CodigoErroOrquestracaoNfse =
   | 'SITUACAO_INDETERMINADA'
   | 'PLANEJAMENTO_BLOQUEADO'
   | 'PDF_EXIGE_LEGADO'
+  | 'COBERTURA_INCOMPLETA'
   | 'EXECUCAO_EM_USO'
   | 'FALHA_RECUPERACAO'
   | 'FALHA_PERSISTENCIA'
   | 'FALHA_AUDITORIA'
-  | 'FALHA_ORQUESTRACAO';
+  | 'FALHA_ORQUESTRACAO'
+  | 'FALHA_EXPORTACAO';
 
 export class OrquestracaoNfseError extends Error {
   readonly codigo: CodigoErroOrquestracaoNfse;
@@ -143,10 +150,14 @@ export interface ContextoIntegracaoExecution {
   tipoAutenticacao: 'certificado' | 'credenciais';
   env?: NodeJS.ProcessEnv;
   /**
-   * Autorização explícita desta execução.
-   * Desativada por padrão. Só `autorizada: true` habilita o pedido nativo.
+   * Autorização explícita desta execução (piloto via flag).
+   * API-02K: Iniciar A1 usa `modoProdutoPortalSefin` sem isto.
    */
   autorizacaoNativa?: AutorizacaoExecucaoNativa | null;
+  /**
+   * API-02K — produto Iniciar A1: Portal+SEFIN sem flag/autorização manual.
+   */
+  modoProdutoPortalSefin?: boolean;
 }
 
 export function autorizacaoNativaAtiva(

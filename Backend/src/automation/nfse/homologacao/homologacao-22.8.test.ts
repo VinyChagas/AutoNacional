@@ -341,21 +341,22 @@ describe('homologação 22.8 — evidências offline', () => {
       [NOME_FLAG_RECUPERACAO_NATIVA]: 'true',
       NFSE_FISCAL_STORAGE_PATH: raiz,
     };
-    expect(
-      decidirIntegracaoNativa({
-        page: PAGE,
-        cnpj: CNPJ,
-        dataInicio: '01/09/2026',
-        dataFim: '30/09/2026',
-        tipo: 'ambas',
-        baixarPdf: true,
-        execucaoId: 'h-20',
-        tipoAutenticacao: 'certificado',
-        env: envOn,
-        autorizacaoNativa: { autorizada: true },
-      }).situacao
-    ).toBe('NATIVO_RECUSADO');
-    registrar('20', 'PASS', 'PDF → NATIVO_RECUSADO');
+    // API-02K: baixarPdf não bloqueia — nativo XML-only com PDF_NAO_RECUPERADO
+    const dPdf = decidirIntegracaoNativa({
+      page: PAGE,
+      cnpj: CNPJ,
+      dataInicio: '01/09/2026',
+      dataFim: '30/09/2026',
+      tipo: 'ambas',
+      baixarPdf: true,
+      execucaoId: 'h-20',
+      tipoAutenticacao: 'certificado',
+      env: envOn,
+      autorizacaoNativa: { autorizada: true },
+    });
+    expect(dPdf.situacao).toBe('NATIVO_SOLICITADO');
+    expect(dPdf.compatibilidadePdf).toBe('PDF_NAO_RECUPERADO');
+    registrar('20', 'PASS', 'PDF → NATIVO_SOLICITADO (XML-only)');
 
     expect(
       decidirIntegracaoNativa({

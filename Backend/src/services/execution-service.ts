@@ -43,8 +43,18 @@ import { CAPTCHA_WINDOW_LAYOUT_ENABLED } from '../infrastructure/config';
 import {
   OrquestracaoNfseError,
   decidirIntegracaoNativa,
+  decidirMotorIniciar,
+  exportarSefinParaDownloadsOperacionais,
+  resolverRaizFiscalNativaProduto,
   tentarFluxoNativoControlado,
+  type CodigoErroOrquestracaoNfse,
+  type MotorProcessamentoIniciar,
+  type ResultadoFluxoFiscalNativo,
 } from '../automation/nfse/orchestration';
+import {
+  RepositorioFiscalNfse,
+  criarResolvedorRaizInjetada,
+} from '../automation/nfse/infrastructure';
 import { criarPeriodoConsultaPortal } from '../automation/nfse/contracts/periodo';
 import { discoverNfse } from '../automation/nfse/discovery/discovery-service';
 import { avaliarPonteHomologacaoDiscoveryOnly } from '../automation/nfse/homologacao';
@@ -88,6 +98,70 @@ function competenciaFromDataInicio(dataInicio: string): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/**
+ * API-02K — sucesso Portal+SEFIN só com descoberta completa e cobertura determinada.
+ * Competência vazia (COMPLETO + 0 docs) = SEM_MOVIMENTO OK.
+ */
+function avaliarResultadoPortalSefin(resultado: ResultadoFluxoFiscalNativo): {
+  ok: boolean;
+  codigo: CodigoErroOrquestracaoNfse;
+  mensagem: string;
+  resultadoFinal: string;
+} {
+  const inv = resultado.inventario;
+  if (!inv || inv.completude !== 'COMPLETO') {
+    return {
+      ok: false,
+      codigo: 'DESCOBERTA_INCOMPLETA',
+      mensagem:
+        'Descoberta Portal incompleta ou indeterminada — não é possível declarar sucesso na competência.',
+      resultadoFinal: 'ERRO',
+    };
+  }
+  if (resultado.indeterminadas > 0) {
+    return {
+      ok: false,
+      codigo: 'SITUACAO_INDETERMINADA',
+      mensagem: 'Há notas com situação indeterminada — cobertura fiscal não declarada.',
+      resultadoFinal: 'ERRO',
+    };
+  }
+  if (resultado.vigentes > 0) {
+    if (
+      !resultado.loteLiberado ||
+      resultado.pendentes > 0 ||
+      resultado.persistidos < resultado.vigentes ||
+      resultado.conclusaoReconciliacao !== 'RECONCILIADA'
+    ) {
+      return {
+        ok: false,
+        codigo: 'COBERTURA_INCOMPLETA',
+        mensagem:
+          `Cobertura fiscal incompleta: vigentes=${resultado.vigentes} persistidos=${resultado.persistidos} ` +
+          `pendentes=${resultado.pendentes} reconciliação=${resultado.conclusaoReconciliacao ?? 'n/a'}.`,
+        resultadoFinal: 'ERRO',
+      };
+    }
+  }
+
+  const emitidas = inv.totais.emitidas;
+  const recebidas = inv.totais.recebidas;
+  let resultadoFinal = 'SEM_MOVIMENTO';
+  if (emitidas > 0 && recebidas > 0) resultadoFinal = 'NFS_ENCONTRADAS';
+  else if (emitidas > 0) resultadoFinal = 'NOTAS_EMITIDAS';
+  else if (recebidas > 0) resultadoFinal = 'NOTAS_RECEBIDAS';
+
+  return {
+    ok: true,
+    codigo: 'FALHA_ORQUESTRACAO',
+    mensagem:
+      resultadoFinal === 'SEM_MOVIMENTO'
+        ? 'Portal+SEFIN: competência sem movimento (descoberta completa).'
+        : `Portal+SEFIN concluído com cobertura determinada (${resultado.coberturaPercentual}%).`,
+    resultadoFinal,
+  };
+}
+
 const RESULTADOS = [
   'SEM_MOVIMENTO',
   'NOTAS_EMITIDAS',
@@ -118,8 +192,8 @@ interface ExecucaoInfo {
   qtdNotasCanceladas: number;
   resultadoFinal: string | null;
   tipoAutenticacao?: TipoAutenticacao;
-  /** Motor efetivo após roteamento Iniciar (ADN não abre Chromium). */
-  motorProcessamento?: 'ADN' | 'PLAYWRIGHT';
+  /** Motor efetivo após roteamento Iniciar (API-02K: PORTAL_SEFIN | PLAYWRIGHT | ADN). */
+  motorProcessamento?: MotorProcessamentoIniciar;
   page?: Page;
   browser?: Browser;
   /** Slot visual reservado antes do launch (liberado ao fechar o browser). */
@@ -967,16 +1041,14 @@ async function executarFluxoCompleto(
     }).catch(() => {});
   };
 
-  // API-02D — Roteamento A1→ADN (padrão de produto) ANTES de qualquer Chromium.
-  // Credenciais / kill-switch / exceção Playwright → legado (abaixo).
-  // ADN selecionado + falha → ERRO tipado, SEM fallback silencioso para o legado.
-  const decisaoAdn = decidirAdnIniciar({
+  // API-02K — Roteamento Iniciar: A1→Portal+SEFIN; credenciais/exceção→Playwright;
+  // ADN só com autorização explícita (complementar). Sem flags temporárias no A1 padrão.
+  const decisaoMotor = decidirMotorIniciar({
     tipoAutenticacao,
     cnpj,
-    env: process.env,
     autorizacaoAdnIniciar: obterAutorizacaoAdnIniciarRuntime(cnpj),
   });
-  info.motorProcessamento = decisaoAdn.executarAdn ? 'ADN' : 'PLAYWRIGHT';
+  info.motorProcessamento = decisaoMotor.motor;
 
   // API-02G — started após roteamento, com motor e competência fiscal reais.
   emitirEventoExecucao(batchId, {
@@ -989,19 +1061,26 @@ async function executarFluxoCompleto(
     competencia_fiscal: competencia,
   });
 
-  if (decisaoAdn.executarAdn) {
+  if (decisaoMotor.executarAdn) {
+    // ADN complementar: reusa decisão tipada do módulo ADN (autorização explícita).
+    const decisaoAdn = decidirAdnIniciar({
+      tipoAutenticacao,
+      cnpj,
+      env: process.env,
+      autorizacaoAdnIniciar: obterAutorizacaoAdnIniciarRuntime(cnpj),
+    });
     emitirEventoExecucao(batchId, {
       type: 'execution:stage',
       empresa_id: key,
       stage: 'adn_distribuicao',
-      message: 'Distribuição ADN (sem navegador)…',
+      message: 'Distribuição ADN complementar (sem navegador)…',
     });
-    logWorker(empresaId, 'ADN path — no Chromium');
+    logWorker(empresaId, 'ADN complementary path — no Chromium');
     info.status = 'em_execucao';
     info.etapaAtual = 'adn_distribuicao';
     info.progresso = 15;
-    info.mensagem = 'Distribuição ADN (sem navegador)…';
-    adicionarLog(`Roteamento Iniciar: ${decisaoAdn.motivo}`);
+    info.mensagem = 'Distribuição ADN complementar (sem navegador)…';
+    adicionarLog(`Roteamento Iniciar: ${decisaoMotor.motivo}`);
     await execucoesRepo.atualizar(execucaoDbId, {
       status: 'em_execucao',
       etapaAtual: 'adn_distribuicao',
@@ -1009,7 +1088,6 @@ async function executarFluxoCompleto(
     });
 
     try {
-      // Produto ADN ativo: gate live de piloto (NFSE_ALLOW_LIVE) não é exigido no Iniciar.
       const resultadoAdn = await executarFluxoAdnIniciar(
         {
           cnpj,
@@ -1354,8 +1432,8 @@ async function executarFluxoCompleto(
         adicionarLog('Progresso fiscal não emitido via SSE (associação lote/empresa/execução inválida).');
       }
     } else {
-    // Autorização nativa por execução NÃO é fornecida aqui (desativada por padrão).
-    // Flag global sozinha não inicia SEFIN. Testes injetam autorizacaoNativa explicitamente.
+    // API-02K — A1 padrão: modoProdutoPortalSefin (sem flag/autorização manual).
+    // Credenciais / exceção Playwright: legado (sem modo produto).
     const contextoNativo = {
       page,
       cnpj,
@@ -1366,6 +1444,7 @@ async function executarFluxoCompleto(
       execucaoId: String(execucaoDbId),
       certificadoEmMemoria: certificadoFornecido ?? null,
       tipoAutenticacao,
+      modoProdutoPortalSefin: decisaoMotor.executarPortalSefin,
     };
     const decisaoNativa = decidirIntegracaoNativa(contextoNativo);
 
@@ -1380,26 +1459,33 @@ async function executarFluxoCompleto(
       emitirEventoExecucao(batchId, {
         type: 'execution:stage',
         empresa_id: key,
-        stage: 'nfse_nativo',
-        message: 'Recuperação fiscal nativa…',
+        stage: 'nfse_portal_sefin',
+        message: 'Portal + SEFIN: descoberta e recuperação XML…',
       });
-      info.mensagem = 'Recuperação fiscal nativa…';
-      adicionarLog(`Fluxo nativo controlado: ${decisaoNativa.motivo}`);
+      info.mensagem = 'Portal + SEFIN: descoberta e recuperação XML…';
+      info.etapaAtual = 'portal_sefin';
+      adicionarLog(`Roteamento Iniciar: ${decisaoMotor.motivo}`);
+      adicionarLog(`Fluxo Portal+SEFIN: ${decisaoNativa.motivo}`);
+      if (baixarPdf) {
+        adicionarLog(
+          'Aviso: baixarPdf=true ignorado — Portal+SEFIN é XML-only; DANFS-e/PDF não será recuperado.'
+        );
+      }
 
-      let resultadoNativo;
+      let resultadoNativo: ResultadoFluxoFiscalNativo;
       try {
         const tentativa = await tentarFluxoNativoControlado(contextoNativo);
-        resultadoNativo = tentativa.resultado;
-        if (!resultadoNativo) {
+        if (!tentativa.resultado) {
           throw new OrquestracaoNfseError(
             'CONTEXTO_INVALIDO',
-            'Fluxo nativo decidido sem resultado estruturado.'
+            'Fluxo Portal+SEFIN decidido sem resultado estruturado.'
           );
         }
+        resultadoNativo = tentativa.resultado;
       } catch (erroNativo) {
-        // Sem fallback silencioso após NATIVO_SOLICITADO / NATIVO_RECUSADO.
+        // Sem fallback silencioso para download legado / CAPTCHA.
         if (erroNativo instanceof OrquestracaoNfseError) throw erroNativo;
-        const msg = erroNativo instanceof Error ? erroNativo.message : 'Falha na orquestração nativa.';
+        const msg = erroNativo instanceof Error ? erroNativo.message : 'Falha na orquestração Portal+SEFIN.';
         throw new OrquestracaoNfseError('FALHA_ORQUESTRACAO', msg);
       }
 
@@ -1414,9 +1500,46 @@ async function executarFluxoCompleto(
         qtd_canceladas: info.qtdNotasCanceladas,
       });
       adicionarLog(
-        `Nativo: vigentes=${resultadoNativo.vigentes} persistidos=${resultadoNativo.persistidos} ` +
+        `Portal+SEFIN: vigentes=${resultadoNativo.vigentes} persistidos=${resultadoNativo.persistidos} ` +
           `cobertura=${resultadoNativo.coberturaPercentual}% ` +
-          `reconciliacao=${resultadoNativo.conclusaoReconciliacao ?? 'n/a'}`
+          `reconciliacao=${resultadoNativo.conclusaoReconciliacao ?? 'n/a'} ` +
+          `loteLiberado=${resultadoNativo.loteLiberado}`
+      );
+
+      const avaliacao = avaliarResultadoPortalSefin(resultadoNativo);
+      if (!avaliacao.ok) {
+        throw new OrquestracaoNfseError(avaliacao.codigo, avaliacao.mensagem);
+      }
+
+      emitirEventoExecucao(batchId, {
+        type: 'execution:stage',
+        empresa_id: key,
+        stage: 'sefin_exportacao_downloads',
+        message: 'Exportando XMLs SEFIN para downloads…',
+      });
+      const raizFiscal = resolverRaizFiscalNativaProduto();
+      const repositorioExport = new RepositorioFiscalNfse(criarResolvedorRaizInjetada(raizFiscal));
+      const exportacao = await exportarSefinParaDownloadsOperacionais({
+        inventario: resultadoNativo.inventario!,
+        documentosAptos: resultadoNativo.documentosAptos,
+        repositorio: repositorioExport,
+        periodoConsulta: resultadoNativo.periodoConsulta,
+        downloadsBasePath: basePath,
+        nomeContabilidade,
+        mesExecucaoExtenso,
+        nomeEmpresa,
+      });
+      if (!exportacao.ok) {
+        throw new OrquestracaoNfseError('FALHA_EXPORTACAO', exportacao.motivo);
+      }
+      adicionarLog(exportacao.motivo);
+
+      info.resultadoFinal = avaliacao.resultadoFinal;
+      adicionarLog(avaliacao.mensagem);
+    } else if (decisaoMotor.executarPortalSefin) {
+      throw new OrquestracaoNfseError(
+        'CONTEXTO_INVALIDO',
+        'Portal+SEFIN solicitado mas o fluxo nativo não foi ativado.'
       );
     } else if (tipo === 'ambas' || tipo === 'emitidas') {
       emitirEventoExecucao(batchId, {
@@ -1573,25 +1696,28 @@ async function executarFluxoCompleto(
     }
     } // fim else: sem homologação H2.2.1 — nativo ou legado
 
-    let resultadoFinal = 'SEM_MOVIMENTO';
-    if (ponteHomologacao.encerrarEtapaFiscal) {
-      if (ponteHomologacao.estadoOperacional === 'BLOQUEADA') {
-        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_BLOQUEADA';
-      } else if (ponteHomologacao.estadoOperacional === 'CONCLUIDA') {
-        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_CONCLUIDA';
-      } else if (ponteHomologacao.estadoOperacional === 'INCOMPLETA') {
-        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_INCOMPLETA';
-      } else if (ponteHomologacao.estadoOperacional === 'CANCELADA') {
-        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_CANCELADA';
-      } else {
-        resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_PREPARADA';
+    let resultadoFinal = info.resultadoFinal;
+    if (!resultadoFinal) {
+      resultadoFinal = 'SEM_MOVIMENTO';
+      if (ponteHomologacao.encerrarEtapaFiscal) {
+        if (ponteHomologacao.estadoOperacional === 'BLOQUEADA') {
+          resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_BLOQUEADA';
+        } else if (ponteHomologacao.estadoOperacional === 'CONCLUIDA') {
+          resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_CONCLUIDA';
+        } else if (ponteHomologacao.estadoOperacional === 'INCOMPLETA') {
+          resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_INCOMPLETA';
+        } else if (ponteHomologacao.estadoOperacional === 'CANCELADA') {
+          resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_CANCELADA';
+        } else {
+          resultadoFinal = 'HOMOLOGACAO_DISCOVERY_ONLY_PREPARADA';
+        }
+      } else if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
+        resultadoFinal = 'NFS_ENCONTRADAS';
+      } else if (info.qtdNotasEmitidas > 0) {
+        resultadoFinal = 'NOTAS_EMITIDAS';
+      } else if (info.qtdNotasRecebidas > 0) {
+        resultadoFinal = 'NOTAS_RECEBIDAS';
       }
-    } else if (info.qtdNotasEmitidas > 0 && info.qtdNotasRecebidas > 0) {
-      resultadoFinal = 'NFS_ENCONTRADAS';
-    } else if (info.qtdNotasEmitidas > 0) {
-      resultadoFinal = 'NOTAS_EMITIDAS';
-    } else if (info.qtdNotasRecebidas > 0) {
-      resultadoFinal = 'NOTAS_RECEBIDAS';
     }
 
     logWorker(empresaId, 'DOWNLOADS DONE');
@@ -1602,13 +1728,21 @@ async function executarFluxoCompleto(
       stage: 'finalizando',
       message: 'Finalizando…',
     });
-    info.mensagem = 'Finalizando…';
 
     info.status = 'concluido';
     info.progresso = 100;
-    info.mensagem = 'Execução concluída com sucesso';
     info.resultadoFinal = resultadoFinal;
-    adicionarLog('Execução concluída com sucesso');
+    const motorRotulo =
+      info.motorProcessamento === 'PORTAL_SEFIN'
+        ? 'Portal + SEFIN'
+        : info.motorProcessamento === 'ADN'
+          ? 'ADN'
+          : 'Playwright';
+    info.mensagem =
+      info.motorProcessamento === 'PORTAL_SEFIN'
+        ? `Execução ${motorRotulo} concluída (${resultadoFinal}).`
+        : 'Execução concluída com sucesso';
+    adicionarLog(info.mensagem);
   } catch (e) {
     const err = e as Error;
     const msg = isTargetClosedError(e)

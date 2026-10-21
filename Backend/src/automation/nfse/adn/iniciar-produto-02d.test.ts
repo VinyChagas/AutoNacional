@@ -92,13 +92,30 @@ describe('API-02D — ADN padrão de produto', () => {
     expect(relido.homologRoot).toContain('homolog');
   });
 
-  it('274 / 139 / 226 A1 → ADN (abrirChromium=false)', () => {
+  it('API-02K — A1 sem auth explícita → ADN não automático', () => {
+    setConfigAdnIniciarParaTestes({
+      ...configAdnIniciarPadrao(),
+      adnPadraoA1: true,
+    });
+    for (const cnpj of [CNPJ_274, CNPJ_139, CNPJ_226]) {
+      const d = decidirAdnIniciar({
+        tipoAutenticacao: 'certificado',
+        cnpj,
+        env: {},
+      });
+      expect(d.executarAdn).toBe(false);
+      expect(d.situacao).toBe('LEGADO_PRODUTO_DESLIGADO');
+    }
+  });
+
+  it('API-02K — A1 com auth explícita → ADN complementar', () => {
     setConfigAdnIniciarParaTestes(configAdnIniciarPadrao());
     for (const cnpj of [CNPJ_274, CNPJ_139, CNPJ_226]) {
       const d = decidirAdnIniciar({
         tipoAutenticacao: 'certificado',
         cnpj,
         env: {},
+        autorizacaoAdnIniciar: { ativa: true, cnpj },
       });
       expect(d.modo).toBe('ADN');
       expect(d.executarAdn).toBe(true);
@@ -139,6 +156,7 @@ describe('API-02D — ADN padrão de produto', () => {
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_274,
       env: {},
+      autorizacaoAdnIniciar: { ativa: true, cnpj: CNPJ_274 },
     });
     expect(decisao.executarAdn).toBe(true);
 
@@ -190,13 +208,15 @@ describe('API-02D — ADN padrão de produto', () => {
     expect(disco.adnPadraoA1).toBe(true);
   });
 
-  it('sync ADN ok com produto on (stub) — motor ADN', async () => {
+  it('sync ADN ok com auth explícita (stub) — motor ADN complementar', async () => {
     setConfigAdnIniciarParaTestes(configAdnIniciarPadrao());
     const decisao = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_139,
       env: {},
+      autorizacaoAdnIniciar: { ativa: true, cnpj: CNPJ_139 },
     });
+    expect(decisao.executarAdn).toBe(true);
     const r = await executarFluxoAdnIniciar(
       {
         cnpj: CNPJ_139,

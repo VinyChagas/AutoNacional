@@ -42,6 +42,14 @@ describe('API-02G motor e competência fiscal', () => {
     expect(m.rotulo).toBe('Playwright');
   });
 
+  it('API-02K — badge Portal + SEFIN para A1 padrão', () => {
+    const m = mapearMotor(
+      row({ metodo: 'CERTIFICADO', status: 'EM_EXECUCAO', motor: 'PORTAL_SEFIN' })
+    );
+    expect(m.motor).toBe('PORTAL_SEFIN');
+    expect(m.rotulo).toBe('Portal + SEFIN');
+  });
+
   it('motor ausente até o Backend informar', () => {
     const m = mapearMotor(row({ metodo: 'CERTIFICADO', status: 'FILA' }));
     expect(m.motor).toBeNull();

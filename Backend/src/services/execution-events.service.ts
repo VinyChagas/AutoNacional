@@ -20,7 +20,7 @@ export interface ExecutionEventStarted {
   razao_social?: string;
   metodo: 'CERTIFICADO' | 'CREDENCIAL';
   /** Motor real após roteamento Iniciar (ADN | PLAYWRIGHT). */
-  motor?: 'ADN' | 'PLAYWRIGHT';
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
   /** Competência fiscal consultada (YYYY-MM), distinta do mês da pasta de downloads. */
   competencia_fiscal?: string;
 }
@@ -49,7 +49,7 @@ export interface ExecutionEventFinished {
   qtd_recebidas?: number;
   qtd_canceladas?: number;
   resultado_final?: string;
-  motor?: 'ADN' | 'PLAYWRIGHT';
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
   competencia_fiscal?: string;
 }
 

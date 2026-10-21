@@ -51,12 +51,8 @@ export async function executarFluxoFiscalNativo(
     throw erro;
   }
 
-  if (entrada.baixarPdf) {
-    throw new OrquestracaoNfseError(
-      'PDF_EXIGE_LEGADO',
-      'Fluxo nativo não substitui o legado enquanto baixarPdf estiver ativo.'
-    );
-  }
+  // API-02K — nativo é XML-only: baixarPdf não bloqueia; PDF não é recuperado.
+  const avisoPdf = entrada.baixarPdf;
 
   if (!entrada.raizFiscal?.trim()) {
     throw new OrquestracaoNfseError('RAIZ_FISCAL_AUSENTE', 'Raiz fiscal nativa não configurada.');
@@ -92,9 +88,17 @@ export async function executarFluxoFiscalNativo(
   }
 
   try {
-    return await deps.repositorio.executarComExclusividadeFiscal(cnpj, periodo, async () =>
+    const resultado = await deps.repositorio.executarComExclusividadeFiscal(cnpj, periodo, async () =>
       executarSequenciaCritica(entrada, deps, cnpj, periodo, inventario, credencial)
     );
+    if (avisoPdf) {
+      resultado.compatibilidadePdf = 'PDF_NAO_RECUPERADO';
+      resultado.diagnosticos.push({
+        codigo: 'PDF_NAO_RECUPERADO',
+        mensagem: 'Fluxo Portal+SEFIN é XML-only; DANFS-e/PDF não será recuperado nesta execução.',
+      });
+    }
+    return resultado;
   } catch (erro) {
     if (erro instanceof OrquestracaoNfseError) throw erro;
     if (erro instanceof CheckpointNfseError && erro.codigo === 'CHECKPOINT_EM_USO') {

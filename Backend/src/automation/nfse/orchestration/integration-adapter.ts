@@ -1,7 +1,9 @@
 /**
- * Ponte mínima entre execution-service e o orquestrador nativo.
- * Flag global + autorização explícita por execução. Sem autorização = legado.
- * Pedido nativo com pré-condições inválidas = NATIVO_RECUSADO (erro, sem fallback).
+ * Ponte entre execution-service e o orquestrador nativo.
+ *
+ * API-02K — modoProdutoPortalSefin: Iniciar A1 padrão sem flag/autorização.
+ * Caminho piloto: flag NFSE_NATIVE_RECOVERY_ENABLED + autorização explícita.
+ * PDF: nativo é XML-only; baixarPdf=true não bloqueia (aviso PDF_NAO_RECUPERADO).
  */
 import type { Page } from 'playwright';
 import { criarPeriodoConsultaPortal } from '../contracts/periodo';
@@ -18,17 +20,63 @@ import {
   flagRecuperacaoNativaAtiva,
   lerFlagRecuperacaoNativa,
   lerRaizFiscalNativa,
+  resolverRaizFiscalNativaProduto,
 } from './feature-flag';
 import { executarFluxoFiscalNativo } from './native-orchestrator';
 import {
   OrquestracaoNfseError,
   autorizacaoNativaAtiva,
+  type CompatibilidadePdfNativo,
   type ContextoIntegracaoExecution,
   type DecisaoIntegracaoNativa,
   type ResultadoFluxoFiscalNativo,
 } from './types';
 
+function compatPdf(baixarPdf: boolean): CompatibilidadePdfNativo {
+  return baixarPdf ? 'PDF_NAO_RECUPERADO' : 'NAO_APLICAVEL';
+}
+
+function precondicoesComuns(ctx: ContextoIntegracaoExecution): DecisaoIntegracaoNativa | null {
+  if (!ctx.page) {
+    return {
+      modo: 'LEGADO',
+      situacao: 'NATIVO_RECUSADO',
+      executarNativo: false,
+      motivo: 'Page autenticada ausente.',
+      compatibilidadePdf: 'NAO_APLICAVEL',
+      codigoRecusa: 'PAGE_AUSENTE',
+    };
+  }
+
+  if (ctx.tipoAutenticacao !== 'certificado') {
+    return {
+      modo: 'LEGADO',
+      situacao: 'NATIVO_RECUSADO',
+      executarNativo: false,
+      motivo: 'Recuperação SEFIN nativa exige autenticação A1 nesta etapa.',
+      compatibilidadePdf: 'NAO_APLICAVEL',
+      codigoRecusa: 'CONTEXTO_INVALIDO',
+    };
+  }
+
+  return null;
+}
+
 export function decidirIntegracaoNativa(ctx: ContextoIntegracaoExecution): DecisaoIntegracaoNativa {
+  // API-02K — produto Iniciar: sem flag nem autorização manual.
+  if (ctx.modoProdutoPortalSefin === true) {
+    const recusa = precondicoesComuns(ctx);
+    if (recusa) return recusa;
+    return {
+      modo: 'NATIVO_CONTROLADO',
+      situacao: 'NATIVO_SOLICITADO',
+      executarNativo: true,
+      motivo:
+        'Portal+SEFIN padrão de produto (A1): descoberta por competência + SEFIN XML-only.',
+      compatibilidadePdf: compatPdf(ctx.baixarPdf),
+    };
+  }
+
   const leitura = lerFlagRecuperacaoNativa(ctx.env ?? process.env);
   const autorizada = autorizacaoNativaAtiva(ctx.autorizacaoNativa);
 
@@ -56,39 +104,8 @@ export function decidirIntegracaoNativa(ctx: ContextoIntegracaoExecution): Decis
     };
   }
 
-  // A partir daqui o nativo foi solicitado explicitamente.
-  if (ctx.baixarPdf) {
-    return {
-      modo: 'LEGADO',
-      situacao: 'NATIVO_RECUSADO',
-      executarNativo: false,
-      motivo: 'baixarPdf ativo impede o fluxo nativo (DANFS-e legado).',
-      compatibilidadePdf: 'BLOQUEIA_SUBSTITUICAO',
-      codigoRecusa: 'PDF_EXIGE_LEGADO',
-    };
-  }
-
-  if (!ctx.page) {
-    return {
-      modo: 'LEGADO',
-      situacao: 'NATIVO_RECUSADO',
-      executarNativo: false,
-      motivo: 'Page autenticada ausente.',
-      compatibilidadePdf: 'NAO_APLICAVEL',
-      codigoRecusa: 'PAGE_AUSENTE',
-    };
-  }
-
-  if (ctx.tipoAutenticacao !== 'certificado') {
-    return {
-      modo: 'LEGADO',
-      situacao: 'NATIVO_RECUSADO',
-      executarNativo: false,
-      motivo: 'Recuperação SEFIN nativa exige autenticação A1 nesta etapa.',
-      compatibilidadePdf: 'NAO_APLICAVEL',
-      codigoRecusa: 'CONTEXTO_INVALIDO',
-    };
-  }
+  const recusa = precondicoesComuns(ctx);
+  if (recusa) return recusa;
 
   if (!lerRaizFiscalNativa(ctx.env ?? process.env)) {
     return {
@@ -106,13 +123,13 @@ export function decidirIntegracaoNativa(ctx: ContextoIntegracaoExecution): Decis
     situacao: 'NATIVO_SOLICITADO',
     executarNativo: true,
     motivo: 'Flag ativa, autorização explícita e pré-condições atendidas.',
-    compatibilidadePdf: 'NAO_APLICAVEL',
+    compatibilidadePdf: compatPdf(ctx.baixarPdf),
   };
 }
 
 /**
- * Avalia flag + autorização. NATIVO_RECUSADO sobe erro tipado (sem fallback legado).
- * Sem autorização ou flag off: retorna null e deixa o legado.
+ * Avalia decisão e executa o fluxo nativo quando solicitado.
+ * NATIVO_RECUSADO sobe erro tipado (sem fallback legado).
  */
 export async function tentarFluxoNativoControlado(
   ctx: ContextoIntegracaoExecution
@@ -130,7 +147,12 @@ export async function tentarFluxoNativoControlado(
     return { decisao, resultado: null };
   }
 
-  if (!flagRecuperacaoNativaAtiva(ctx.env ?? process.env) || !autorizacaoNativaAtiva(ctx.autorizacaoNativa)) {
+  const produto = ctx.modoProdutoPortalSefin === true;
+  if (
+    !produto &&
+    (!flagRecuperacaoNativaAtiva(ctx.env ?? process.env) ||
+      !autorizacaoNativaAtiva(ctx.autorizacaoNativa))
+  ) {
     return {
       decisao: {
         ...decisao,
@@ -143,7 +165,9 @@ export async function tentarFluxoNativoControlado(
     };
   }
 
-  const raiz = lerRaizFiscalNativa(ctx.env ?? process.env);
+  const raiz = produto
+    ? resolverRaizFiscalNativaProduto(ctx.env ?? process.env)
+    : lerRaizFiscalNativa(ctx.env ?? process.env);
   if (!raiz || !ctx.page) {
     throw new OrquestracaoNfseError('CONTEXTO_INVALIDO', 'Contexto nativo incompleto após a decisão.');
   }

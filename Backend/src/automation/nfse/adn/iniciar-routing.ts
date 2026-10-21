@@ -1,10 +1,12 @@
 /**
- * Roteamento Iniciar: A1 → ADN (padrão de produto) vs usuário/senha → Playwright.
+ * Roteamento ADN complementar (API-02K).
+ * ADN NÃO é mais o padrão do Iniciar A1 — use decidirMotorIniciar (Portal+SEFIN).
+ * Este módulo só ativa ADN com autorização explícita por empresa.
  * Sem fallback silencioso: se ADN for selecionado e falhar, não abre Playwright.
  * SEFIN nunca é chamado por este caminho.
  *
- * Config persistente: iniciar-config.ts (adnPadraoA1 + exceções Playwright).
- * Kill-switch env: NFSE_ADN_INICIAR_ENABLED=false força Playwright.
+ * Config: exceções Playwright ainda usadas por decidirMotorIniciar.
+ * Kill-switch env: NFSE_ADN_INICIAR_ENABLED=false bloqueia ADN complementar.
  */
 import { lerFlagAdnIniciar } from './iniciar-feature-flag';
 import {
@@ -68,17 +70,13 @@ function autorizacaoExplicitaAtiva(
 }
 
 /**
- * Decide o motor ANTES de qualquer launch Playwright.
- * Credenciais → sempre Playwright.
- * Kill-switch env false → Playwright.
- * Produto adnPadraoA1=false → Playwright (salvo autorização explícita).
- * A1 na lista de exceção Playwright → Playwright.
- * Caso contrário A1 → ADN (sem Chromium).
+ * Decide se ADN complementar deve rodar (só com autorização explícita).
+ * A1 padrão do Iniciar é Portal+SEFIN (`decidirMotorIniciar`) — não este módulo.
  */
 export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRoteamentoAdnIniciar {
   const env = ctx.env ?? process.env;
   const kill = lerFlagAdnIniciar(env);
-  /** Ausente = não força off (produto manda). false/inválida = kill-switch. */
+  /** Ausente = não força off. false/inválida = kill-switch. */
   const killSwitchOff =
     kill.motivo === 'FALSE' || kill.motivo === 'INVALIDA';
   const cfg = ctx.configProduto ?? lerConfigAdnIniciarMemoria();
@@ -90,7 +88,7 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
   const base = {
     adnPadraoA1,
     excecaoPlaywright,
-    flagAtiva: !killSwitchOff && adnPadraoA1,
+    flagAtiva: !killSwitchOff,
   };
 
   if (ctx.tipoAutenticacao === 'credenciais') {
@@ -117,20 +115,6 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
     };
   }
 
-  if (authExplicita) {
-    return {
-      modo: 'ADN',
-      situacao: 'ADN_SOLICITADO',
-      executarAdn: true,
-      abrirChromium: false,
-      motivo:
-        'Autorização explícita: distribuição ADN sem Chromium/hCaptcha/SEFIN.',
-      empresaAutorizada: true,
-      ...base,
-      flagAtiva: true,
-    };
-  }
-
   if (killSwitchOff) {
     return {
       modo: 'PLAYWRIGHT',
@@ -139,25 +123,26 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
       abrirChromium: true,
       motivo:
         kill.motivo === 'INVALIDA'
-          ? 'Kill-switch ADN Iniciar inválido; fluxo Playwright preservado.'
-          : 'Kill-switch NFSE_ADN_INICIAR_ENABLED=false; fluxo Playwright preservado.',
+          ? 'Kill-switch ADN Iniciar inválido; ADN complementar bloqueado.'
+          : 'Kill-switch NFSE_ADN_INICIAR_ENABLED=false; ADN complementar bloqueado.',
       empresaAutorizada: false,
       ...base,
       flagAtiva: false,
     };
   }
 
-  if (!adnPadraoA1) {
+  // API-02K — ADN só com autorização explícita (complementar).
+  if (authExplicita) {
     return {
-      modo: 'PLAYWRIGHT',
-      situacao: 'LEGADO_PRODUTO_DESLIGADO',
-      executarAdn: false,
-      abrirChromium: true,
+      modo: 'ADN',
+      situacao: 'ADN_SOLICITADO',
+      executarAdn: true,
+      abrirChromium: false,
       motivo:
-        'Configuração de produto com ADN desligado para A1; Playwright preservado.',
-      empresaAutorizada: false,
+        'ADN complementar autorizado explicitamente: distribuição sem Chromium/hCaptcha/SEFIN.',
+      empresaAutorizada: true,
       ...base,
-      flagAtiva: false,
+      flagAtiva: true,
     };
   }
 
@@ -175,15 +160,15 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
   }
 
   return {
-    modo: 'ADN',
-    situacao: 'ADN_SOLICITADO',
-    executarAdn: true,
-    abrirChromium: false,
+    modo: 'PLAYWRIGHT',
+    situacao: 'LEGADO_PRODUTO_DESLIGADO',
+    executarAdn: false,
+    abrirChromium: true,
     motivo:
-      'Certificado A1 com ADN padrão de produto: distribuição sem Chromium/hCaptcha/SEFIN.',
-    empresaAutorizada: true,
+      'ADN não é automático no Iniciar (API-02K); use Portal+SEFIN ou autorização ADN explícita.',
+    empresaAutorizada: false,
     ...base,
-    flagAtiva: true,
+    flagAtiva: false,
   };
 }
 

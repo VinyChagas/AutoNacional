@@ -13,7 +13,7 @@ export interface ExecutionStreamEventStarted {
   cnpj: string;
   razao_social?: string;
   metodo: 'CERTIFICADO' | 'CREDENCIAL';
-  motor?: 'ADN' | 'PLAYWRIGHT';
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
   /** Competência fiscal (YYYY-MM), distinta do mês da pasta de downloads. */
   competencia_fiscal?: string;
 }
@@ -43,7 +43,7 @@ export interface ExecutionStreamEventFinished {
   qtd_canceladas?: number;
   /** Já emitido pelo Backend; tipado no FE para UI-01d (sem novo evento). */
   resultado_final?: string;
-  motor?: 'ADN' | 'PLAYWRIGHT';
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
   competencia_fiscal?: string;
 }
 
@@ -111,8 +111,8 @@ export interface ExecucaoStatusResponse {
   qtd_notas_recebidas?: number;
   qtd_notas_canceladas?: number;
   resultado_final?: string;
-  /** Motor efetivo (ADN não abre Chromium). */
-  motor?: 'ADN' | 'PLAYWRIGHT' | null;
+  /** Motor efetivo (API-02K: PORTAL_SEFIN padrão A1). */
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null;
   /** Competência fiscal consultada (YYYY-MM). */
   competencia_fiscal?: string | null;
   periodo_inicio?: string | null;

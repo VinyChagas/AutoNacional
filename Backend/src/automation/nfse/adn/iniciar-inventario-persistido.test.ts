@@ -336,6 +336,7 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
       tipoAutenticacao: 'certificado',
       cnpj: params.cnpj,
       env: envProduto(),
+      autorizacaoAdnIniciar: { ativa: true, cnpj: params.cnpj },
     });
     expect(decisao.executarAdn).toBe(true);
     const fonte = new InventarioPersistidoMemoriaAdn();
@@ -429,11 +430,13 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_A,
       env: envProduto(),
+      autorizacaoAdnIniciar: { ativa: true, cnpj: CNPJ_A },
     });
     const decisaoB = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_B,
       env: envProduto(),
+      autorizacaoAdnIniciar: { ativa: true, cnpj: CNPJ_B },
     });
 
     const [a, b] = await Promise.all([
@@ -544,6 +547,7 @@ describe('API-02B — resultado_final só pela competência (cenários reais)', 
       tipoAutenticacao: 'certificado',
       cnpj: params.cnpj,
       env: envProduto(),
+      autorizacaoAdnIniciar: { ativa: true, cnpj: params.cnpj },
     });
     expect(decisao.executarAdn).toBe(true);
     const fonte = new InventarioPersistidoMemoriaAdn();

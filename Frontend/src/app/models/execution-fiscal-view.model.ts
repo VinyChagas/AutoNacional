@@ -125,10 +125,20 @@ export function formatarCompetenciaFiscal(competencia?: string | null): string |
 }
 
 export function mapearMotor(row: ExecutionRow): MotorView {
-  const motor = row.motor === 'ADN' || row.motor === 'PLAYWRIGHT' ? row.motor : null;
+  const motor =
+    row.motor === 'ADN' || row.motor === 'PLAYWRIGHT' || row.motor === 'PORTAL_SEFIN'
+      ? row.motor
+      : null;
   return {
     motor,
-    rotulo: motor === 'ADN' ? 'ADN' : motor === 'PLAYWRIGHT' ? 'Playwright' : null,
+    rotulo:
+      motor === 'PORTAL_SEFIN'
+        ? 'Portal + SEFIN'
+        : motor === 'ADN'
+          ? 'ADN'
+          : motor === 'PLAYWRIGHT'
+            ? 'Playwright'
+            : null,
   };
 }
 

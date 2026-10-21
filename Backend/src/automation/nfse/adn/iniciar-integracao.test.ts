@@ -132,10 +132,12 @@ async function simularFluxoAdnEmpresaA(params?: {
 }): Promise<EvidenciaFluxo> {
   const env = params?.env ?? envProduto();
   const execucaoId = params?.execucaoId ?? '1001';
+  // API-02K — ADN complementar: auth explícita (não é mais padrão do Iniciar).
   const decisao = decidirAdnIniciar({
     tipoAutenticacao: 'certificado',
     cnpj: CNPJ_A,
     env,
+    autorizacaoAdnIniciar: { ativa: true, cnpj: CNPJ_A },
   });
 
   if (!decisao.executarAdn) {
@@ -218,15 +220,14 @@ describe('API-01S / API-02D — Roteamento Iniciar', () => {
     resetConfigAdnIniciarParaTestes();
   });
 
-  it('produto default: A1 → ADN sem Chromium (sem flags de piloto)', () => {
+  it('API-02K — produto default: A1 sem ADN automático', () => {
     const d = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_A,
       env: {},
     });
-    expect(d.executarAdn).toBe(true);
-    expect(d.abrirChromium).toBe(false);
-    expect(d.situacao).toBe('ADN_SOLICITADO');
+    expect(d.executarAdn).toBe(false);
+    expect(d.situacao).toBe('LEGADO_PRODUTO_DESLIGADO');
   });
 
   it('credenciais → Playwright (nunca ADN)', () => {

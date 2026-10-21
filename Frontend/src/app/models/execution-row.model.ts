@@ -6,8 +6,8 @@ import type { ProgressoFiscalNfse } from './progresso-fiscal.model';
 
 export type ExecutionRowStatus = 'FILA' | 'EM_EXECUCAO' | 'AGUARDANDO_CAPTCHA' | 'OK' | 'ERRO';
 export type ExecutionRowMetodo = 'CERTIFICADO' | 'CREDENCIAL';
-/** Motor efetivo após roteamento Iniciar (ADN não abre Chromium). */
-export type ExecutionRowMotor = 'ADN' | 'PLAYWRIGHT';
+/** Motor efetivo após roteamento Iniciar (API-02K: PORTAL_SEFIN padrão A1). */
+export type ExecutionRowMotor = 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
 
 export interface ExecutionRow {
   empresa_id: string | number;

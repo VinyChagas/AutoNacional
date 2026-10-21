@@ -33,7 +33,7 @@ export interface SnapshotProgressoFiscalPolling {
   resultado_final: string | null;
   tipo_autenticacao?: string;
   /** ADN | PLAYWRIGHT — indicador de navegadores ignora ADN. */
-  motor?: 'ADN' | 'PLAYWRIGHT';
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
   periodo_inicio?: string;
   periodo_fim?: string;
   fiscal: ProgressoFiscalNfse;

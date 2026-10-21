@@ -19,8 +19,9 @@ export interface ConfigAdnIniciarProduto {
   /** Versão do schema do arquivo. */
   versao: 1;
   /**
-   * Quando true, certificado A1 usa ADN por padrão (sem Chromium/hCaptcha).
-   * Default de produto: true.
+   * API-02K: ADN é complementar (não automático no Iniciar).
+   * Quando true, mantido para compat de settings; o Iniciar A1 padrão
+   * usa Portal+SEFIN. ADN só com autorização explícita por empresa.
    */
   adnPadraoA1: boolean;
   /**
@@ -66,7 +67,7 @@ export function caminhoArquivoConfigAdnIniciar(dir?: string): string {
 export function configAdnIniciarPadrao(): ConfigAdnIniciarProduto {
   return {
     versao: 1,
-    adnPadraoA1: true,
+    adnPadraoA1: false,
     playwrightExcecaoCnpjs: [],
     maxRequests: MAX_REQUESTS_HARNESS_ADN,
     homologRoot: defaultHomologRootAdnIniciar(),
@@ -98,7 +99,7 @@ function normalizarConfig(parcial: Partial<ConfigAdnIniciarProduto> | null | und
         : base.homologRoot;
   return {
     versao: 1,
-    adnPadraoA1: parcial.adnPadraoA1 !== false,
+    adnPadraoA1: parcial.adnPadraoA1 === true,
     playwrightExcecaoCnpjs: normalizarCnpjs(parcial.playwrightExcecaoCnpjs),
     maxRequests,
     homologRoot: homolog,
