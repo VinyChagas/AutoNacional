@@ -50,7 +50,8 @@ export function avaliarGateLiveAdn(params: {
       allowLiveEnv,
       confirmLiveCli,
       codigo: 'CONFIRMACAO_AUSENTE',
-      motivo: 'Passe --confirm-live para autorizar explicitamente esta execução smoke ADN.',
+        motivo:
+          'Passe --confirm-live para autorizar explicitamente esta execução live ADN.',
     };
   }
   return { ok: true, allowLiveEnv: true, confirmLiveCli: true };

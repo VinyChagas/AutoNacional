@@ -99,4 +99,16 @@ export {
   type EntradaSmokeAdn,
   type ResumoSmokeAdn,
 } from './smoke-service';
+export {
+  LIMITES_SYNC_CONTROLADA_ADN,
+  MAX_DOCS_SYNC_CONTROLADA,
+  ENV_ADN_HOMOLOG_ROOT,
+  resolverRaizHomologacaoAdn,
+  garantirArvoreHomologacaoAdn,
+  executarSyncControladaAdn,
+  formatarResumoSyncControladaAdn,
+  type EntradaSyncControladaAdn,
+  type DependenciasSyncControladaAdn,
+  type ResumoSyncControladaAdn,
+} from './controlled-sync-service';
 export type { PersistenciaSyncAdnResumo, MotivoXmlInvalidoAdn } from './types';
