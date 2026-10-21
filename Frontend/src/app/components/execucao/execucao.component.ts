@@ -196,11 +196,14 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.grupoModal = grupo;
     switch (grupo) {
       case 'total':
-        this.empresasGrupoModal = [
-          ...this.summary.aptas,
-          ...this.summary.inoperantes,
-          ...this.summary.parciais,
-        ];
+        // Universo cadastral sem duplicar aptas∩parciais (UI-01b).
+        this.empresasGrupoModal = this.summary.todas?.length
+          ? [...this.summary.todas]
+          : [
+              ...this.summary.aptas.filter((e) => e.status_geral !== 'PARCIAL'),
+              ...this.summary.parciais,
+              ...this.summary.inoperantes,
+            ];
         break;
       case 'aptas':
         this.empresasGrupoModal = [...this.summary.aptas];
@@ -509,9 +512,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.tiposAutenticacao.clear();
 
     try {
+      // Mesma fonte do card "Aptas": summary.aptas (inclui parciais elegíveis).
+      // Só busca /companies se o summary ainda não foi carregado.
       let aptas: EmpresaExecucaoItem[];
-      if (this.summary?.aptas?.length !== undefined && this.summary.aptas.length > 0) {
-        aptas = this.summary.aptas;
+      if (this.summary) {
+        aptas = this.summary.aptas ?? [];
       } else {
         const response = await firstValueFrom(
           this.execucaoService.listarEmpresasAptas(this.contabilidadeSelecionada!)

@@ -158,9 +158,15 @@ export interface EmpresaExecucaoItem {
   razao_social: string;
   status_geral: 'OPERACIONAL' | 'ATENCAO' | 'PARCIAL' | 'INOPERANTE';
   login_metodo: 'CERTIFICADO' | 'CREDENCIAL' | null;
+  /** Presente no summary unificado (UI-01b); opcional por compatibilidade. */
+  automation_eligibility?: 'ELIGIBLE' | 'ELIGIBLE_WITH_WARNING' | 'NOT_ELIGIBLE';
 }
 
-/** Resposta do endpoint GET /execucao/companies/summary */
+/**
+ * Resposta do endpoint GET /execucao/companies/summary.
+ * status_geral: partições exclusivas (operacional+atenção+parcial+inoperante = total).
+ * aptas: elegibilidade (pode sobrepor atenção/parcial).
+ */
 export interface ExecutionSummaryResponse {
   total_empresas: number;
   total_aptas: number;
@@ -168,6 +174,9 @@ export interface ExecutionSummaryResponse {
   total_atencao: number;
   total_inoperante: number;
   total_parcial: number;
+  /** Universo cadastral completo (sem duplicar grupos sobrepostos). */
+  todas?: EmpresaExecucaoItem[];
+  /** Elegíveis para execução (= total_aptas); inclui parciais elegíveis. */
   aptas: EmpresaExecucaoItem[];
   inoperantes: EmpresaExecucaoItem[];
   parciais: EmpresaExecucaoItem[];

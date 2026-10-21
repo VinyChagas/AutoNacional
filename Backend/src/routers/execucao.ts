@@ -48,7 +48,7 @@ router.get('/companies/summary', async (req: Request, res: Response) => {
   }
 });
 
-// GET /companies?contabilidade_id=XXX - Apenas empresas aptas (OPERACIONAL + ATENCAO)
+// GET /companies?contabilidade_id=XXX — elegíveis (ELIGIBLE | ELIGIBLE_WITH_WARNING; inclui PARCIAL)
 router.get('/companies', async (req: Request, res: Response) => {
   try {
     const raw = req.query.contabilidade_id ?? req.query.contabilidadeId;

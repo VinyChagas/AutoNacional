@@ -1,0 +1,22 @@
+{
+  "name": "autonacional",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Orquestração local: túnel DB (VPS) + Backend + Frontend",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:tunnel": "npm run tunnel:db --prefix Backend",
+    "dev:backend": "npm run dev --prefix Backend",
+    "dev:frontend": "npm start --prefix Frontend",
+    "install:all": "npm install && npm install --prefix Backend && npm install --prefix Frontend",
+    "playwright:install": "npm run playwright:install --prefix Backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "wait-on": "^8.0.5"
+  }
+}
