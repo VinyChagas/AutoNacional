@@ -33,6 +33,58 @@ export function normalizarValorData(valor: string): string {
   return texto;
 }
 
+/** Lê datainicio/datafim da query (normalizados) sem exigir executar=1. */
+export function lerDatasDaUrl(url: string): { inicio: string; fim: string } | null {
+  try {
+    const consulta = new URL(url).searchParams;
+    const inicio = normalizarValorData(consulta.get('datainicio') ?? '');
+    const fim = normalizarValorData(consulta.get('datafim') ?? '');
+    if (!inicio && !fim) return null;
+    return { inicio, fim };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Datas na URL sem executar=1: preenchimento/parcial, não pesquisa concluída.
+ * Contrato do Portal (GET observado): executar=1 + datainicio + datafim.
+ */
+export function urlTemPeriodoSemExecutar(
+  url: string,
+  periodo: PeriodoConsultaPortal
+): boolean {
+  try {
+    const consulta = new URL(url).searchParams;
+    if (consulta.get('executar') === '1') return false;
+    const inicio = normalizarValorData(consulta.get('datainicio') ?? '');
+    const fim = normalizarValorData(consulta.get('datafim') ?? '');
+    return inicio === periodo.inicio && fim === periodo.fim;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Monta o GET de pesquisa do Portal na mesma listagem (path) da URL atual.
+ * Preserva origem/path (Emitidas vs Recebidas); não inclui tokens.
+ */
+export function montarUrlPesquisaPortal(
+  urlAtual: string,
+  periodo: PeriodoConsultaPortal
+): string {
+  const u = new URL(urlAtual);
+  if (!/\/Notas\/(Emitidas|Recebidas)/i.test(u.pathname)) {
+    throw new Error('URL atual não é listagem Emitidas/Recebidas para montar a pesquisa.');
+  }
+  const params = new URLSearchParams();
+  params.set('executar', '1');
+  params.set('busca', '');
+  params.set('datainicio', periodo.inicio);
+  params.set('datafim', periodo.fim);
+  return `${u.origin}${u.pathname}?${params.toString()}`;
+}
+
 /** A pesquisa do portal é um GET com executar=1 e as duas datas do período. */
 export function urlConfirmaPesquisa(url: string, periodo: PeriodoConsultaPortal): boolean {
   let consulta: URLSearchParams;

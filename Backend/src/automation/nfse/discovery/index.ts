@@ -10,7 +10,12 @@ export {
   fingerprintPagina,
   textoIndicaSemRegistros,
 } from './pagination';
-export { confirmarFiltroAplicado, urlConfirmaPesquisa } from './discovery-validation';
+export {
+  confirmarFiltroAplicado,
+  montarUrlPesquisaPortal,
+  urlConfirmaPesquisa,
+  urlTemPeriodoSemExecutar,
+} from './discovery-validation';
 export type {
   ControleDescoberta,
   DiagnosticoDescoberta,

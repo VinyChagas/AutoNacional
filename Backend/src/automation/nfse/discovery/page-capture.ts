@@ -3,11 +3,20 @@
  * Não lança Chromium, não clica em download e não fecha a página.
  */
 import type { Locator, Page } from 'playwright';
-import { preencherDatasEFiltrar, localizarBotaoFiltrarPortal } from '../../processar-notas-competencia';
+import {
+  localizarBotaoFiltrarPortal,
+  preencherDatasEFiltrar,
+  submeterFiltroPortal,
+} from '../../processar-notas-competencia';
 import { aguardarEstabilizarPagina, clicarMenuNotasEAguardar } from '../../playwright-nav';
+import { PLAYWRIGHT_TIMEOUT } from '../../../infrastructure/config';
 import { DIRECAO_PARA_TIPO_NOTA_UI, type DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
-import { urlConfirmaPesquisa } from './discovery-validation';
+import {
+  montarUrlPesquisaPortal,
+  urlConfirmaPesquisa,
+  urlTemPeriodoSemExecutar,
+} from './discovery-validation';
 import {
   comFingerprint,
   parseTotalizador,
@@ -242,20 +251,41 @@ export function criarPortalDaPage(page: Page): PortalListagem {
         .then(() => true)
         .catch(() => false);
 
-      // Retentativa única: clique no filtrar de novo (Emitidas com DOM distinto / viewport).
+      // Datas sem executar=1 ≠ pesquisa OK. Retenta submit real; depois GET controlado.
+      if (!pesquisaConcluida) {
+        const urlAtual = page.url();
+        try {
+          if (urlTemPeriodoSemExecutar(urlAtual, periodo)) {
+            const { seletor } = await submeterFiltroPortal(page);
+            seletorFiltro = seletor;
+            await aguardarEstabilizarPagina(page, 10000);
+            pesquisaConcluida = urlConfirmaPesquisa(page.url(), periodo);
+          } else {
+            const { seletor } = await submeterFiltroPortal(page);
+            seletorFiltro = seletor;
+            await aguardarEstabilizarPagina(page, 10000);
+            pesquisaConcluida = await page
+              .waitForURL((url) => urlConfirmaPesquisa(url.href, periodo), { timeout: 15000 })
+              .then(() => true)
+              .catch(() => false);
+          }
+        } catch {
+          /* fallback GET abaixo */
+        }
+      }
+
       if (!pesquisaConcluida) {
         try {
-          const { locator, seletor } = await localizarBotaoFiltrarPortal(page);
-          seletorFiltro = seletor;
-          await locator.scrollIntoViewIfNeeded().catch(() => undefined);
-          await locator.click({ timeout: 10000 });
+          const destino = montarUrlPesquisaPortal(page.url(), periodo);
+          seletorFiltro = seletorFiltro ?? 'GET executar=1 (contrato Portal)';
+          await page.goto(destino, {
+            waitUntil: 'domcontentloaded',
+            timeout: PLAYWRIGHT_TIMEOUT,
+          });
           await aguardarEstabilizarPagina(page, 10000);
-          pesquisaConcluida = await page
-            .waitForURL((url) => urlConfirmaPesquisa(url.href, periodo), { timeout: 15000 })
-            .then(() => true)
-            .catch(() => false);
+          pesquisaConcluida = urlConfirmaPesquisa(page.url(), periodo);
         } catch {
-          /* confirmação abaixo */
+          /* confirmação em confirmarFiltroAplicado */
         }
       }
 

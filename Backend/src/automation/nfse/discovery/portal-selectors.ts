@@ -1,6 +1,10 @@
 /**
  * Seletores do Portal Nacional para listagem Emitidas/Recebidas.
  * Preferir href/role estáveis; nth-of-type é fallback frágil.
+ *
+ * Contrato de pesquisa (GET observado): ?executar=1&busca=&datainicio=&datafim=
+ * O parâmetro executar costuma vir do botão submit name="executar" value="1";
+ * form.submit() sem esse botão envia só as datas — sintoma da exec 7609.
  */
 import type { DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import { DIRECAO_PARA_TIPO_NOTA_UI } from '../contracts/documento-fiscal';
@@ -25,18 +29,34 @@ export function seletoresMenuNotas(direcao: DirecaoDocumentoFiscal): string[] {
   ];
 }
 
-/** Botão Pesquisar/Filtrar da barra de datas — XPath absoluto é frágil entre Emitidas/Recebidas. */
+/**
+ * Ordem: botão/input que carrega name=executar (inclui executar=1 no GET),
+ * depois type=submit do form de datas. Evitar button.btn genérico cedo —
+ * em Emitidas pode haver outro botão .btn que não submete a pesquisa.
+ */
 export const SELETORES_BOTAO_FILTRAR_PORTAL = [
+  '#searchbar button[name="executar"]',
+  '#searchbar input[name="executar"]',
+  'form:has(#datainicio) button[name="executar"]',
+  'form:has(#datainicio) input[name="executar"]',
+  'button[name="executar"][value="1"]',
+  'input[type="submit"][name="executar"]',
   '#searchbar button[type="submit"]',
   '#searchbar form button[type="submit"]',
-  '#searchbar button.btn-primary',
-  '#searchbar button.btn',
   'form:has(#datainicio) button[type="submit"]',
+  '#searchbar button.btn-primary',
   'form:has(#datainicio) button.btn-primary',
   'button:has-text("Pesquisar")',
   'button:has-text("Filtrar")',
-  // Último recurso: XPath histórico (pode divergir no DOM de Emitidas)
+  // Últimos recursos (DOM frágil / legado)
+  '#searchbar button.btn',
   'xpath=//*[@id="searchbar"]/form/div[2]/div[2]/div[2]/button',
+] as const;
+
+export const SELETOR_FORM_FILTRO_PORTAL = [
+  '#searchbar form',
+  'form:has(#datainicio)',
+  'form:has(#datafim)',
 ] as const;
 
 export type EtapaDescobertaPortal =
