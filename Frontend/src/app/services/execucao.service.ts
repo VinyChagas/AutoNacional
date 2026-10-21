@@ -13,6 +13,9 @@ export interface ExecutionStreamEventStarted {
   cnpj: string;
   razao_social?: string;
   metodo: 'CERTIFICADO' | 'CREDENCIAL';
+  motor?: 'ADN' | 'PLAYWRIGHT';
+  /** Competência fiscal (YYYY-MM), distinta do mês da pasta de downloads. */
+  competencia_fiscal?: string;
 }
 
 export interface ExecutionStreamEventStage {
@@ -40,6 +43,8 @@ export interface ExecutionStreamEventFinished {
   qtd_canceladas?: number;
   /** Já emitido pelo Backend; tipado no FE para UI-01d (sem novo evento). */
   resultado_final?: string;
+  motor?: 'ADN' | 'PLAYWRIGHT';
+  competencia_fiscal?: string;
 }
 
 export type ExecutionStreamEvent =
@@ -108,6 +113,10 @@ export interface ExecucaoStatusResponse {
   resultado_final?: string;
   /** Motor efetivo (ADN não abre Chromium). */
   motor?: 'ADN' | 'PLAYWRIGHT' | null;
+  /** Competência fiscal consultada (YYYY-MM). */
+  competencia_fiscal?: string | null;
+  periodo_inicio?: string | null;
+  periodo_fim?: string | null;
   /** Progresso fiscal estruturado (UI-01e-B); ausente após expiração/restart. */
   fiscal?: ProgressoFiscalNfse;
   batch_id?: string;

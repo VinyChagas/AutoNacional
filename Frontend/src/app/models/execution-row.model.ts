@@ -16,6 +16,11 @@ export interface ExecutionRow {
   metodo: ExecutionRowMetodo;
   /** Ausente até o backend informar o roteamento. */
   motor?: ExecutionRowMotor | null;
+  /**
+   * Competência fiscal consultada (YYYY-MM), vinda do Backend / período Iniciar.
+   * Não confundir com o mês da pasta de downloads operacionais.
+   */
+  competencia_fiscal?: string | null;
   qtd_emitidas: number;
   qtd_recebidas: number;
   qtd_canceladas: number;

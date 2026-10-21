@@ -511,6 +511,9 @@ export async function obterStatusBatch(
         resultado_final: info.resultadoFinal,
         tipo_autenticacao: info.tipoAutenticacao,
         motor: info.motorProcessamento ?? null,
+        competencia_fiscal: competenciaFromDataInicio(info.periodoInicio),
+        periodo_inicio: info.periodoInicio,
+        periodo_fim: info.periodoFim,
       };
       // Campo opcional: só quando há progresso fiscal associado a este lote/execução.
       if (
@@ -546,6 +549,11 @@ export async function obterStatusBatch(
       resultado_final: snap.resultado_final,
       tipo_autenticacao: snap.tipo_autenticacao,
       motor: snap.motor ?? null,
+      competencia_fiscal: snap.periodo_inicio
+        ? competenciaFromDataInicio(snap.periodo_inicio)
+        : null,
+      periodo_inicio: snap.periodo_inicio ?? null,
+      periodo_fim: snap.periodo_fim ?? null,
       fiscal: snap.fiscal,
     };
     out.push(row);
@@ -570,6 +578,11 @@ export async function obterStatusBatch(
           qtd_notas_recebidas: ultima.qtdNotasRecebidas,
           qtd_notas_canceladas: 0,
           resultado_final: ultima.resultadoFinal,
+          competencia_fiscal: ultima.periodoInicio
+            ? competenciaFromDataInicio(ultima.periodoInicio)
+            : null,
+          periodo_inicio: ultima.periodoInicio ?? null,
+          periodo_fim: ultima.periodoFim ?? null,
         });
       }
     }
@@ -600,6 +613,9 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
     resultado_final: info.resultadoFinal,
     tipo_autenticacao: info.tipoAutenticacao,
     motor: info.motorProcessamento ?? null,
+    competencia_fiscal: competenciaFromDataInicio(info.periodoInicio),
+    periodo_inicio: info.periodoInicio,
+    periodo_fim: info.periodoFim,
   };
   if (
     info.progressoFiscal &&
@@ -811,6 +827,10 @@ async function finalizarExecucao(params: FinalizarExecucaoParams): Promise<void>
       qtd_recebidas: contagens.recebidas,
       qtd_canceladas: contagens.canceladas,
       resultado_final,
+      motor: info?.motorProcessamento,
+      competencia_fiscal: info?.periodoInicio
+        ? competenciaFromDataInicio(info.periodoInicio)
+        : undefined,
     });
     logFinalize(execucaoId, 'SSE FINISHED EMITTED');
 
@@ -907,14 +927,6 @@ async function executarFluxoCompleto(
   const razaoSocial = await obterNomeEmpresa(cnpj);
   const metodo: 'CERTIFICADO' | 'CREDENCIAL' = tipoAutenticacao === 'credenciais' ? 'CREDENCIAL' : 'CERTIFICADO';
 
-  emitirEventoExecucao(batchId, {
-    type: 'execution:started',
-    empresa_id: key,
-    cnpj,
-    razao_social: razaoSocial,
-    metodo,
-  });
-
   const competencia = competenciaFromDataInicio(dataInicio);
   const empresaComContab = await empresasRepo.obterEmpresaComContabilidade(empresaId);
   const contabilidadeId = (empresaComContab as { contabilidadeId?: number | null })?.contabilidadeId ?? null;
@@ -965,6 +977,17 @@ async function executarFluxoCompleto(
     autorizacaoAdnIniciar: obterAutorizacaoAdnIniciarRuntime(cnpj),
   });
   info.motorProcessamento = decisaoAdn.executarAdn ? 'ADN' : 'PLAYWRIGHT';
+
+  // API-02G — started após roteamento, com motor e competência fiscal reais.
+  emitirEventoExecucao(batchId, {
+    type: 'execution:started',
+    empresa_id: key,
+    cnpj,
+    razao_social: razaoSocial,
+    metodo,
+    motor: info.motorProcessamento,
+    competencia_fiscal: competencia,
+  });
 
   if (decisaoAdn.executarAdn) {
     emitirEventoExecucao(batchId, {

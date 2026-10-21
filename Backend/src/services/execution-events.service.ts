@@ -19,6 +19,10 @@ export interface ExecutionEventStarted {
   cnpj: string;
   razao_social?: string;
   metodo: 'CERTIFICADO' | 'CREDENCIAL';
+  /** Motor real após roteamento Iniciar (ADN | PLAYWRIGHT). */
+  motor?: 'ADN' | 'PLAYWRIGHT';
+  /** Competência fiscal consultada (YYYY-MM), distinta do mês da pasta de downloads. */
+  competencia_fiscal?: string;
 }
 
 export interface ExecutionEventStage {
@@ -45,6 +49,8 @@ export interface ExecutionEventFinished {
   qtd_recebidas?: number;
   qtd_canceladas?: number;
   resultado_final?: string;
+  motor?: 'ADN' | 'PLAYWRIGHT';
+  competencia_fiscal?: string;
 }
 
 export interface ExecutionEventLoginReady {

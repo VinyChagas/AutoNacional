@@ -1080,6 +1080,51 @@ $radius-pill: 9999px;
   }
 }
 
+// API-02G — badge do motor real (Backend)
+.motor-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+
+  &.badge-adn {
+    background: rgba(16, 185, 129, 0.18);
+    color: #059669;
+  }
+
+  &.badge-playwright {
+    background: rgba(245, 158, 11, 0.18);
+    color: #d97706;
+  }
+
+  &.badge-motor-pendente {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+  }
+}
+
+.competencia-fiscal {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+
+  &.competencia-pendente {
+    color: #64748b;
+    font-weight: 500;
+  }
+}
+
+.td-motor,
+.td-competencia {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 .kanban-item .login-metodo-badge {
   margin-top: 0.35rem;
   display: inline-block;

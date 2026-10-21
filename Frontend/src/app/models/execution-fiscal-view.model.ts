@@ -3,7 +3,12 @@
  * Com `progresso_fiscal` estruturado: inventário/validação/recuperação do contrato nativo.
  * Sem fiscal: fallback UI-01d (contagens legadas; sem misturar com nativo).
  */
-import type { ExecutionRow, ExecutionRowMetodo, ExecutionRowStatus } from './execution-row.model';
+import type {
+  ExecutionRow,
+  ExecutionRowMetodo,
+  ExecutionRowMotor,
+  ExecutionRowStatus,
+} from './execution-row.model';
 import {
   rotuloEstadoFaseFiscal,
   type ProgressoFiscalNfse,
@@ -80,6 +85,19 @@ export interface AutenticacaoView {
   aguardandoCaptcha: boolean;
 }
 
+export interface MotorView {
+  /** null até o Backend informar o roteamento. */
+  motor: ExecutionRowMotor | null;
+  rotulo: string | null;
+}
+
+export interface CompetenciaFiscalView {
+  /** YYYY-MM da competência consultada; null se ainda não conhecida. */
+  competencia: string | null;
+  /** Rótulo amigável MM/YYYY para a UI. */
+  rotulo: string | null;
+}
+
 export interface StatusView {
   status: ExecutionRowStatus;
   mensagem: string;
@@ -87,6 +105,8 @@ export interface StatusView {
 
 export interface VisaoFiscalLinha {
   autenticacao: AutenticacaoView;
+  motor: MotorView;
+  competenciaFiscal: CompetenciaFiscalView;
   inventario: InventarioView;
   validacao: ValidacaoView;
   recuperacao: RecuperacaoView;
@@ -94,6 +114,30 @@ export interface VisaoFiscalLinha {
   discoveryOnly: boolean;
   /** true quando a linha usa ProgressoFiscalNfse (não contagens legadas). */
   fiscalEstruturado: boolean;
+}
+
+/** Converte YYYY-MM → MM/YYYY para exibição (competência ≠ pasta de downloads). */
+export function formatarCompetenciaFiscal(competencia?: string | null): string | null {
+  if (!competencia) return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(competencia.trim());
+  if (!m) return competencia.trim();
+  return `${m[2]}/${m[1]}`;
+}
+
+export function mapearMotor(row: ExecutionRow): MotorView {
+  const motor = row.motor === 'ADN' || row.motor === 'PLAYWRIGHT' ? row.motor : null;
+  return {
+    motor,
+    rotulo: motor === 'ADN' ? 'ADN' : motor === 'PLAYWRIGHT' ? 'Playwright' : null,
+  };
+}
+
+export function mapearCompetenciaFiscal(row: ExecutionRow): CompetenciaFiscalView {
+  const competencia = row.competencia_fiscal?.trim() || null;
+  return {
+    competencia,
+    rotulo: formatarCompetenciaFiscal(competencia),
+  };
 }
 
 function contagensDe(row: ExecutionRow): ContagensFiscais {
@@ -276,6 +320,8 @@ export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
     const msgFiscal = fiscal.message?.trim() || '';
     return {
       autenticacao: mapearAutenticacao(row),
+      motor: mapearMotor(row),
+      competenciaFiscal: mapearCompetenciaFiscal(row),
       inventario: inventarioDeEstruturado(fiscal),
       validacao: validacaoDeEstruturado(fiscal),
       recuperacao: recuperacaoDeEstruturado(fiscal),
@@ -290,6 +336,8 @@ export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
 
   return {
     autenticacao: mapearAutenticacao(row),
+    motor: mapearMotor(row),
+    competenciaFiscal: mapearCompetenciaFiscal(row),
     inventario: mapearInventario(row),
     validacao: mapearValidacao(row),
     recuperacao: mapearRecuperacao(row),

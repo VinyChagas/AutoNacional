@@ -725,6 +725,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       };
     });
 
+    const competenciaPrevia =
+      this.dataInicio && this.dataInicio.length === 10 ? this.obterCompetencia() : null;
     this.executionRows = empresasSelecionadas.map(emp => {
       const c = cnpjLimpo(emp.cnpj);
       const empresaIdParam = emp.empresa_id && emp.empresa_id > 0 ? String(emp.empresa_id) : c;
@@ -734,6 +736,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         cnpj: c,
         razao_social: emp.nomeEmpresa || c,
         metodo,
+        competencia_fiscal: competenciaPrevia,
         qtd_emitidas: 0,
         qtd_recebidas: 0,
         qtd_canceladas: 0,
@@ -809,6 +812,13 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       alert('Nenhuma empresa pendente para iniciar.');
       return;
     }
+
+    // API-02G — competência fiscal do período Iniciar (não confundir com pasta downloads).
+    const competenciaFiscal = this.obterCompetencia();
+    this.executionRows = this.executionRows.map((r) => ({
+      ...r,
+      competencia_fiscal: competenciaFiscal,
+    }));
 
     this.carregandoCertificados = true;
 
@@ -976,6 +986,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       etapa: string;
       resultadoFinal?: string;
       motor?: 'ADN' | 'PLAYWRIGHT' | null;
+      competenciaFiscal?: string | null;
       patchFiscal?: Partial<ExecutionRow>;
     }> = [];
     for (const s of statuses) {
@@ -1043,6 +1054,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
             : etapa.toLowerCase().startsWith('adn_')
               ? 'ADN'
               : undefined;
+        const competenciaFiscal =
+          s.competencia_fiscal ||
+          (s.periodo_inicio && /^\d{2}\/\d{2}\/\d{4}$/.test(s.periodo_inicio)
+            ? `${s.periodo_inicio.slice(6, 10)}-${s.periodo_inicio.slice(3, 5)}`
+            : undefined);
 
         rowUpdates.push({
           idx: rowIdx,
@@ -1054,6 +1070,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           etapa,
           resultadoFinal: s.resultado_final,
           motor: motorInferido,
+          competenciaFiscal: competenciaFiscal ?? null,
           patchFiscal,
         });
       }
@@ -1064,7 +1081,19 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     for (const { idx, upd } of execUpdates) {
       execucoes = [...execucoes.slice(0, idx), { ...execucoes[idx], ...upd }, ...execucoes.slice(idx + 1)];
     }
-    for (const { idx, status, mensagem, qtdE, qtdR, qtdC, etapa, resultadoFinal, motor, patchFiscal } of rowUpdates) {
+    for (const {
+      idx,
+      status,
+      mensagem,
+      qtdE,
+      qtdR,
+      qtdC,
+      etapa,
+      resultadoFinal,
+      motor,
+      competenciaFiscal,
+      patchFiscal,
+    } of rowUpdates) {
       executionRows = [
         ...executionRows.slice(0, idx),
         {
@@ -1077,6 +1106,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           ...(etapa ? { ultimo_stage: etapa } : {}),
           ...(resultadoFinal ? { resultado_final: resultadoFinal } : {}),
           ...(motor !== undefined ? { motor } : {}),
+          ...(competenciaFiscal ? { competencia_fiscal: competenciaFiscal } : {}),
           ...(patchFiscal ?? {}),
         },
         ...executionRows.slice(idx + 1),
@@ -1122,6 +1152,35 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           dataInicio: status.data_inicio ? new Date(status.data_inicio) : execucao.dataInicio,
           dataFim: status.data_fim ? new Date(status.data_fim) : execucao.dataFim
         });
+
+        // API-02G — motor + competência fiscal do status individual
+        const rowIdxPoll = this.executionRows.findIndex(
+          (r) => String(r.empresa_id) === String(empresaId) || r.cnpj === execucao.cnpj
+        );
+        if (rowIdxPoll >= 0) {
+          const motorStatus =
+            status.motor === 'ADN' || status.motor === 'PLAYWRIGHT'
+              ? status.motor
+              : (status.etapa_atual || '').toLowerCase().startsWith('adn_')
+                ? ('ADN' as const)
+                : undefined;
+          const compStatus = status.competencia_fiscal || undefined;
+          if (motorStatus || compStatus || status.resultado_final) {
+            this.executionRows = [
+              ...this.executionRows.slice(0, rowIdxPoll),
+              {
+                ...this.executionRows[rowIdxPoll],
+                ...(motorStatus ? { motor: motorStatus } : {}),
+                ...(compStatus ? { competencia_fiscal: compStatus } : {}),
+                ...(status.resultado_final
+                  ? { resultado_final: status.resultado_final }
+                  : {}),
+              },
+              ...this.executionRows.slice(rowIdxPoll + 1),
+            ];
+            this.cdr.markForCheck();
+          }
+        }
         
         // Atualiza lista filtrada se a execução foi finalizada
         if (status.status === 'concluido') {
@@ -1182,6 +1241,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       const statusRow: ExecutionRowStatus = atualizada.status === 'executando' ? 'EM_EXECUCAO' : atualizada.status === 'fila' ? 'FILA' : atualizada.status === 'finalizado' ? 'OK' : atualizada.status === 'falhou' ? 'ERRO' : 'FILA';
       const rowIdx = this.executionRows.findIndex((r) => String(r.empresa_id) === String(atualizada.empresa_id) || r.cnpj === atualizada.cnpj);
       if (rowIdx >= 0) {
+        const etapa = atualizada.etapa_atual ?? '';
+        const motorPoll =
+          etapa.toLowerCase().startsWith('adn_')
+            ? ('ADN' as const)
+            : this.executionRows[rowIdx].motor;
         this.executionRows = [
           ...this.executionRows.slice(0, rowIdx),
           {
@@ -1191,6 +1255,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
             qtd_emitidas: atualizada.qtdNotasEmitidas ?? this.executionRows[rowIdx].qtd_emitidas,
             qtd_recebidas: atualizada.qtdNotasRecebidas ?? this.executionRows[rowIdx].qtd_recebidas,
             qtd_canceladas: atualizada.qtdNotasCanceladas ?? this.executionRows[rowIdx].qtd_canceladas ?? 0,
+            ...(motorPoll ? { motor: motorPoll } : {}),
+            ...(etapa ? { ultimo_stage: etapa } : {}),
           },
           ...this.executionRows.slice(rowIdx + 1),
         ];
@@ -1217,19 +1283,37 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     let next: Partial<ExecutionRow> = {};
 
     if (ev.type === 'execution:started') {
-      next = { status: 'EM_EXECUCAO', mensagem: 'Abrindo navegador…', razao_social: ev.razao_social || row.razao_social, metodo: ev.metodo };
+      const motorStarted =
+        ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' ? ev.motor : row.motor;
+      next = {
+        status: 'EM_EXECUCAO',
+        mensagem:
+          motorStarted === 'ADN'
+            ? 'Distribuição ADN (sem navegador)…'
+            : 'Abrindo navegador…',
+        razao_social: ev.razao_social || row.razao_social,
+        metodo: ev.metodo,
+        ...(motorStarted ? { motor: motorStarted } : {}),
+        ...(ev.competencia_fiscal
+          ? { competencia_fiscal: ev.competencia_fiscal }
+          : {}),
+      };
     } else if (ev.type === 'execution:stage') {
       const isAguardandoCaptcha =
         ev.stage === 'captcha_aguardando_central' ||
         ev.stage === 'captcha_aguardando' ||
         ev.stage === 'captcha_fallback_manual' ||
         (ev.message || '').toLowerCase().includes('aguardando resolução manual');
+      const motorStage = ev.stage?.toLowerCase().startsWith('adn_')
+        ? ('ADN' as const)
+        : undefined;
       next = {
         status: isAguardandoCaptcha ? 'AGUARDANDO_CAPTCHA' : 'EM_EXECUCAO',
         mensagem: isAguardandoCaptcha
           ? (ev.message || 'Aguardando resolução manual do hCaptcha')
           : ev.message,
         ultimo_stage: ev.stage,
+        ...(motorStage ? { motor: motorStage } : {}),
       };
     } else if (ev.type === 'execution:counts') {
       // Contagens legadas — não misturar com progresso_fiscal estruturado.
@@ -1246,6 +1330,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         qtd_recebidas: ev.qtd_recebidas ?? row.qtd_recebidas,
         qtd_canceladas: ev.qtd_canceladas ?? row.qtd_canceladas ?? 0,
         ...(ev.resultado_final ? { resultado_final: ev.resultado_final } : {}),
+        ...(ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' ? { motor: ev.motor } : {}),
+        ...(ev.competencia_fiscal ? { competencia_fiscal: ev.competencia_fiscal } : {}),
       };
       const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === String(empresaId) || e.cnpj === row.cnpj);
       if (execIdx >= 0) {

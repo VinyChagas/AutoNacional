@@ -244,6 +244,8 @@
                 <tr>
                   <th>Empresa</th>
                   <th>Autenticação</th>
+                  <th>Motor</th>
+                  <th>Competência</th>
                   <th>Inventário</th>
                   <th>Validação</th>
                   <th>Recuperação</th>
@@ -275,6 +277,32 @@
                             <span class="spinner-sm"></span>
                             AGUARDANDO_CAPTCHA
                           </span>
+                        }
+                      </td>
+                      <td class="td-motor">
+                        @if (v.motor.rotulo) {
+                          <span
+                            class="motor-badge"
+                            [class.badge-adn]="v.motor.motor === 'ADN'"
+                            [class.badge-playwright]="v.motor.motor === 'PLAYWRIGHT'"
+                            [attr.title]="v.motor.motor === 'ADN'
+                              ? 'Motor ADN — sem Chromium/hCaptcha'
+                              : 'Motor Playwright — navegador'"
+                          >
+                            {{ v.motor.rotulo }}
+                          </span>
+                        } @else {
+                          <span class="motor-badge badge-motor-pendente" title="Aguardando roteamento do Backend">—</span>
+                        }
+                      </td>
+                      <td class="td-competencia">
+                        @if (v.competenciaFiscal.rotulo) {
+                          <span
+                            class="competencia-fiscal"
+                            title="Competência fiscal consultada (não é o mês da pasta de downloads)"
+                          >{{ v.competenciaFiscal.rotulo }}</span>
+                        } @else {
+                          <span class="competencia-fiscal competencia-pendente">—</span>
                         }
                       </td>
                       <td class="td-etapa">
