@@ -32,6 +32,8 @@ export interface SnapshotProgressoFiscalPolling {
   qtd_notas_canceladas: number;
   resultado_final: string | null;
   tipo_autenticacao?: string;
+  /** ADN | PLAYWRIGHT — indicador de navegadores ignora ADN. */
+  motor?: 'ADN' | 'PLAYWRIGHT';
   periodo_inicio?: string;
   periodo_fim?: string;
   fiscal: ProgressoFiscalNfse;

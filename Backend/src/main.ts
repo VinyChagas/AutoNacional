@@ -9,6 +9,10 @@ import { disconnectDb, initDb, prisma } from './db/client';
 import { seedDefaultSettings } from './db/init';
 import * as settingsRepo from './repositories/settings';
 import {
+  aplicarHomologRootConfigNoEnv,
+  carregarConfigAdnIniciar,
+} from './automation/nfse/adn/iniciar-config';
+import {
   obterEstadoFila,
   pararFilaExecucao,
   setCertificateLoader,
@@ -127,6 +131,23 @@ async function bootstrap() {
     logger.warn(
       `Database: falha ao conectar (host=${dbTarget.host}, database=${dbTarget.database})`
     );
+  }
+
+  // API-02D — config persistente A1→ADN (sobrevive a reinício; sem flags de piloto).
+  try {
+    const cfgAdn = carregarConfigAdnIniciar({ criarSeAusente: true });
+    aplicarHomologRootConfigNoEnv(cfgAdn);
+    logger.info(
+      {
+        adnPadraoA1: cfgAdn.adnPadraoA1,
+        excecoesPlaywright: cfgAdn.playwrightExcecaoCnpjs.length,
+        maxRequests: cfgAdn.maxRequests,
+        homologRoot: cfgAdn.homologRoot,
+      },
+      'Config ADN Iniciar carregada'
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Falha ao carregar config ADN Iniciar — usando defaults em memória');
   }
 
   let storageOk = false;

@@ -118,6 +118,8 @@ interface ExecucaoInfo {
   qtdNotasCanceladas: number;
   resultadoFinal: string | null;
   tipoAutenticacao?: TipoAutenticacao;
+  /** Motor efetivo após roteamento Iniciar (ADN não abre Chromium). */
+  motorProcessamento?: 'ADN' | 'PLAYWRIGHT';
   page?: Page;
   browser?: Browser;
   /** Slot visual reservado antes do launch (liberado ao fechar o browser). */
@@ -508,6 +510,7 @@ export async function obterStatusBatch(
         qtd_notas_canceladas: info.qtdNotasCanceladas,
         resultado_final: info.resultadoFinal,
         tipo_autenticacao: info.tipoAutenticacao,
+        motor: info.motorProcessamento ?? null,
       };
       // Campo opcional: só quando há progresso fiscal associado a este lote/execução.
       if (
@@ -542,6 +545,7 @@ export async function obterStatusBatch(
       qtd_notas_canceladas: snap.qtd_notas_canceladas,
       resultado_final: snap.resultado_final,
       tipo_autenticacao: snap.tipo_autenticacao,
+      motor: snap.motor ?? null,
       fiscal: snap.fiscal,
     };
     out.push(row);
@@ -595,6 +599,7 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
     qtd_notas_canceladas: info.qtdNotasCanceladas,
     resultado_final: info.resultadoFinal,
     tipo_autenticacao: info.tipoAutenticacao,
+    motor: info.motorProcessamento ?? null,
   };
   if (
     info.progressoFiscal &&
@@ -629,6 +634,7 @@ function retenirProgressoFiscalDeInfo(
       qtd_notas_canceladas: info.qtdNotasCanceladas,
       resultado_final: info.resultadoFinal,
       tipo_autenticacao: info.tipoAutenticacao,
+      motor: info.motorProcessamento,
       periodo_inicio: info.periodoInicio,
       periodo_fim: info.periodoFim,
       fiscal: {
@@ -949,8 +955,8 @@ async function executarFluxoCompleto(
     }).catch(() => {});
   };
 
-  // API-01S — Roteamento A1→ADN ANTES de qualquer Chromium/Playwright.
-  // Flag off / credenciais / empresa não autorizada → Playwright legado (abaixo).
+  // API-02D — Roteamento A1→ADN (padrão de produto) ANTES de qualquer Chromium.
+  // Credenciais / kill-switch / exceção Playwright → legado (abaixo).
   // ADN selecionado + falha → ERRO tipado, SEM fallback silencioso para o legado.
   const decisaoAdn = decidirAdnIniciar({
     tipoAutenticacao,
@@ -958,6 +964,7 @@ async function executarFluxoCompleto(
     env: process.env,
     autorizacaoAdnIniciar: obterAutorizacaoAdnIniciarRuntime(cnpj),
   });
+  info.motorProcessamento = decisaoAdn.executarAdn ? 'ADN' : 'PLAYWRIGHT';
 
   if (decisaoAdn.executarAdn) {
     emitirEventoExecucao(batchId, {
@@ -979,6 +986,7 @@ async function executarFluxoCompleto(
     });
 
     try {
+      // Produto ADN ativo: gate live de piloto (NFSE_ALLOW_LIVE) não é exigido no Iniciar.
       const resultadoAdn = await executarFluxoAdnIniciar(
         {
           cnpj,
@@ -994,7 +1002,7 @@ async function executarFluxoCompleto(
           deveInterromper: () => encerrandoFila,
           env: process.env,
         },
-        obterDependenciasAdnIniciar({ exigirGateLive: true })
+        obterDependenciasAdnIniciar({ exigirGateLive: false })
       );
 
       if (resultadoAdn.chromiumAberto || resultadoAdn.playwrightUsado || resultadoAdn.sefinChamado) {

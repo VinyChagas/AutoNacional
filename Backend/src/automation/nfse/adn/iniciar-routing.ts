@@ -1,21 +1,26 @@
 /**
- * Roteamento Iniciar: A1 → ADN (antes do Chromium) vs usuário/senha → Playwright.
+ * Roteamento Iniciar: A1 → ADN (padrão de produto) vs usuário/senha → Playwright.
  * Sem fallback silencioso: se ADN for selecionado e falhar, não abre Playwright.
  * SEFIN nunca é chamado por este caminho.
+ *
+ * Config persistente: iniciar-config.ts (adnPadraoA1 + exceções Playwright).
+ * Kill-switch env: NFSE_ADN_INICIAR_ENABLED=false força Playwright.
  */
+import { lerFlagAdnIniciar } from './iniciar-feature-flag';
 import {
-  cnpjNaAllowlistAdnIniciar,
-  flagAdnIniciarAtiva,
-  lerFlagAdnIniciar,
-} from './iniciar-feature-flag';
+  cnpjNaExcecaoPlaywrightAdn,
+  lerConfigAdnIniciarMemoria,
+  type ConfigAdnIniciarProduto,
+} from './iniciar-config';
 
 export type TipoAutenticacaoIniciar = 'certificado' | 'credenciais';
 
 export type SituacaoRoteamentoAdnIniciar =
   | 'ADN_SOLICITADO'
   | 'LEGADO_CREDENCIAIS'
-  | 'LEGADO_FLAG_OFF'
-  | 'LEGADO_EMPRESA_NAO_AUTORIZADA'
+  | 'LEGADO_KILL_SWITCH'
+  | 'LEGADO_PRODUTO_DESLIGADO'
+  | 'LEGADO_EXCECAO_PLAYWRIGHT'
   | 'LEGADO_CONTEXTO';
 
 export interface AutorizacaoAdnIniciar {
@@ -28,8 +33,10 @@ export interface ContextoRoteamentoAdnIniciar {
   tipoAutenticacao: TipoAutenticacaoIniciar;
   cnpj: string;
   env?: NodeJS.ProcessEnv;
-  /** Se presente e ativa, autoriza a empresa mesmo fora da allowlist (desde que a flag global esteja on). */
+  /** Se presente e ativa, autoriza ADN mesmo com exceção Playwright / produto off (testes). */
   autorizacaoAdnIniciar?: AutorizacaoAdnIniciar | null;
+  /** Injeta config de produto (testes). Default: memória/disco. */
+  configProduto?: ConfigAdnIniciarProduto | null;
 }
 
 export interface DecisaoRoteamentoAdnIniciar {
@@ -38,6 +45,11 @@ export interface DecisaoRoteamentoAdnIniciar {
   executarAdn: boolean;
   abrirChromium: boolean;
   motivo: string;
+  /** true quando o motor ADN de produto está habilitado (antes de exceções). */
+  adnPadraoA1: boolean;
+  /** true quando a empresa está na lista de exceção Playwright. */
+  excecaoPlaywright: boolean;
+  /** Compat: kill-switch env não está forçando off. */
   flagAtiva: boolean;
   empresaAutorizada: boolean;
 }
@@ -58,17 +70,28 @@ function autorizacaoExplicitaAtiva(
 /**
  * Decide o motor ANTES de qualquer launch Playwright.
  * Credenciais → sempre Playwright.
- * Flag off / empresa fora da allowlist → Playwright (legado preservado).
- * Flag on + A1 + empresa autorizada → ADN (sem Chromium).
+ * Kill-switch env false → Playwright.
+ * Produto adnPadraoA1=false → Playwright (salvo autorização explícita).
+ * A1 na lista de exceção Playwright → Playwright.
+ * Caso contrário A1 → ADN (sem Chromium).
  */
 export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRoteamentoAdnIniciar {
   const env = ctx.env ?? process.env;
-  const leitura = lerFlagAdnIniciar(env);
-  const flagAtiva = leitura.ativa;
+  const kill = lerFlagAdnIniciar(env);
+  /** Ausente = não força off (produto manda). false/inválida = kill-switch. */
+  const killSwitchOff =
+    kill.motivo === 'FALSE' || kill.motivo === 'INVALIDA';
+  const cfg = ctx.configProduto ?? lerConfigAdnIniciarMemoria();
   const cnpj = String(ctx.cnpj ?? '').replace(/\D/g, '');
-  const naAllowlist = cnpjNaAllowlistAdnIniciar(cnpj, env);
+  const excecaoPlaywright = cnpjNaExcecaoPlaywrightAdn(cnpj, cfg);
   const authExplicita = autorizacaoExplicitaAtiva(ctx.autorizacaoAdnIniciar, cnpj);
-  const empresaAutorizada = naAllowlist || authExplicita;
+  const adnPadraoA1 = cfg.adnPadraoA1 === true;
+
+  const base = {
+    adnPadraoA1,
+    excecaoPlaywright,
+    flagAtiva: !killSwitchOff && adnPadraoA1,
+  };
 
   if (ctx.tipoAutenticacao === 'credenciais') {
     return {
@@ -77,8 +100,8 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
       executarAdn: false,
       abrirChromium: true,
       motivo: 'Autenticação usuário/senha: fluxo Playwright legado preservado (ADN não aplicável).',
-      flagAtiva,
       empresaAutorizada: false,
+      ...base,
     };
   }
 
@@ -89,36 +112,65 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
       executarAdn: false,
       abrirChromium: true,
       motivo: 'Tipo de autenticação não suportado para ADN; Playwright preservado.',
-      flagAtiva,
       empresaAutorizada: false,
+      ...base,
     };
   }
 
-  if (!flagAtiva) {
+  if (authExplicita) {
     return {
-      modo: 'PLAYWRIGHT',
-      situacao: 'LEGADO_FLAG_OFF',
-      executarAdn: false,
-      abrirChromium: true,
+      modo: 'ADN',
+      situacao: 'ADN_SOLICITADO',
+      executarAdn: true,
+      abrirChromium: false,
       motivo:
-        leitura.motivo === 'INVALIDA'
-          ? 'Flag ADN Iniciar inválida; fluxo Playwright legado preservado.'
-          : 'Flag ADN Iniciar desativada; fluxo Playwright legado preservado.',
-      flagAtiva: false,
-      empresaAutorizada,
-    };
-  }
-
-  if (!empresaAutorizada) {
-    return {
-      modo: 'PLAYWRIGHT',
-      situacao: 'LEGADO_EMPRESA_NAO_AUTORIZADA',
-      executarAdn: false,
-      abrirChromium: true,
-      motivo:
-        'Flag ADN Iniciar ativa sem autorização desta empresa (allowlist/explícita); Playwright preservado.',
+        'Autorização explícita: distribuição ADN sem Chromium/hCaptcha/SEFIN.',
+      empresaAutorizada: true,
+      ...base,
       flagAtiva: true,
+    };
+  }
+
+  if (killSwitchOff) {
+    return {
+      modo: 'PLAYWRIGHT',
+      situacao: 'LEGADO_KILL_SWITCH',
+      executarAdn: false,
+      abrirChromium: true,
+      motivo:
+        kill.motivo === 'INVALIDA'
+          ? 'Kill-switch ADN Iniciar inválido; fluxo Playwright preservado.'
+          : 'Kill-switch NFSE_ADN_INICIAR_ENABLED=false; fluxo Playwright preservado.',
       empresaAutorizada: false,
+      ...base,
+      flagAtiva: false,
+    };
+  }
+
+  if (!adnPadraoA1) {
+    return {
+      modo: 'PLAYWRIGHT',
+      situacao: 'LEGADO_PRODUTO_DESLIGADO',
+      executarAdn: false,
+      abrirChromium: true,
+      motivo:
+        'Configuração de produto com ADN desligado para A1; Playwright preservado.',
+      empresaAutorizada: false,
+      ...base,
+      flagAtiva: false,
+    };
+  }
+
+  if (excecaoPlaywright) {
+    return {
+      modo: 'PLAYWRIGHT',
+      situacao: 'LEGADO_EXCECAO_PLAYWRIGHT',
+      executarAdn: false,
+      abrirChromium: true,
+      motivo:
+        'Empresa na lista de exceção Playwright (config persistente); Chromium preservado.',
+      empresaAutorizada: false,
+      ...base,
     };
   }
 
@@ -128,12 +180,16 @@ export function decidirAdnIniciar(ctx: ContextoRoteamentoAdnIniciar): DecisaoRot
     executarAdn: true,
     abrirChromium: false,
     motivo:
-      'Flag ativa, certificado A1 e empresa autorizada: distribuição ADN sem Chromium/hCaptcha/SEFIN.',
-    flagAtiva: true,
+      'Certificado A1 com ADN padrão de produto: distribuição sem Chromium/hCaptcha/SEFIN.',
     empresaAutorizada: true,
+    ...base,
+    flagAtiva: true,
   };
 }
 
+/** @deprecated Use config de produto; mantido para compat de imports. */
 export function flagAdnIniciarLidaComoAtiva(env?: NodeJS.ProcessEnv): boolean {
-  return flagAdnIniciarAtiva(env);
+  const kill = lerFlagAdnIniciar(env);
+  if (kill.motivo === 'FALSE' || kill.motivo === 'INVALIDA') return false;
+  return lerConfigAdnIniciarMemoria().adnPadraoA1;
 }

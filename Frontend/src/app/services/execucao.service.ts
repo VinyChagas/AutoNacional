@@ -106,6 +106,8 @@ export interface ExecucaoStatusResponse {
   qtd_notas_recebidas?: number;
   qtd_notas_canceladas?: number;
   resultado_final?: string;
+  /** Motor efetivo (ADN não abre Chromium). */
+  motor?: 'ADN' | 'PLAYWRIGHT' | null;
   /** Progresso fiscal estruturado (UI-01e-B); ausente após expiração/restart. */
   fiscal?: ProgressoFiscalNfse;
   batch_id?: string;

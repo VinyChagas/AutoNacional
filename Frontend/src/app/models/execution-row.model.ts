@@ -6,12 +6,16 @@ import type { ProgressoFiscalNfse } from './progresso-fiscal.model';
 
 export type ExecutionRowStatus = 'FILA' | 'EM_EXECUCAO' | 'AGUARDANDO_CAPTCHA' | 'OK' | 'ERRO';
 export type ExecutionRowMetodo = 'CERTIFICADO' | 'CREDENCIAL';
+/** Motor efetivo após roteamento Iniciar (ADN não abre Chromium). */
+export type ExecutionRowMotor = 'ADN' | 'PLAYWRIGHT';
 
 export interface ExecutionRow {
   empresa_id: string | number;
   cnpj: string;
   razao_social: string;
   metodo: ExecutionRowMetodo;
+  /** Ausente até o backend informar o roteamento. */
+  motor?: ExecutionRowMotor | null;
   qtd_emitidas: number;
   qtd_recebidas: number;
   qtd_canceladas: number;

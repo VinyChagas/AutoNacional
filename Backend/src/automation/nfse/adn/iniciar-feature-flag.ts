@@ -1,12 +1,18 @@
 /**
- * Feature flag A1 → ADN no botão Iniciar.
- * Ausente ou false: desativada (fluxo Playwright preservado).
- * true: habilitada — ainda exige autorização por empresa (allowlist ou explícita).
- * Qualquer outro valor: falha segura (desativada).
- * Não carrega certificado, não abre navegador e não chama ADN.
+ * Kill-switch de emergência para ADN no Iniciar (env).
+ *
+ * Comportamento de produto (padrão A1→ADN) vive em iniciar-config.ts.
+ * Este módulo NÃO habilita ADN sozinho:
+ * - ausente → não interfere (produto manda)
+ * - true → não força off (redundante com produto)
+ * - false / inválida → força Playwright para todos
+ *
+ * NFSE_ADN_INICIAR_CNPJS (allowlist de piloto) está deprecada:
+ * use playwrightExcecaoCnpjs na config persistente para forçar Playwright.
  */
 
 export const NOME_FLAG_ADN_INICIAR = 'NFSE_ADN_INICIAR_ENABLED';
+/** @deprecated Preferir config persistente playwrightExcecaoCnpjs. */
 export const NOME_ALLOWLIST_ADN_INICIAR = 'NFSE_ADN_INICIAR_CNPJS';
 
 export type LeituraFlagAdnIniciar =
@@ -30,11 +36,21 @@ export function lerFlagAdnIniciar(
   return { ativa: false, motivo: 'INVALIDA', valorBruto: String(bruto) };
 }
 
-export function flagAdnIniciarAtiva(env: NodeJS.ProcessEnv = process.env): boolean {
-  return lerFlagAdnIniciar(env).ativa;
+/**
+ * Kill-switch ativo? (false/inválida no env).
+ * Ausente NÃO conta como desligado — o produto decide.
+ */
+export function killSwitchAdnIniciarAtivo(env: NodeJS.ProcessEnv = process.env): boolean {
+  const l = lerFlagAdnIniciar(env);
+  return l.motivo === 'FALSE' || l.motivo === 'INVALIDA';
 }
 
-/** CNPJs autorizados individualmente (apenas dígitos). Vazio = ninguém na allowlist. */
+/** @deprecated Preferir !killSwitch + config.adnPadraoA1. */
+export function flagAdnIniciarAtiva(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !killSwitchAdnIniciarAtivo(env);
+}
+
+/** @deprecated Allowlist de piloto — mantida só para leitura legada em testes/ops. */
 export function lerAllowlistAdnIniciar(env: NodeJS.ProcessEnv = process.env): Set<string> {
   const bruto = env[NOME_ALLOWLIST_ADN_INICIAR];
   const out = new Set<string>();
@@ -46,6 +62,7 @@ export function lerAllowlistAdnIniciar(env: NodeJS.ProcessEnv = process.env): Se
   return out;
 }
 
+/** @deprecated */
 export function cnpjNaAllowlistAdnIniciar(
   cnpj: string,
   env: NodeJS.ProcessEnv = process.env

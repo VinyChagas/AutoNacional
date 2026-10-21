@@ -29,6 +29,7 @@ import {
   InventarioPersistidoArquivoAdn,
   type FonteInventarioPersistidoAdn,
 } from './inventario-persistido';
+import { lerConfigAdnIniciarMemoria } from './iniciar-config';
 import path from 'node:path';
 
 /** Override de sync (testes offline). Null = factory padrão. */
@@ -78,10 +79,15 @@ export function resetIniciarAdnRuntimeParaTestes(): void {
   syncOverride = null;
   fonteInventarioOverride = null;
   autorizacoesPorCnpj.clear();
+  // Config de produto é resetada pelo módulo iniciar-config nos testes que a usam.
 }
 
 function limitesIniciarAdn(env: NodeJS.ProcessEnv): LimitesAdn {
-  const maxReqBruto = Number(env.NFSE_ADN_INICIAR_MAX_REQUESTS ?? MAX_REQUESTS_HARNESS_ADN);
+  const cfg = lerConfigAdnIniciarMemoria();
+  // Env sobrescreve config de produto quando presente (ops/piloto pontual).
+  const maxReqBruto = Number(
+    env.NFSE_ADN_INICIAR_MAX_REQUESTS ?? cfg.maxRequests ?? MAX_REQUESTS_HARNESS_ADN
+  );
   const maxRequests = Number.isFinite(maxReqBruto)
     ? Math.min(MAX_REQUESTS_HARNESS_ADN, Math.max(1, Math.floor(maxReqBruto)))
     : MAX_REQUESTS_HARNESS_ADN;

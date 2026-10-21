@@ -484,11 +484,26 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return this.executionRows.filter((r) => r.status === 'FILA').length;
   }
 
-  /** Empresas em execução (navegadores abertos), inclui aguardando captcha */
+  /** Empresas em execução (qualquer motor), inclui aguardando captcha */
   get totalEmExecucao(): number {
     return this.executionRows.filter(
       (r) => r.status === 'EM_EXECUCAO' || r.status === 'AGUARDANDO_CAPTCHA'
     ).length;
+  }
+
+  /**
+   * Chromium/hCaptcha abertos — exclui motor ADN (sem navegador).
+   * Fallback: etapa adn_* também não conta.
+   */
+  get totalNavegadoresAbertos(): number {
+    return this.executionRows.filter((r) => {
+      if (r.status === 'AGUARDANDO_CAPTCHA') return true;
+      if (r.status !== 'EM_EXECUCAO') return false;
+      if (r.motor === 'ADN') return false;
+      const etapa = (r.ultimo_stage || '').toLowerCase();
+      if (etapa.startsWith('adn_')) return false;
+      return true;
+    }).length;
   }
 
   /**
@@ -960,6 +975,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       qtdC: number;
       etapa: string;
       resultadoFinal?: string;
+      motor?: 'ADN' | 'PLAYWRIGHT' | null;
       patchFiscal?: Partial<ExecutionRow>;
     }> = [];
     for (const s of statuses) {
@@ -1021,6 +1037,13 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           }
         }
 
+        const motorInferido: 'ADN' | 'PLAYWRIGHT' | null | undefined =
+          s.motor === 'ADN' || s.motor === 'PLAYWRIGHT'
+            ? s.motor
+            : etapa.toLowerCase().startsWith('adn_')
+              ? 'ADN'
+              : undefined;
+
         rowUpdates.push({
           idx: rowIdx,
           status: statusRow,
@@ -1030,6 +1053,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtdC,
           etapa,
           resultadoFinal: s.resultado_final,
+          motor: motorInferido,
           patchFiscal,
         });
       }
@@ -1040,7 +1064,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     for (const { idx, upd } of execUpdates) {
       execucoes = [...execucoes.slice(0, idx), { ...execucoes[idx], ...upd }, ...execucoes.slice(idx + 1)];
     }
-    for (const { idx, status, mensagem, qtdE, qtdR, qtdC, etapa, resultadoFinal, patchFiscal } of rowUpdates) {
+    for (const { idx, status, mensagem, qtdE, qtdR, qtdC, etapa, resultadoFinal, motor, patchFiscal } of rowUpdates) {
       executionRows = [
         ...executionRows.slice(0, idx),
         {
@@ -1052,6 +1076,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtd_canceladas: qtdC,
           ...(etapa ? { ultimo_stage: etapa } : {}),
           ...(resultadoFinal ? { resultado_final: resultadoFinal } : {}),
+          ...(motor !== undefined ? { motor } : {}),
           ...(patchFiscal ?? {}),
         },
         ...executionRows.slice(idx + 1),

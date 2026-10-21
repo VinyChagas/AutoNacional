@@ -2,10 +2,9 @@
  * API-01U — Inventário persistido no Iniciar ADN (offline).
  * Sem rede, sem Playwright, sem alterar XMLs/checkpoints reais.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decidirAdnIniciar } from './iniciar-routing';
 import { executarFluxoAdnIniciar } from './iniciar-executor';
-import { NOME_ALLOWLIST_ADN_INICIAR, NOME_FLAG_ADN_INICIAR } from './iniciar-feature-flag';
 import {
   decidirResultadoFinalAdnIniciar,
   InventarioPersistidoMemoriaAdn,
@@ -13,6 +12,11 @@ import {
   type ContagensCompetenciaAdn,
 } from './inventario-persistido';
 import { syncAdnIniciarFixoParaTestes, resetIniciarAdnRuntimeParaTestes } from './iniciar-runtime';
+import {
+  configAdnIniciarPadrao,
+  resetConfigAdnIniciarParaTestes,
+  setConfigAdnIniciarParaTestes,
+} from './iniciar-config';
 import type { ResultadoSyncAdn } from './types';
 import { limparRetencaoProgressoFiscal, limparRevisoesProgressoFiscal } from '../progresso-fiscal';
 
@@ -20,11 +24,9 @@ const CNPJ_A = '45517515000100';
 const CNPJ_B = '11222333000181';
 const CHAVE_E = '41069022228631747000167000000000003626090719238991';
 
-function envFlagOn(cnpj = CNPJ_A): NodeJS.ProcessEnv {
-  return {
-    [NOME_FLAG_ADN_INICIAR]: 'true',
-    [NOME_ALLOWLIST_ADN_INICIAR]: cnpj,
-  };
+/** Sem kill-switch — ADN padrão de produto. */
+function envProduto(): NodeJS.ProcessEnv {
+  return {};
 }
 
 function syncVazioCursorEsgotado(cnpj: string): ResultadoSyncAdn {
@@ -311,8 +313,13 @@ describe('API-01U — competências e decisão de resultado', () => {
 });
 
 describe('API-01U — fluxo Iniciar com inventário persistido', () => {
+  beforeEach(() => {
+    setConfigAdnIniciarParaTestes(configAdnIniciarPadrao());
+  });
+
   afterEach(() => {
     resetIniciarAdnRuntimeParaTestes();
+    resetConfigAdnIniciarParaTestes();
     limparRetencaoProgressoFiscal();
     limparRevisoesProgressoFiscal();
   });
@@ -328,7 +335,7 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
     const decisao = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: params.cnpj,
-      env: envFlagOn(params.cnpj),
+      env: envProduto(),
     });
     expect(decisao.executarAdn).toBe(true);
     const fonte = new InventarioPersistidoMemoriaAdn();
@@ -349,7 +356,7 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
           cnpj: params.cnpj,
         },
         decisao,
-        env: envFlagOn(params.cnpj),
+        env: envProduto(),
       },
       {
         executarSync: syncAdnIniciarFixoParaTestes(params.sync),
@@ -421,12 +428,12 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
     const decisaoA = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_A,
-      env: envFlagOn(`${CNPJ_A},${CNPJ_B}`),
+      env: envProduto(),
     });
     const decisaoB = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_B,
-      env: envFlagOn(`${CNPJ_A},${CNPJ_B}`),
+      env: envProduto(),
     });
 
     const [a, b] = await Promise.all([
@@ -482,8 +489,13 @@ describe('API-01U — fluxo Iniciar com inventário persistido', () => {
 });
 
 describe('API-02B — resultado_final só pela competência (cenários reais)', () => {
+  beforeEach(() => {
+    setConfigAdnIniciarParaTestes(configAdnIniciarPadrao());
+  });
+
   afterEach(() => {
     resetIniciarAdnRuntimeParaTestes();
+    resetConfigAdnIniciarParaTestes();
     limparRetencaoProgressoFiscal();
     limparRevisoesProgressoFiscal();
   });
@@ -531,7 +543,7 @@ describe('API-02B — resultado_final só pela competência (cenários reais)', 
     const decisao = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: params.cnpj,
-      env: envFlagOn(params.cnpj),
+      env: envProduto(),
     });
     expect(decisao.executarAdn).toBe(true);
     const fonte = new InventarioPersistidoMemoriaAdn();
@@ -553,7 +565,7 @@ describe('API-02B — resultado_final só pela competência (cenários reais)', 
           cnpj: params.cnpj,
         },
         decisao,
-        env: envFlagOn(params.cnpj),
+        env: envProduto(),
       },
       {
         executarSync: syncAdnIniciarFixoParaTestes(params.sync),

@@ -10,6 +10,11 @@ import { openNativeFolderPicker } from '../utils/native-folder-picker';
 import { resolveStoragePath } from '../utils/path-resolve';
 import * as repo from '../repositories/settings';
 import type { Settings } from '@prisma/client';
+import {
+  carregarConfigAdnIniciar,
+  salvarConfigAdnIniciar,
+  type ConfigAdnIniciarProduto,
+} from '../automation/nfse/adn/iniciar-config';
 
 const logger = getLogger('settings');
 const router = Router();
@@ -219,6 +224,43 @@ async function checkCanCreateSubfolders(dirPath: string): Promise<{ ok: boolean;
 }
 
 /**
+ * GET /api/settings/adn-iniciar
+ * Config persistente do motor A1→ADN (sobrevive a reinício).
+ */
+router.get('/adn-iniciar', (_req: Request, res: Response) => {
+  try {
+    const cfg = carregarConfigAdnIniciar({ criarSeAusente: true });
+    res.json(cfg);
+  } catch (error) {
+    logger.error({ err: error }, 'Erro ao obter config ADN Iniciar');
+    res.status(500).json({ detail: 'Erro ao obter config ADN Iniciar' });
+  }
+});
+
+/**
+ * PUT /api/settings/adn-iniciar
+ * Atualiza config persistente (adnPadraoA1, exceções Playwright, maxRequests, homologRoot).
+ */
+router.put('/adn-iniciar', (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as Partial<ConfigAdnIniciarProduto>;
+    const cfg = salvarConfigAdnIniciar(body);
+    logger.info(
+      {
+        adnPadraoA1: cfg.adnPadraoA1,
+        excecoes: cfg.playwrightExcecaoCnpjs.length,
+        maxRequests: cfg.maxRequests,
+      },
+      'Config ADN Iniciar atualizada'
+    );
+    res.json(cfg);
+  } catch (error) {
+    logger.error({ err: error }, 'Erro ao salvar config ADN Iniciar');
+    res.status(500).json({ detail: 'Erro ao salvar config ADN Iniciar' });
+  }
+});
+
+/**
  * GET /api/settings
  */
 router.get('/', async (_req: Request, res: Response) => {
@@ -228,7 +270,8 @@ router.get('/', async (_req: Request, res: Response) => {
       res.status(500).json({ detail: 'Erro ao obter configurações' });
       return;
     }
-    res.json(toResponse(config));
+    const adnIniciar = carregarConfigAdnIniciar({ criarSeAusente: true });
+    res.json({ ...toResponse(config), adnIniciar });
   } catch (error) {
     logger.error({ err: error }, 'Erro ao obter configurações');
     res.status(500).json({ detail: 'Erro ao obter configurações' });

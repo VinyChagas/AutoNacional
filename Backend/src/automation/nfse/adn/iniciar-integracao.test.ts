@@ -16,7 +16,12 @@ import {
   resetIniciarAdnRuntimeParaTestes,
   syncAdnIniciarFixoParaTestes,
 } from './iniciar-runtime';
-import { NOME_ALLOWLIST_ADN_INICIAR, NOME_FLAG_ADN_INICIAR } from './iniciar-feature-flag';
+import { NOME_FLAG_ADN_INICIAR } from './iniciar-feature-flag';
+import {
+  configAdnIniciarPadrao,
+  resetConfigAdnIniciarParaTestes,
+  setConfigAdnIniciarParaTestes,
+} from './iniciar-config';
 import { ErroAdn } from './errors';
 import type { ResultadoSyncAdn } from './types';
 import {
@@ -34,11 +39,9 @@ const CNPJ_B = '11222333000181';
 const CHAVE_E = '41069022228631747000167000000000003626090719238991';
 const CHAVE_R = '41069022252448489000162000000000005526095260389667';
 
-function envFlagOnAllowA(): NodeJS.ProcessEnv {
-  return {
-    [NOME_FLAG_ADN_INICIAR]: 'true',
-    [NOME_ALLOWLIST_ADN_INICIAR]: CNPJ_A,
-  };
+/** Env sem kill-switch — produto manda (adnPadraoA1). */
+function envProduto(): NodeJS.ProcessEnv {
+  return {};
 }
 
 function syncAdnOk(cnpj: string): ResultadoSyncAdn {
@@ -127,7 +130,7 @@ async function simularFluxoAdnEmpresaA(params?: {
   syncFalhar?: boolean;
   execucaoId?: string;
 }): Promise<EvidenciaFluxo> {
-  const env = params?.env ?? envFlagOnAllowA();
+  const env = params?.env ?? envProduto();
   const execucaoId = params?.execucaoId ?? '1001';
   const decisao = decidirAdnIniciar({
     tipoAutenticacao: 'certificado',
@@ -205,59 +208,73 @@ async function simularFluxoAdnEmpresaA(params?: {
   };
 }
 
-describe('API-01S — Roteamento Iniciar', () => {
-  afterEach(() => {
-    resetIniciarAdnRuntimeParaTestes();
+describe('API-01S / API-02D — Roteamento Iniciar', () => {
+  beforeEach(() => {
+    setConfigAdnIniciarParaTestes(configAdnIniciarPadrao());
   });
 
-  it('flag ausente → Playwright mesmo com A1', () => {
+  afterEach(() => {
+    resetIniciarAdnRuntimeParaTestes();
+    resetConfigAdnIniciarParaTestes();
+  });
+
+  it('produto default: A1 → ADN sem Chromium (sem flags de piloto)', () => {
     const d = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_A,
       env: {},
     });
-    expect(d.executarAdn).toBe(false);
-    expect(d.abrirChromium).toBe(true);
-    expect(d.situacao).toBe('LEGADO_FLAG_OFF');
+    expect(d.executarAdn).toBe(true);
+    expect(d.abrirChromium).toBe(false);
+    expect(d.situacao).toBe('ADN_SOLICITADO');
   });
 
-  it('flag on + credenciais → Playwright (nunca ADN)', () => {
+  it('credenciais → Playwright (nunca ADN)', () => {
     const d = decidirAdnIniciar({
       tipoAutenticacao: 'credenciais',
       cnpj: CNPJ_A,
-      env: envFlagOnAllowA(),
+      env: envProduto(),
     });
     expect(d.executarAdn).toBe(false);
     expect(d.abrirChromium).toBe(true);
     expect(d.situacao).toBe('LEGADO_CREDENCIAIS');
   });
 
-  it('flag on + A1 fora da allowlist → Playwright', () => {
+  it('A1 na exceção Playwright → Chromium', () => {
+    setConfigAdnIniciarParaTestes({
+      ...configAdnIniciarPadrao(),
+      playwrightExcecaoCnpjs: [CNPJ_B],
+    });
     const d = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_B,
-      env: envFlagOnAllowA(),
+      env: {},
     });
     expect(d.executarAdn).toBe(false);
-    expect(d.situacao).toBe('LEGADO_EMPRESA_NAO_AUTORIZADA');
+    expect(d.abrirChromium).toBe(true);
+    expect(d.situacao).toBe('LEGADO_EXCECAO_PLAYWRIGHT');
   });
 
-  it('flag on + A1 na allowlist → ADN sem Chromium', () => {
+  it('kill-switch env false → Playwright mesmo com produto on', () => {
     const d = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_A,
-      env: envFlagOnAllowA(),
+      env: { [NOME_FLAG_ADN_INICIAR]: 'false' },
     });
-    expect(d.executarAdn).toBe(true);
-    expect(d.abrirChromium).toBe(false);
-    expect(d.modo).toBe('ADN');
+    expect(d.executarAdn).toBe(false);
+    expect(d.abrirChromium).toBe(true);
+    expect(d.situacao).toBe('LEGADO_KILL_SWITCH');
   });
 
-  it('autorização explícita por empresa ativa ADN', () => {
+  it('autorização explícita por empresa ativa ADN mesmo com exceção', () => {
+    setConfigAdnIniciarParaTestes({
+      ...configAdnIniciarPadrao(),
+      playwrightExcecaoCnpjs: [CNPJ_B],
+    });
     const d = decidirAdnIniciar({
       tipoAutenticacao: 'certificado',
       cnpj: CNPJ_B,
-      env: { [NOME_FLAG_ADN_INICIAR]: 'true' },
+      env: {},
       autorizacaoAdnIniciar: { ativa: true, cnpj: CNPJ_B },
     });
     expect(d.executarAdn).toBe(true);
@@ -304,12 +321,14 @@ describe('API-01S — Progresso fiscal ADN', () => {
 describe('API-01S — Três fluxos concorrentes (PQueue única)', () => {
   beforeEach(() => {
     resetIniciarAdnRuntimeParaTestes();
+    setConfigAdnIniciarParaTestes(configAdnIniciarPadrao());
     limparRetencaoProgressoFiscal();
     limparRevisoesProgressoFiscal();
   });
 
   afterEach(() => {
     resetIniciarAdnRuntimeParaTestes();
+    resetConfigAdnIniciarParaTestes();
   });
 
   it('Empresa A ADN + Empresa B Playwright sem interferência; A sem Chromium', async () => {
@@ -324,7 +343,7 @@ describe('API-01S — Três fluxos concorrentes (PQueue única)', () => {
         const d = decidirAdnIniciar({
           tipoAutenticacao: 'credenciais',
           cnpj: CNPJ_B,
-          env: envFlagOnAllowA(),
+          env: envProduto(),
         });
         expect(d.executarAdn).toBe(false);
         evidencias.push(await simularPlaywrightLegado({ empresa: 'B', cnpj: CNPJ_B }));
@@ -359,12 +378,9 @@ describe('API-01S — Três fluxos concorrentes (PQueue única)', () => {
     expect(porLote.some((s) => s.execucao_id === '1001')).toBe(true);
   });
 
-  it('flag desligada: A1 também vai para Playwright (rollback)', async () => {
+  it('kill-switch: A1 também vai para Playwright (rollback)', async () => {
     const ev = await simularFluxoAdnEmpresaA({
-      env: {
-        [NOME_FLAG_ADN_INICIAR]: 'false',
-        [NOME_ALLOWLIST_ADN_INICIAR]: CNPJ_A,
-      },
+      env: { [NOME_FLAG_ADN_INICIAR]: 'false' },
     });
     expect(ev.modo).toBe('PLAYWRIGHT');
     expect(ev.chromiumAberto).toBe(true);
