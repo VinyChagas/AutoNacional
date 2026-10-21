@@ -24,6 +24,7 @@ import {
   listarEmpresasAptas,
 } from '../services/execution-summary.service';
 import { type CaptchaMode } from '../automation/captcha/types';
+import { resolverOpcoesAuthPorEmpresa } from '../services/execution-auth-options';
 import { z } from 'zod';
 
 const logger = getLogger('execucao');
@@ -200,22 +201,33 @@ router.post('/multiplas', async (req: Request, res: Response) => {
     }
 
     const primeiro = validos[0];
+    const opcoesPrimeiro = resolverOpcoesAuthPorEmpresa(
+      primeiro.tipoAuth,
+      headless,
+      captchaMode
+    );
     const execucaoId = await adicionarExecucao(
       primeiro.empresaId,
       primeiro.cnpj,
       dataInicio!,
       dataFim!,
       tipo,
-      headless,
+      opcoesPrimeiro.headless,
       undefined,
       batchId,
       primeiro.tipoAuth,
       baixarPdf,
-      captchaMode
+      opcoesPrimeiro.captchaMode
     );
     const status = obterStatus(String(primeiro.empresaId));
 
     logger.debug(`[producer] enfileirou empresa ${primeiro.empresaId} (1/${validos.length})`);
+
+    const loteUsaCaptchaManual = validos.some((v) => v.tipoAuth === 'credenciais');
+    /** Compat FE: MANUAL se houver credenciais no lote; senão modo A1 do lote. */
+    const captchaModeResposta: CaptchaMode = loteUsaCaptchaManual
+      ? 'MANUAL'
+      : captchaMode;
 
     const execucoes: Array<Record<string, unknown>> = validos.map((v, idx) => {
       if (idx === 0) {
@@ -227,6 +239,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
           etapa_atual: status?.etapa_atual || 'inicio',
           progresso: status?.progresso ?? 0,
           logs: status?.logs || [],
+          tipo_autenticacao: primeiro.tipoAuth,
         };
       }
       return {
@@ -236,6 +249,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
         etapa_atual: 'inicio',
         progresso: 0,
         logs: [],
+        tipo_autenticacao: v.tipoAuth,
       };
     });
 
@@ -248,13 +262,14 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       detalhes_erros: erros,
       concurrency_final: concurrencyFinal,
       delayMs,
-      captchaMode,
+      captchaMode: captchaModeResposta,
     });
 
     (async () => {
       for (let i = 1; i < validos.length; i++) {
         await sleep(delayMs);
         const { empresaId, cnpj, tipoAuth } = validos[i];
+        const opcoes = resolverOpcoesAuthPorEmpresa(tipoAuth, headless, captchaMode);
         try {
           await adicionarExecucao(
             empresaId,
@@ -262,12 +277,12 @@ router.post('/multiplas', async (req: Request, res: Response) => {
             dataInicio!,
             dataFim!,
             tipo,
-            headless,
+            opcoes.headless,
             undefined,
             batchId,
             tipoAuth,
             baixarPdf,
-            captchaMode
+            opcoes.captchaMode
           );
           logger.debug(`[producer] enfileirou empresa ${empresaId} (${i + 1}/${validos.length})`);
         } catch (e) {

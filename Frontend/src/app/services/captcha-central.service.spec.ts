@@ -36,13 +36,28 @@ describe('ManualCaptchaRequest contrato', () => {
   });
 });
 
-describe('Regras da tela de execução (captchaMode)', () => {
-  it('botão da Central só com MANUAL + batchId', () => {
-    const podeAbrir = (captchaMode: string, batchId: string | null) =>
-      captchaMode === 'MANUAL' && !!batchId;
-    expect(podeAbrir('TWO_CAPTCHA', 'uuid')).toBe(false);
-    expect(podeAbrir('MANUAL', null)).toBe(false);
-    expect(podeAbrir('MANUAL', 'uuid')).toBe(true);
+describe('Regras da tela de execução (UI-01c Central)', () => {
+  /** Espelha podeAbrirCentralCaptchas: batch + (credenciais | aguardando). */
+  function podeAbrirCentral(
+    batchId: string | null,
+    temCredenciais: boolean,
+    aguardandoCaptcha: boolean
+  ): boolean {
+    if (!batchId) return false;
+    return temCredenciais || aguardandoCaptcha;
+  }
+
+  it('abre Central com credenciais no lote + batchId', () => {
+    expect(podeAbrirCentral('uuid', true, false)).toBe(true);
+    expect(podeAbrirCentral(null, true, false)).toBe(false);
+  });
+
+  it('lote só A1 sem aguardar captcha — Central fechada', () => {
+    expect(podeAbrirCentral('uuid', false, false)).toBe(false);
+  });
+
+  it('abre Central se alguma linha aguarda captcha', () => {
+    expect(podeAbrirCentral('uuid', false, true)).toBe(true);
   });
 
   it('Resolver exige token', () => {

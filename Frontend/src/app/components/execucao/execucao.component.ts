@@ -67,13 +67,14 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   buscaEmpresa: string = ''; // Campo de busca por nome da empresa
   
   carregandoCertificados = false;
+  /** Preferência de headless para empresas A1 (credenciais ignoram e forçam visível). */
   headlessMode = false;
   dataInicio: string = ''; // Formato DD/MM/YYYY (ex: 01/12/2025)
   dataFim: string = ''; // Formato DD/MM/YYYY (ex: 31/12/2025)
-  tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
-  baixarPdf = true; // true = XML + PDF (DANFS-e); false = apenas XML
-  /** Modo de resolução de captcha do lote (padrão: 2Captcha). */
-  captchaMode: 'TWO_CAPTCHA' | 'MANUAL' = 'TWO_CAPTCHA';
+  /** UI-01c: sempre ambas (emitidas + recebidas); sem seletor na UI. */
+  readonly tipoNotas: 'ambas' = 'ambas';
+  /** UI-01c: prioriza XML; PDF legado não removido no Backend. */
+  readonly baixarPdf = false;
 
   // Formata data enquanto o usuário digita (DD/MM/YYYY)
   formatarData(event: Event, tipo: 'inicio' | 'fim') {
@@ -475,8 +476,19 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     ).length;
   }
 
+  /**
+   * Central de CAPTCHA: lote com credenciais (CAPTCHA manual por empresa)
+   * ou alguma linha aguardando captcha.
+   */
   get podeAbrirCentralCaptchas(): boolean {
-    return this.captchaMode === 'MANUAL' && !!this.batchId;
+    if (!this.batchId) return false;
+    const temCredenciais = this.execucoes.some(
+      (e) => e.tipoAutenticacao === 'credenciais'
+    );
+    const aguardando = this.executionRows.some(
+      (r) => r.status === 'AGUARDANDO_CAPTCHA'
+    );
+    return temCredenciais || aguardando;
   }
 
   abrirCentralCaptchas(): void {
@@ -765,15 +777,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.carregandoCertificados = true;
 
     try {
+      // UI-01c: tipo/baixarPdf fixos; headless = preferência A1;
+      // captchaMode/headless por empresa resolvidos no Backend via tipo_autenticacao.
       const request: MultiplasExecucoesRequest = {
         empresas: empresas,
         dataInicio: this.dataInicio,
         dataFim: this.dataFim,
-        tipo: this.tipoNotas,
+        tipo: 'ambas',
         headless: this.headlessMode,
-        baixarPdf: this.baixarPdf,
+        baixarPdf: false,
         contabilidade_id: this.contabilidadeSelecionada ?? undefined,
-        captchaMode: this.captchaMode,
       };
 
       console.log('[Iniciar] Enviando requisição ao backend:', JSON.stringify(request, null, 2));

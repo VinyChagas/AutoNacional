@@ -169,32 +169,14 @@
             class="input-text"
           />
         </div>
-        <div class="field-group">
-          <label for="tipoNotas">Tipo</label>
-          <select id="tipoNotas" [(ngModel)]="tipoNotas" class="input-select">
-            <option value="ambas">Ambas</option>
-            <option value="emitidas">Emitidas</option>
-            <option value="recebidas">Recebidas</option>
-          </select>
-        </div>
         <div class="field-group field-group-checkbox">
-          <label class="checkbox-wrap" title="Marcado: baixa XML + PDF (DANFS-e). Desmarcado: baixa somente o XML.">
-            <input type="checkbox" id="baixarPdf" [(ngModel)]="baixarPdf" class="checkbox-input" />
-            <span>Baixar PDF (DANFS-e)</span>
-          </label>
-        </div>
-        <div class="field-group field-group-checkbox">
-          <label class="checkbox-wrap">
+          <label
+            class="checkbox-wrap"
+            title="Preferência para empresas com certificado A1. Credenciais sempre abrem o navegador."
+          >
             <input type="checkbox" id="headless" [(ngModel)]="headlessMode" class="checkbox-input" />
             <span>Modo Headless</span>
           </label>
-        </div>
-        <div class="field-group field-group-captcha">
-          <label for="captchaMode">Modo de resolução de captcha</label>
-          <select id="captchaMode" [(ngModel)]="captchaMode" class="input-select" [disabled]="temExecucoesEmAndamento">
-            <option value="TWO_CAPTCHA">Automático — 2Captcha</option>
-            <option value="MANUAL">Manual — Central de Captchas</option>
-          </select>
         </div>
       </div>
     </section>
