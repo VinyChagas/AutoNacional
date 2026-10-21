@@ -46,6 +46,7 @@ import {
   tentarFluxoNativoControlado,
 } from '../automation/nfse/orchestration';
 import { criarPeriodoConsultaPortal } from '../automation/nfse/contracts/periodo';
+import { discoverNfse } from '../automation/nfse/discovery/discovery-service';
 import { avaliarPonteHomologacaoDiscoveryOnly } from '../automation/nfse/homologacao';
 
 const logger = getLogger('execution-service');
@@ -803,15 +804,15 @@ async function executarFluxoCompleto(
     info.progresso = 40;
     adicionarLog(`Processando notas (${tipo})...`);
 
-    // H2.2.2-A — canal + Discovery-Only. Sem canal/ticket = legado idêntico.
-    // Gate fechado por padrão: BLOQUEADA sem consumo/descoberta. Sem discoverNfse no caminho operacional.
+    // H2.2.2-B — discoverNfse injetado; só executa com ticket + ativação individual.
+    // Sem canal/ticket = legado. Sem ativação = BLOQUEADA (gate global fechado e insuficiente sozinho).
     const ponteHomologacao = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: String(execucaoDbId),
       cnpj,
       periodoConsulta: criarPeriodoConsultaPortal(dataInicio, dataFim),
       pagePresente: Boolean(page),
       page,
-      // discover omitido de propósito: gate fechado; caminho autorizado só em testes offline.
+      discover: discoverNfse,
     });
 
     if (ponteHomologacao.encerrarEtapaFiscal) {
@@ -823,7 +824,7 @@ async function executarFluxoCompleto(
       });
       info.mensagem = ponteHomologacao.motivo;
       adicionarLog(
-        `Homologação H2.2.2-A: ${ponteHomologacao.situacao}/${ponteHomologacao.estadoOperacional ?? 'n/a'} ` +
+        `Homologação H2.2.2-B: ${ponteHomologacao.situacao}/${ponteHomologacao.estadoOperacional ?? 'n/a'} ` +
           `auth=${ponteHomologacao.autorizacaoId ?? 'n/a'} cnpj=${ponteHomologacao.cnpjMascarado} ` +
           `ticketConsumido=${ponteHomologacao.ticketConsumido} ` +
           `descobertaExecutada=${ponteHomologacao.descobertaExecutada} — sem legado.`

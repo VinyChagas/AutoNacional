@@ -63,7 +63,8 @@ describe('H2.2.1 canal de autorização operacional', () => {
     expect(r.situacao).toBe('PREPARADA_GATE_FECHADO');
     expect(r.estadoOperacional).toBe('BLOQUEADA');
     expect(r.encerrarEtapaFiscal).toBe(true);
-    expect(r.codigoErro).toBe('GATE_EXECUCAO_FECHADO');
+    // H2.2.2-B: bloqueio explícito por ausência de ativação individual (gate permanece fechado).
+    expect(r.codigoErro).toBe('ATIVACAO_INDIVIDUAL_AUSENTE');
     expect(r.ticketConsumido).toBe(false);
     expect(r.descobertaExecutada).toBe(false);
     expect(r.efeitosProibidos.navegacaoPortal).toBe(false);
@@ -597,7 +598,7 @@ describe('H2.2.1 canal de autorização operacional', () => {
     });
     expect(r.descobertaExecutada).toBe(false);
     expect(r.ticketConsumido).toBe(false);
-    expect(r.codigoErro).toBe('GATE_EXECUCAO_FECHADO');
+    expect(r.codigoErro).toBe('ATIVACAO_INDIVIDUAL_AUSENTE');
     expect(r.estadoOperacional).toBe('BLOQUEADA');
     expect(r.efeitosProibidos).toMatchObject({
       sefin: false,

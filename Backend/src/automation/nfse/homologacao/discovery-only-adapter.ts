@@ -5,8 +5,8 @@
  * Propaga AbortSignal + timeout cooperativo até a descoberta (por página).
  * Não cancela Playwright em voo — apenas impede novas etapas.
  *
- * Isolamento: não ligado ao execution-service. Sem canal seguro H1, inacessível
- * às execuções normais.
+ * Isolamento: exige autorização H1 + ticket com ativação individual (H2.2.2-B).
+ * discoverNfse pode estar injetado no execution-service; sem ativação não executa.
  */
 import type { Page } from 'playwright';
 import type { DocumentoFiscalNfse } from '../contracts/documento-fiscal';

@@ -16,6 +16,9 @@ export type EstadoTicketAutorizacao = (typeof ESTADOS_TICKET_AUTORIZACAO)[number
 /**
  * Ticket operacional: autorização H1 + identificador único + estado de consumo.
  * Somente DISCOVERY_ONLY é aceito neste canal.
+ *
+ * `ativacaoDiscoveryReal`: habilitação EXPLÍCITA e individual desta execução.
+ * Gate global aberto NÃO basta — sem este flag a descoberta permanece BLOQUEADA.
  */
 export interface TicketAutorizacaoOperacional {
   readonly versao: 1;
@@ -23,6 +26,10 @@ export interface TicketAutorizacaoOperacional {
   readonly autorizacao: AutorizacaoHomologacaoNfse;
   readonly estado: EstadoTicketAutorizacao;
   readonly emitidoEm: string;
+  /** Ativação individual rastreável para Discovery-Only real. Default: false. */
+  readonly ativacaoDiscoveryReal: boolean;
+  readonly ativacaoMotivo?: string;
+  readonly ativacaoEm?: string;
   readonly consumidoEm?: string;
   readonly motivoConsumo?: string;
 }
@@ -47,9 +54,17 @@ export interface ResultadoConsumoAutorizacao {
   readonly consumidoAgora: boolean;
 }
 
+export type TicketEmissaoEntrada = Omit<
+  TicketAutorizacaoOperacional,
+  'estado' | 'consumidoEm' | 'motivoConsumo' | 'ativacaoDiscoveryReal' | 'ativacaoMotivo' | 'ativacaoEm'
+> & {
+  readonly ativacaoDiscoveryReal?: boolean;
+  readonly ativacaoMotivo?: string;
+};
+
 export interface CanalAutorizacaoHomologacao {
   /** Emite ticket DISPONIVEL. Recusa SEFIN e genéricos. */
-  emitir(ticket: Omit<TicketAutorizacaoOperacional, 'estado' | 'consumidoEm' | 'motivoConsumo'>): Promise<TicketAutorizacaoOperacional>;
+  emitir(ticket: TicketEmissaoEntrada): Promise<TicketAutorizacaoOperacional>;
   /** Consulta sem consumir. */
   consultar(execucaoId: string): Promise<TicketAutorizacaoOperacional | null>;
   /**
@@ -59,6 +74,15 @@ export interface CanalAutorizacaoHomologacao {
   validarSemConsumir(
     execucaoId: string,
     contexto: ContextoConsumoAutorizacao
+  ): Promise<TicketAutorizacaoOperacional>;
+  /**
+   * Ativa Discovery-Only real somente neste ticket (DISPONIVEL).
+   * Não abre gate global; não afeta outras execuções.
+   */
+  ativarDiscoveryReal(
+    autorizacaoId: string,
+    motivo: string,
+    agora?: Date
   ): Promise<TicketAutorizacaoOperacional>;
   /**
    * Consome atomicamente uma única vez (somente para execução real — H2.2.2+).

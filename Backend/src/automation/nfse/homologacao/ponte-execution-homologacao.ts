@@ -1,8 +1,9 @@
 /**
- * Ponte operacional H2.2.2-A: canal + Discovery-Only + evidências.
+ * Ponte operacional H2.2.2-B: canal + ativação individual + Discovery-Only + evidências.
  *
- * Gate fechado (padrão): valida ticket SEM consumir → BLOQUEADA; sem descoberta.
- * Gate aberto (somente injeção de teste): consome 1× → executa DISCOVERY_ONLY → encerra sem legado.
+ * Gate global permanece FECHADO por padrão e NÃO autoriza descoberta sozinho.
+ * Descoberta real exige ticket DISCOVERY_ONLY válido + ativacaoDiscoveryReal
+ * + Page autenticada + discover injetado; consome 1× antes da descoberta; sem legado.
  *
  * Nunca SEFIN / XML / checkpoint / segundo browser/login.
  */
@@ -41,9 +42,9 @@ export interface EntradaPonteHomologacao {
   readonly cnpj: string;
   readonly periodoConsulta: PeriodoConsultaPortal;
   readonly pagePresente: boolean;
-  /** Page autenticada — usada só com gate aberto + discover injetado. */
+  /** Page autenticada da execução — reutilizada; nunca abre novo browser. */
   readonly page?: Page | null;
-  /** Obrigatório para caminho autorizado (testes). Sem default para discoverNfse real. */
+  /** discoverNfse (ou mock). Sem default interno no adaptador. */
   readonly discover?: DiscoverNfseInjetavel;
   readonly signal?: AbortSignal;
   readonly persistirEvidencias?: boolean;
@@ -89,7 +90,9 @@ const EFEITOS_BLOQUEADO = {
 } as const;
 
 /**
- * Avalia / executa homologação DISCOVERY_ONLY conforme o gate.
+ * Avalia / executa homologação DISCOVERY_ONLY.
+ * Autorização suficiente = ticket válido + ativação individual desta execução.
+ * Gate global aberto sozinho → BLOQUEADA (não basta).
  */
 export async function avaliarPonteHomologacaoDiscoveryOnly(
   entrada: EntradaPonteHomologacao
@@ -182,96 +185,139 @@ export async function avaliarPonteHomologacaoDiscoveryOnly(
     });
   }
 
-  // ---------- GATE FECHADO: validar sem consumir → BLOQUEADA ----------
-  if (!gateAberto) {
-    try {
-      const ticketValidado = await canal.validarSemConsumir(entrada.execucaoId, contexto);
-      evidencias.push(
-        ev(
-          entrada,
-          'ponte_preparada_gate_fechado',
-          {
-            autorizacaoId: ticketValidado.autorizacaoId,
-            estadoTicket: ticketValidado.estado,
-            ticketConsumido: false,
-            descobertaExecutada: false,
-            estadoOperacional: 'BLOQUEADA',
-            vereditoPass: false,
-            coberturaFiscal: false,
-            discoverNfse: false,
-            sefin: false,
-          },
-          agora
-        )
-      );
-      return base({
-        situacao: 'PREPARADA_GATE_FECHADO',
-        estadoOperacional: 'BLOQUEADA',
-        encerrarEtapaFiscal: true,
-        motivo:
-          'Ticket validado sem consumo; gate fechado — BLOQUEADA (sem descoberta, SEFIN, XML ou PASS).',
-        codigoErro: 'GATE_EXECUCAO_FECHADO',
-        autorizacaoId: ticketValidado.autorizacaoId,
-        ticket: ticketValidado,
-        ticketConsumido: false,
-        descobertaExecutada: false,
-      });
-    } catch (erro) {
-      const codigo =
-        erro instanceof HomologacaoNfseError ? erro.codigo : ('CONTEXTO_INVALIDO' as const);
-      evidencias.push(
-        ev(
-          entrada,
-          'ponte_validacao_recusada',
-          {
-            codigo,
-            ticketConsumido: false,
-            descobertaExecutada: false,
-          },
-          agora
-        )
-      );
-      return base({
-        situacao: 'RECUSADA',
-        estadoOperacional: 'FALHA',
-        encerrarEtapaFiscal: true,
-        motivo: `Validação recusada (${codigo}); ticket não consumido; sem legado.`,
-        codigoErro: codigo,
-        autorizacaoId: ticketExistente.autorizacaoId,
-        ticket: ticketExistente,
-      });
-    }
-  }
-
-  // ---------- GATE ABERTO (somente teste injetado): consumir + Discovery-Only ----------
-  if (!entrada.discover) {
+  // ---------- Validação sem consumo ----------
+  let ticketValidado: TicketAutorizacaoOperacional;
+  try {
+    ticketValidado = await canal.validarSemConsumir(entrada.execucaoId, contexto);
+  } catch (erro) {
+    const codigo =
+      erro instanceof HomologacaoNfseError ? erro.codigo : ('CONTEXTO_INVALIDO' as const);
     evidencias.push(
-      ev(entrada, 'ponte_discover_ausente', { gateAberto: true }, agora)
+      ev(
+        entrada,
+        'ponte_validacao_recusada',
+        {
+          codigo,
+          ticketConsumido: false,
+          descobertaExecutada: false,
+        },
+        agora
+      )
     );
     return base({
       situacao: 'RECUSADA',
       estadoOperacional: 'FALHA',
       encerrarEtapaFiscal: true,
-      motivo: 'Gate aberto sem discover injetado; descoberta recusada (sem default real).',
-      codigoErro: 'CONTEXTO_INVALIDO',
+      motivo: `Validação recusada (${codigo}); ticket não consumido; sem legado.`,
+      codigoErro: codigo,
       autorizacaoId: ticketExistente.autorizacaoId,
       ticket: ticketExistente,
     });
   }
 
-  if (!entrada.page) {
-    evidencias.push(ev(entrada, 'ponte_page_objeto_ausente', { gateAberto: true }, agora));
+  // ---------- Gate global aberto sozinho NÃO autoriza ----------
+  if (gateAberto && !ticketValidado.ativacaoDiscoveryReal) {
+    evidencias.push(
+      ev(
+        entrada,
+        'ponte_gate_insuficiente_sem_ativacao',
+        {
+          autorizacaoId: ticketValidado.autorizacaoId,
+          gateAberto: true,
+          ativacaoDiscoveryReal: false,
+          ticketConsumido: false,
+          descobertaExecutada: false,
+          estadoOperacional: 'BLOQUEADA',
+        },
+        agora
+      )
+    );
+    return base({
+      situacao: 'BLOQUEADA_GATE_REAL',
+      estadoOperacional: 'BLOQUEADA',
+      encerrarEtapaFiscal: true,
+      motivo:
+        'Gate global aberto é insuficiente sem ativação individual do ticket; BLOQUEADA.',
+      codigoErro: 'ATIVACAO_INDIVIDUAL_AUSENTE',
+      autorizacaoId: ticketValidado.autorizacaoId,
+      ticket: ticketValidado,
+      ticketConsumido: false,
+      descobertaExecutada: false,
+    });
+  }
+
+  // ---------- Sem ativação individual → BLOQUEADA (gate permanece fechado) ----------
+  if (!ticketValidado.ativacaoDiscoveryReal) {
+    evidencias.push(
+      ev(
+        entrada,
+        'ponte_preparada_gate_fechado',
+        {
+          autorizacaoId: ticketValidado.autorizacaoId,
+          estadoTicket: ticketValidado.estado,
+          gateAberto: false,
+          ativacaoDiscoveryReal: false,
+          ticketConsumido: false,
+          descobertaExecutada: false,
+          estadoOperacional: 'BLOQUEADA',
+          vereditoPass: false,
+          coberturaFiscal: false,
+          discoverNfse: false,
+          sefin: false,
+        },
+        agora
+      )
+    );
+    return base({
+      situacao: 'PREPARADA_GATE_FECHADO',
+      estadoOperacional: 'BLOQUEADA',
+      encerrarEtapaFiscal: true,
+      motivo:
+        'Ticket validado sem consumo; ativação individual ausente — BLOQUEADA (sem descoberta).',
+      codigoErro: 'ATIVACAO_INDIVIDUAL_AUSENTE',
+      autorizacaoId: ticketValidado.autorizacaoId,
+      ticket: ticketValidado,
+      ticketConsumido: false,
+      descobertaExecutada: false,
+    });
+  }
+
+  if (!entrada.discover) {
+    evidencias.push(
+      ev(
+        entrada,
+        'ponte_discover_ausente',
+        { ativacaoDiscoveryReal: true, autorizacaoId: ticketValidado.autorizacaoId },
+        agora
+      )
+    );
     return base({
       situacao: 'RECUSADA',
       estadoOperacional: 'FALHA',
       encerrarEtapaFiscal: true,
-      motivo: 'Gate aberto sem objeto Page; descoberta recusada.',
+      motivo: 'Ativação individual sem discover injetado; descoberta recusada.',
       codigoErro: 'CONTEXTO_INVALIDO',
-      autorizacaoId: ticketExistente.autorizacaoId,
-      ticket: ticketExistente,
+      autorizacaoId: ticketValidado.autorizacaoId,
+      ticket: ticketValidado,
     });
   }
 
+  if (!entrada.page) {
+    evidencias.push(
+      ev(entrada, 'ponte_page_objeto_ausente', { ativacaoDiscoveryReal: true }, agora)
+    );
+    return base({
+      situacao: 'RECUSADA',
+      estadoOperacional: 'FALHA',
+      encerrarEtapaFiscal: true,
+      motivo: 'Ativação individual sem objeto Page; descoberta recusada.',
+      codigoErro: 'CONTEXTO_INVALIDO',
+      autorizacaoId: ticketValidado.autorizacaoId,
+      ticket: ticketValidado,
+    });
+  }
+
+  // ---------- Consumir 1× ANTES da descoberta (falha/timeout/cancel não liberam) ----------
   let consumo;
   try {
     consumo = await canal.consumir(entrada.execucaoId, contexto, 'EXECUCAO_REAL');
@@ -287,8 +333,8 @@ export async function avaliarPonteHomologacaoDiscoveryOnly(
       encerrarEtapaFiscal: true,
       motivo: `Consumo recusado (${codigo}); sem fallback legado.`,
       codigoErro: codigo,
-      autorizacaoId: ticketExistente.autorizacaoId,
-      ticket: ticketExistente,
+      autorizacaoId: ticketValidado.autorizacaoId,
+      ticket: ticketValidado,
       ticketConsumido: false,
     });
   }
@@ -300,6 +346,8 @@ export async function avaliarPonteHomologacaoDiscoveryOnly(
       {
         autorizacaoId: consumo.ticket.autorizacaoId,
         motivoConsumo: consumo.ticket.motivoConsumo ?? null,
+        ativacaoMotivo: consumo.ticket.ativacaoMotivo ?? null,
+        ativacaoEm: consumo.ticket.ativacaoEm ?? null,
       },
       agora
     )
@@ -405,6 +453,7 @@ export async function avaliarPonteHomologacaoDiscoveryOnly(
         estadoInventario: resultadoDiscovery.estadoInventario,
         ticketConsumido: true,
         descobertaExecutada: true,
+        ativacaoDiscoveryReal: true,
         coberturaFiscal:
           resultadoDiscovery.veredito === 'PASS' &&
           resultadoDiscovery.estadoInventario === 'COMPLETO',

@@ -33,6 +33,7 @@ export {
 export type {
   CanalAutorizacaoHomologacao,
   TicketAutorizacaoOperacional,
+  TicketEmissaoEntrada,
   ContextoConsumoAutorizacao,
   MotivoConsumoAutorizacao,
   EstadoTicketAutorizacao,

@@ -81,10 +81,9 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
     expect((await canal.consultar('exec-222a'))?.estado).toBe('DISPONIVEL');
   });
 
-  it('03 ticket válido + gate teste → CONCLUIDA', async () => {
+  it('03 ticket válido + ativação individual → CONCLUIDA', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -176,10 +175,9 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
     expect(r.encerrarEtapaFiscal).toBe(false);
   });
 
-  it('09 consumo único com gate teste', async () => {
+  it('09 consumo único com ativação individual', async () => {
     const dir = await dirTmp();
-    const canal = await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    const canal = await prepararCanal(dir, {}, { ativar: true });
     const r1 = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -225,8 +223,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('11 Page autenticada injetada (mesma referência)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const pages: Page[] = [];
     const discover: DiscoverNfseInjetavel = async (input) => {
       pages.push(input.page);
@@ -252,8 +249,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('12 emitidas contabilizadas', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -272,8 +268,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('13 recebidas contabilizadas', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -292,8 +287,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('14 paginação: orçamento global de páginas', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir, { maxPaginas: 5 });
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, { maxPaginas: 5 }, { ativar: true });
     const maxes: number[] = [];
     const discover: DiscoverNfseInjetavel = async (input) => {
       maxes.push(input.maxPaginas ?? -1);
@@ -319,8 +313,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('15 inventário completo → CONCLUIDA', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -337,8 +330,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('16 inventário incompleto → INCOMPLETA (sem PASS)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir, { maxPaginas: 1 });
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, { maxPaginas: 1 }, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -362,8 +354,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('17 cancelamento → CANCELADA', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const ac = new AbortController();
     ac.abort();
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
@@ -383,8 +374,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('18 timeout → INCOMPLETA', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir, { timeoutMs: 100 });
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, { timeoutMs: 100 }, { ativar: true });
     let tick = AGORA.getTime();
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
@@ -413,8 +403,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('19 falha de descoberta → FALHA', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -438,10 +427,9 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('20 falha de persistência → FALHA (não aprovada)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
+    await prepararCanal(dir, {}, { ativar: true });
     // Bloqueia pasta homologacao tornando-a arquivo
     await writeFile(path.join(dir, 'homologacao'), 'bloqueio', 'utf8');
-    definirGateExecucaoRealSomenteTeste(true);
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -458,8 +446,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('21 evidência íntegra (sanitizada, sem sobrescrita)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -482,8 +469,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('22 ausência de SEFIN', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -500,8 +486,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('23 ausência de XML', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -517,8 +502,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('24 ausência de checkpoint', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -534,8 +518,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('25 ausência de execução dupla (encerrarEtapaFiscal)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -567,8 +550,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('27 limpeza de recursos (canal null + gate null)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
-    definirGateExecucaoRealSomenteTeste(true);
+    await prepararCanal(dir, {}, { ativar: true });
     configurarCanalHomologacaoOperacional(null);
     definirGateExecucaoRealSomenteTeste(null);
     const r = await avaliarPonteHomologacaoDiscoveryOnly({
@@ -582,7 +564,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
     expect(r.situacao).toBe('SEM_AUTORIZACAO');
   });
 
-  it('28 nenhuma navegação real com gate fechado', async () => {
+  it('28 nenhuma navegação real sem ativação individual', async () => {
     const dir = await dirTmp();
     await prepararCanal(dir);
     let chamadas = 0;
@@ -615,7 +597,7 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
 
   it('30 nenhum PASS indevido (incompleto / bloqueada)', async () => {
     const dir = await dirTmp();
-    await prepararCanal(dir);
+    const canal = await prepararCanal(dir);
     const bloqueada = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -627,7 +609,8 @@ describe('H2.2.2-A integração Discovery-Only offline', () => {
     expect(bloqueada.estadoOperacional).toBe('BLOQUEADA');
     expect(bloqueada.resultadoDiscovery).toBeNull();
 
-    definirGateExecucaoRealSomenteTeste(true);
+    const ticket = await canal.consultar('exec-222a');
+    await canal.ativarDiscoveryReal(ticket!.autorizacaoId, 'teste-h222a-incompleto', AGORA);
     const incompleta = await avaliarPonteHomologacaoDiscoveryOnly({
       execucaoId: 'exec-222a',
       cnpj: CNPJ,
@@ -664,7 +647,8 @@ async function dirTmp(): Promise<string> {
 
 async function prepararCanal(
   dir: string,
-  limites: Partial<{ maxPaginas: number; maxDocumentos: number; timeoutMs: number }> = {}
+  limites: Partial<{ maxPaginas: number; maxDocumentos: number; timeoutMs: number }> = {},
+  opts: { ativar?: boolean } = {}
 ): Promise<CanalAutorizacaoHomologacao> {
   const canal = criarCanalAutorizacaoMemoria();
   configurarCanalHomologacaoOperacional(canal);
@@ -684,12 +668,15 @@ async function prepararCanal(
     motivo: 'teste-h222a',
     agora: AGORA,
   });
-  await canal.emitir({
+  const ticket = await canal.emitir({
     versao: 1,
     autorizacaoId: criarAutorizacaoId(),
     autorizacao: auth,
     emitidoEm: AGORA.toISOString(),
   });
+  if (opts.ativar) {
+    await canal.ativarDiscoveryReal(ticket.autorizacaoId, 'teste-h222a-ativacao', AGORA);
+  }
   return canal;
 }
 

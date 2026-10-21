@@ -2,7 +2,8 @@
  * Gate de execução real DISCOVERY_ONLY.
  * Fechado por padrão — sem env, endpoint ou ativação operacional.
  *
- * H2.2.2-A: caminho autorizado só via injeção controlada em testes offline.
+ * H2.2.2-B: gate aberto sozinho NÃO autoriza descoberta.
+ * Autorização suficiente = ticket + ativacaoDiscoveryReal individual.
  */
 
 /** Constante auditável: execução real desabilitada por padrão. */

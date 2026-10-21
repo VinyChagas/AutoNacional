@@ -21,6 +21,7 @@ import type {
   ContextoConsumoAutorizacao,
   MotivoConsumoAutorizacao,
   ResultadoConsumoAutorizacao,
+  TicketEmissaoEntrada,
   TicketAutorizacaoOperacional,
 } from './canal-autorizacao-types';
 
@@ -41,9 +42,7 @@ export function criarAutorizacaoId(): string {
   return `auth-${randomUUID()}`;
 }
 
-function validarTicketEmissao(
-  parcial: Omit<TicketAutorizacaoOperacional, 'estado' | 'consumidoEm' | 'motivoConsumo'>
-): TicketAutorizacaoOperacional {
+function validarTicketEmissao(parcial: TicketEmissaoEntrada): TicketAutorizacaoOperacional {
   if (!parcial.autorizacaoId?.trim()) {
     throw new HomologacaoNfseError('AUTORIZACAO_MALFORMADA', 'autorizacaoId ausente.');
   }
@@ -69,12 +68,29 @@ function validarTicketEmissao(
     throw new HomologacaoNfseError('AUTORIZACAO_MALFORMADA', 'Campos vinculados ausentes.');
   }
   void generico;
+
+  const ativacaoDiscoveryReal = parcial.ativacaoDiscoveryReal === true;
+  if (ativacaoDiscoveryReal && !parcial.ativacaoMotivo?.trim()) {
+    throw new HomologacaoNfseError(
+      'AUTORIZACAO_MALFORMADA',
+      'Ativação Discovery-Only real na emissão exige ativacaoMotivo rastreável.'
+    );
+  }
+
+  const emitidoEm = parcial.emitidoEm || new Date().toISOString();
   return {
     versao: 1,
     autorizacaoId: parcial.autorizacaoId.trim(),
     autorizacao: auth,
     estado: 'DISPONIVEL',
-    emitidoEm: parcial.emitidoEm || new Date().toISOString(),
+    emitidoEm,
+    ativacaoDiscoveryReal,
+    ...(ativacaoDiscoveryReal
+      ? {
+          ativacaoMotivo: parcial.ativacaoMotivo!.trim().slice(0, 200),
+          ativacaoEm: emitidoEm,
+        }
+      : {}),
   };
 }
 
@@ -139,6 +155,39 @@ export function criarCanalAutorizacaoMemoria(): CanalAutorizacaoHomologacao {
       // Somente leitura: não altera estado (mesmo em falha de vínculo).
       validarContextoConsumo(ticket, contexto);
       return ticket;
+    },
+
+    async ativarDiscoveryReal(autorizacaoId, motivo, agora) {
+      return comMutex(async () => {
+        const ticket = porId.get(autorizacaoId);
+        if (!ticket) {
+          throw new HomologacaoNfseError('AUTORIZACAO_AUSENTE', 'Ticket ausente para ativação.');
+        }
+        if (ticket.estado !== 'DISPONIVEL') {
+          throw new HomologacaoNfseError(
+            'AUTORIZACAO_JA_CONSUMIDA',
+            `Ticket em estado ${ticket.estado}; ativação recusada.`
+          );
+        }
+        if (!motivo?.trim()) {
+          throw new HomologacaoNfseError(
+            'AUTORIZACAO_MALFORMADA',
+            'Motivo de ativação individual obrigatório.'
+          );
+        }
+        if (ticket.ativacaoDiscoveryReal) {
+          return ticket;
+        }
+        const ativado: TicketAutorizacaoOperacional = {
+          ...ticket,
+          ativacaoDiscoveryReal: true,
+          ativacaoMotivo: motivo.trim().slice(0, 200),
+          ativacaoEm: (agora ?? new Date()).toISOString(),
+        };
+        porId.set(autorizacaoId, ativado);
+        porExecucao.set(ticket.autorizacao.execucaoId, ativado);
+        return ativado;
+      });
     },
 
     async consumir(execucaoId, contexto, motivo) {
@@ -283,6 +332,40 @@ export function criarCanalAutorizacaoArquivo(storeRoot: string): CanalAutorizaca
       const ticket = await lerTicket(caminhoTicket(autorizacaoId, base));
       validarContextoConsumo(ticket, contexto);
       return ticket;
+    },
+
+    async ativarDiscoveryReal(autorizacaoId, motivo, agora) {
+      const base = await raiz();
+      const arquivo = caminhoTicket(autorizacaoId, base);
+      let ticket: TicketAutorizacaoOperacional;
+      try {
+        ticket = await lerTicket(arquivo);
+      } catch {
+        throw new HomologacaoNfseError('AUTORIZACAO_AUSENTE', 'Ticket ausente para ativação.');
+      }
+      if (ticket.estado !== 'DISPONIVEL') {
+        throw new HomologacaoNfseError(
+          'AUTORIZACAO_JA_CONSUMIDA',
+          `Ticket em estado ${ticket.estado}; ativação recusada.`
+        );
+      }
+      if (!motivo?.trim()) {
+        throw new HomologacaoNfseError(
+          'AUTORIZACAO_MALFORMADA',
+          'Motivo de ativação individual obrigatório.'
+        );
+      }
+      if (ticket.ativacaoDiscoveryReal) {
+        return ticket;
+      }
+      const ativado: TicketAutorizacaoOperacional = {
+        ...ticket,
+        ativacaoDiscoveryReal: true,
+        ativacaoMotivo: motivo.trim().slice(0, 200),
+        ativacaoEm: (agora ?? new Date()).toISOString(),
+      };
+      await fs.writeFile(arquivo, `${JSON.stringify(ativado, null, 2)}\n`, 'utf8');
+      return ativado;
     },
 
     async consumir(execucaoId, contexto, motivo) {
