@@ -3,6 +3,7 @@
  * Cada empresa ocupa 1 linha na tabela unificada.
  */
 import type { ProgressoFiscalNfse } from './progresso-fiscal.model';
+import type { MetricasOperacionaisApi } from './metricas-operacionais.model';
 
 export type ExecutionRowStatus = 'FILA' | 'EM_EXECUCAO' | 'AGUARDANDO_CAPTCHA' | 'OK' | 'ERRO';
 export type ExecutionRowMetodo = 'CERTIFICADO' | 'CREDENCIAL';
@@ -38,4 +39,6 @@ export interface ExecutionRow {
   progresso_fiscal?: ProgressoFiscalNfse;
   /** Sequência local de aplicação aceita (não é versão Backend). */
   fiscal_seq?: number;
+  /** API-02W — durações/contadores; ausente = UI mostra "—". */
+  metricas_operacionais?: MetricasOperacionaisApi | null;
 }

@@ -104,6 +104,12 @@ export interface ResultadoFluxoFiscalNativo {
     resultado: string;
     codigo: string | null;
   }>;
+  /** API-02W — durações monotônicas da orquestração (null = não medido). */
+  duracoes?: {
+    descobertaEmitidasMs: number | null;
+    descobertaRecebidasMs: number | null;
+    recuperacaoSefinMs: number | null;
+  };
 }
 
 export type DescobridorNfse = (input: DiscoverNfseInput) => Promise<ResultadoDescobertaNfse>;

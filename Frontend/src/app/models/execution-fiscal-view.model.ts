@@ -10,6 +10,11 @@ import type {
   ExecutionRowStatus,
 } from './execution-row.model';
 import {
+  formatarDuracaoMs,
+  formatarMetricaNumero,
+  type MetricasOperacionaisApi,
+} from './metricas-operacionais.model';
+import {
   rotuloEstadoFaseFiscal,
   type ProgressoFiscalNfse,
 } from './progresso-fiscal.model';
@@ -103,6 +108,16 @@ export interface StatusView {
   mensagem: string;
 }
 
+/** API-02W — colunas legíveis (não compactar E/R/C/Σ). */
+export interface ContagensOperacionaisView {
+  emitidas: string;
+  recebidas: string;
+  total: string;
+  xmlsSefin: string;
+  exportados: string;
+  duracao: string;
+}
+
 export interface VisaoFiscalLinha {
   autenticacao: AutenticacaoView;
   motor: MotorView;
@@ -114,6 +129,52 @@ export interface VisaoFiscalLinha {
   discoveryOnly: boolean;
   /** true quando a linha usa ProgressoFiscalNfse (não contagens legadas). */
   fiscalEstruturado: boolean;
+  /** Colunas operacionais legíveis; "—" quando indisponível. */
+  operacionais: ContagensOperacionaisView;
+}
+
+/**
+ * Contagens/duração para a tabela operacional.
+ * Zero só quando a execução já tem dado; FILA/sem métrica → "—".
+ */
+export function mapearContagensOperacionais(row: ExecutionRow): ContagensOperacionaisView {
+  const m: MetricasOperacionaisApi | null | undefined = row.metricas_operacionais;
+  const temContagem =
+    row.status === 'OK' ||
+    row.status === 'ERRO' ||
+    (row.qtd_emitidas ?? 0) > 0 ||
+    (row.qtd_recebidas ?? 0) > 0 ||
+    (row.progresso_fiscal?.inventario?.totais?.descobertos ?? 0) > 0;
+
+  let emitidas: string;
+  let recebidas: string;
+  let total: string;
+
+  if (row.progresso_fiscal?.inventario?.totais) {
+    const t = row.progresso_fiscal.inventario.totais;
+    emitidas = formatarMetricaNumero(t.emitidas);
+    recebidas = formatarMetricaNumero(t.recebidas);
+    total = formatarMetricaNumero(t.descobertos);
+  } else if (temContagem) {
+    const e = row.qtd_emitidas ?? 0;
+    const r = row.qtd_recebidas ?? 0;
+    emitidas = formatarMetricaNumero(e);
+    recebidas = formatarMetricaNumero(r);
+    total = formatarMetricaNumero(e + r);
+  } else {
+    emitidas = '—';
+    recebidas = '—';
+    total = '—';
+  }
+
+  return {
+    emitidas,
+    recebidas,
+    total,
+    xmlsSefin: formatarMetricaNumero(m?.xmls_persistidos),
+    exportados: formatarMetricaNumero(m?.xmls_exportados),
+    duracao: formatarDuracaoMs(m?.duracao_total_ms),
+  };
 }
 
 /** Converte YYYY-MM → MM/YYYY para exibição (competência ≠ pasta de downloads). */
@@ -326,6 +387,7 @@ function recuperacaoDeEstruturado(p: ProgressoFiscalNfse): RecuperacaoView {
 
 export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
   const fiscal = row.progresso_fiscal;
+  const operacionais = mapearContagensOperacionais(row);
   if (fiscal) {
     const msgFiscal = fiscal.message?.trim() || '';
     return {
@@ -341,6 +403,7 @@ export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
       },
       discoveryOnly: true,
       fiscalEstruturado: true,
+      operacionais,
     };
   }
 
@@ -357,5 +420,6 @@ export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
     },
     discoveryOnly: isDiscoveryOnlyResultado(row.resultado_final),
     fiscalEstruturado: false,
+    operacionais,
   };
 }

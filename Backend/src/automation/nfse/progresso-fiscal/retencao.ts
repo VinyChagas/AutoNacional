@@ -37,6 +37,8 @@ export interface SnapshotProgressoFiscalPolling {
   periodo_inicio?: string;
   periodo_fim?: string;
   fiscal: ProgressoFiscalNfse;
+  /** API-02W — métricas operacionais (durações/contadores); ausente = UI mostra "—". */
+  metricas_operacionais?: Record<string, number | null> | null;
 }
 
 export interface OpcoesRetencaoProgressoFiscal {

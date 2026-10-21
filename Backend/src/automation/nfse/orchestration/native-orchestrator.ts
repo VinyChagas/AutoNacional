@@ -16,6 +16,7 @@ import {
   raizFiscalDistintaDeDownloads,
 } from '../infrastructure';
 import { mascararChaveNacional } from '../infrastructure/types';
+import { agoraMonotonicoMs, deltaMonotonicoMs } from './metricas-operacionais';
 import {
   OrquestracaoNfseError,
   type DependenciasFluxoFiscalNativo,
@@ -67,10 +68,15 @@ export async function executarFluxoFiscalNativo(
   const deps = entrada.dependencias;
   let inventario: InventarioNfse;
   let resumoFalhasDescoberta: string[] = [];
+  let duracoesDescoberta = {
+    descobertaEmitidasMs: null as number | null,
+    descobertaRecebidasMs: null as number | null,
+  };
   try {
     const descoberta = await descobrirInventario(entrada, deps, cnpj, periodo);
     inventario = descoberta.inventario;
     resumoFalhasDescoberta = descoberta.resumoFalhasDescoberta;
+    duracoesDescoberta = descoberta.duracoes;
   } finally {
     // API-02Q — Chromium só serve à descoberta Portal; SEFIN é mTLS sem browser.
     await liberarNavegadorAposDescoberta(entrada);
@@ -93,6 +99,10 @@ export async function executarFluxoFiscalNativo(
   // Descoberta completa sem documentos (ex.: emitidas+recebidas vazias) → SEM_MOVIMENTO, sem SEFIN.
   if (inventario.totais.descobertos === 0) {
     const resultado = resultadoSemMovimento(entrada, cnpj, periodo, inventario);
+    resultado.duracoes = {
+      ...duracoesDescoberta,
+      recuperacaoSefinMs: null,
+    };
     if (avisoPdf) {
       resultado.compatibilidadePdf = 'PDF_NAO_RECUPERADO';
       resultado.diagnosticos.push({
@@ -114,9 +124,14 @@ export async function executarFluxoFiscalNativo(
   }
 
   try {
+    const tSefin = agoraMonotonicoMs();
     const resultado = await deps.repositorio.executarComExclusividadeFiscal(cnpj, periodo, async () =>
       executarSequenciaCritica(entrada, deps, cnpj, periodo, inventario, credencial)
     );
+    resultado.duracoes = {
+      ...duracoesDescoberta,
+      recuperacaoSefinMs: deltaMonotonicoMs(tSefin),
+    };
     if (avisoPdf) {
       resultado.compatibilidadePdf = 'PDF_NAO_RECUPERADO';
       resultado.diagnosticos.push({
@@ -352,7 +367,14 @@ async function descobrirInventario(
   deps: DependenciasFluxoFiscalNativo,
   cnpj: string,
   periodo: PeriodoConsultaPortal
-): Promise<{ inventario: InventarioNfse; resumoFalhasDescoberta: string[] }> {
+): Promise<{
+  inventario: InventarioNfse;
+  resumoFalhasDescoberta: string[];
+  duracoes: {
+    descobertaEmitidasMs: number | null;
+    descobertaRecebidasMs: number | null;
+  };
+}> {
   const tipos: Array<'EMITIDAS' | 'RECEBIDAS'> =
     entrada.tipo === 'ambas'
       ? ['EMITIDAS', 'RECEBIDAS']
@@ -363,14 +385,20 @@ async function descobrirInventario(
   const documentos = [];
   let completude: InventarioNfse['completude'] = 'COMPLETO';
   const resumoFalhasDescoberta: string[] = [];
+  let descobertaEmitidasMs: number | null = null;
+  let descobertaRecebidasMs: number | null = null;
 
   for (const tipo of tipos) {
+    const t0 = agoraMonotonicoMs();
     const resultado = await deps.descobrir({
       page: entrada.page,
       cnpj,
       periodoConsulta: periodo,
       tipo,
     });
+    const dt = deltaMonotonicoMs(t0);
+    if (tipo === 'EMITIDAS') descobertaEmitidasMs = dt;
+    if (tipo === 'RECEBIDAS') descobertaRecebidasMs = dt;
     if (resultado.status !== 'DISCOVERY_COMPLETE') {
       completude = resultado.status === 'DISCOVERY_FAILED' ? 'INDETERMINADO' : 'PARCIAL';
       for (const d of resultado.diagnosticos.slice(0, 3)) {
@@ -396,6 +424,7 @@ async function descobrirInventario(
       completude,
     }),
     resumoFalhasDescoberta,
+    duracoes: { descobertaEmitidasMs, descobertaRecebidasMs },
   };
 }
 

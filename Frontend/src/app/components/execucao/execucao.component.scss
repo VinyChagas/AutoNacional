@@ -603,6 +603,24 @@ $radius-pill: 9999px;
   .etapa-contagens-vazias, .etapa-hint { color: var(--text-muted); font-size: 0.68rem; }
   .etapa-hint { margin-top: 0.15rem; }
   .td-status-msg { min-width: 130px; max-width: 220px; }
+
+  // API-02W — colunas numéricas legíveis (sem compactar E/R/C/Σ)
+  .td-num {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+    min-width: 4.5rem;
+    color: var(--text-primary);
+  }
+  .td-num-total { font-weight: 600; }
+  .td-duracao { min-width: 5rem; color: var(--text-muted); }
+}
+
+.kpi-grid-operacional {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  @media (max-width: 900px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .status-badge {

@@ -5,6 +5,7 @@
 import {
   isDiscoveryOnlyResultado,
   mapearAutenticacao,
+  mapearContagensOperacionais,
   mapearInventario,
   mapearRecuperacao,
   mapearValidacao,
@@ -25,6 +26,7 @@ function row(partial: Partial<ExecutionRow> & Pick<ExecutionRow, 'metodo' | 'sta
     mensagem: partial.mensagem ?? '',
     ultimo_stage: partial.ultimo_stage,
     resultado_final: partial.resultado_final,
+    metricas_operacionais: partial.metricas_operacionais,
   };
 }
 
@@ -231,5 +233,37 @@ describe('UI-01d mapearVisaoFiscal', () => {
     expect(mapearValidacao(row({ metodo: 'CERTIFICADO', status: 'FILA' })).estado).toBe(
       'Não iniciada'
     );
+  });
+
+  it('API-02W — fila sem métricas exibe — (não zero)', () => {
+    const op = mapearContagensOperacionais(row({ metodo: 'CERTIFICADO', status: 'FILA' }));
+    expect(op.emitidas).toBe('—');
+    expect(op.recebidas).toBe('—');
+    expect(op.total).toBe('—');
+    expect(op.xmlsSefin).toBe('—');
+    expect(op.exportados).toBe('—');
+    expect(op.duracao).toBe('—');
+  });
+
+  it('API-02W — colunas legíveis com contadores e duração', () => {
+    const v = mapearVisaoFiscal(
+      row({
+        metodo: 'CERTIFICADO',
+        status: 'OK',
+        qtd_emitidas: 12,
+        qtd_recebidas: 0,
+        metricas_operacionais: {
+          xmls_persistidos: 10,
+          xmls_exportados: 10,
+          duracao_total_ms: 258000,
+        },
+      })
+    );
+    expect(v.operacionais.emitidas).toBe('12');
+    expect(v.operacionais.recebidas).toBe('0');
+    expect(v.operacionais.total).toBe('12');
+    expect(v.operacionais.xmlsSefin).toBe('10');
+    expect(v.operacionais.exportados).toBe('10');
+    expect(v.operacionais.duracao).toBe('4m 18s');
   });
 });

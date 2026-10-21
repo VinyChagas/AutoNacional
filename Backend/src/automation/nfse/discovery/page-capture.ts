@@ -8,7 +8,7 @@ import {
   preencherDatasEFiltrar,
   submeterFiltroPortal,
 } from '../../processar-notas-competencia';
-import { aguardarEstabilizarPagina, clicarMenuNotasEAguardar } from '../../playwright-nav';
+import { clicarMenuNotasEAguardar } from '../../playwright-nav';
 import { PLAYWRIGHT_TIMEOUT } from '../../../infrastructure/config';
 import { DIRECAO_PARA_TIPO_NOTA_UI, type DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
@@ -23,6 +23,12 @@ import {
   proximaDesabilitada,
   textoIndicaSemRegistros,
 } from './pagination';
+import {
+  aguardarConteudoListagemPortal,
+  aguardarListagemPortalPronta,
+  pesquisaPortalConfirmadaNaUrl,
+  SELETOR_LINHAS_LISTAGEM_PORTAL,
+} from './portal-listagem-ready';
 import { evidenciaSituacaoVazia } from './row-parser';
 import {
   seletoresMenuNotas,
@@ -42,7 +48,7 @@ const PROXIMA = [
   'xpath=//a[.//i[contains(@class,"fa-angle-right")]]',
 ] as const;
 
-const LINHAS = 'table tbody tr';
+const LINHAS = SELETOR_LINHAS_LISTAGEM_PORTAL;
 
 interface NoDom {
   getAttribute(nome: string): string | null;
@@ -146,7 +152,7 @@ async function inspecionarProxima(page: Page): Promise<PaginaListagem['proxima']
 }
 
 export async function capturarPaginaListagem(page: Page, pagina: number): Promise<PaginaListagem> {
-  await aguardarEstabilizarPagina(page, 15000);
+  // API-02W — listagem já deve estar pronta após aplicarPeriodo; sem networkidle.
   const bodyText = await page.locator('body').innerText().catch(() => '');
   const info = page.locator('.dataTables_info, .pagination-info').first();
   const infoTexto = (await info.innerText().catch(() => '')) || bodyText.match(/[^\n]*registros?[^\n]*/i)?.[0] || '';
@@ -232,6 +238,7 @@ export function criarPortalDaPage(page: Page): PortalListagem {
       _direcao: DirecaoDocumentoFiscal
     ): Promise<LeituraFiltroPortal> {
       let seletorFiltro: string | undefined;
+      const timeoutListagem = Math.min(15000, PLAYWRIGHT_TIMEOUT);
       try {
         const botao = await localizarBotaoFiltrarPortal(page).catch(() => null);
         seletorFiltro = botao?.seletor;
@@ -246,58 +253,34 @@ export function criarPortalDaPage(page: Page): PortalListagem {
         );
       }
 
-      let pesquisaConcluida = await page
-        .waitForURL((url) => urlConfirmaPesquisa(url.href, periodo), { timeout: 15000 })
-        .then(() => true)
-        .catch(() => false);
+      // API-02W — preencherDatasEFiltrar já aguardou URL+conteúdo; não repetir.
+      if (pesquisaPortalConfirmadaNaUrl(page.url(), periodo)) {
+        return lerFiltroDaPagina(page);
+      }
 
       // Datas sem executar=1 ≠ pesquisa OK. Retenta submit real; depois GET controlado.
-      if (!pesquisaConcluida) {
-        const urlAtual = page.url();
-        try {
-          if (urlTemPeriodoSemExecutar(urlAtual, periodo)) {
-            const { seletor } = await submeterFiltroPortal(page);
-            seletorFiltro = seletor;
-            await aguardarEstabilizarPagina(page, 10000);
-            pesquisaConcluida = urlConfirmaPesquisa(page.url(), periodo);
-          } else {
-            const { seletor } = await submeterFiltroPortal(page);
-            seletorFiltro = seletor;
-            await aguardarEstabilizarPagina(page, 10000);
-            pesquisaConcluida = await page
-              .waitForURL((url) => urlConfirmaPesquisa(url.href, periodo), { timeout: 15000 })
-              .then(() => true)
-              .catch(() => false);
-          }
-        } catch {
-          /* fallback GET abaixo */
+      const urlAtual = page.url();
+      try {
+        if (urlTemPeriodoSemExecutar(urlAtual, periodo) || !urlConfirmaPesquisa(urlAtual, periodo)) {
+          const { seletor } = await submeterFiltroPortal(page);
+          seletorFiltro = seletor;
+          const aposSubmit = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+          if (aposSubmit.urlOk) return lerFiltroDaPagina(page);
         }
+      } catch {
+        /* fallback GET abaixo */
       }
 
-      if (!pesquisaConcluida) {
-        try {
-          const destino = montarUrlPesquisaPortal(page.url(), periodo);
-          seletorFiltro = seletorFiltro ?? 'GET executar=1 (contrato Portal)';
-          await page.goto(destino, {
-            waitUntil: 'domcontentloaded',
-            timeout: PLAYWRIGHT_TIMEOUT,
-          });
-          await aguardarEstabilizarPagina(page, 10000);
-          pesquisaConcluida = urlConfirmaPesquisa(page.url(), periodo);
-        } catch {
-          /* confirmação em confirmarFiltroAplicado */
-        }
-      }
-
-      if (pesquisaConcluida) {
-        await Promise.race([
-          page.locator(LINHAS).first().waitFor({ state: 'attached', timeout: 15000 }),
-          page
-            .getByText(/nenhum registro encontrado|nenhuma nota encontrada|n[aã]o h[aá] registros/i)
-            .first()
-            .waitFor({ state: 'visible', timeout: 15000 }),
-        ]).catch(() => undefined);
-        await aguardarEstabilizarPagina(page, 10000);
+      try {
+        const destino = montarUrlPesquisaPortal(page.url(), periodo);
+        seletorFiltro = seletorFiltro ?? 'GET executar=1 (contrato Portal)';
+        await page.goto(destino, {
+          waitUntil: 'domcontentloaded',
+          timeout: PLAYWRIGHT_TIMEOUT,
+        });
+        await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+      } catch {
+        /* confirmação em confirmarFiltroAplicado */
       }
       return lerFiltroDaPagina(page);
     },
@@ -311,7 +294,7 @@ export function criarPortalDaPage(page: Page): PortalListagem {
         const classe = await botao.locator('..').locator('..').getAttribute('class').catch(() => null);
         if (proximaDesabilitada([classe])) return false;
         await botao.click({ timeout: 5000 });
-        await aguardarEstabilizarPagina(page, 10000);
+        await aguardarConteudoListagemPortal(page, Math.min(15000, PLAYWRIGHT_TIMEOUT));
         return true;
       }
       return false;

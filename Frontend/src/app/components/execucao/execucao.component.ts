@@ -16,6 +16,12 @@ import {
   type VisaoFiscalLinha,
 } from '../../models/execution-fiscal-view.model';
 import {
+  formatarDuracaoMs,
+  formatarMetricaNumero,
+  xmlsDisponiveisDownloads,
+  type MetricasOperacionaisApi,
+} from '../../models/metricas-operacionais.model';
+import {
   decidirAplicacaoFiscalSse,
   decidirPollingFiscal,
 } from '../../models/progresso-fiscal-apply';
@@ -44,6 +50,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   mostrarApenasFalhas = false;
   /** True após clicar Iniciar - controla exibição dos cards de resumo */
   executionStarted = false;
+  /** Epoch ms do início do lote (KPI tempo total wall-clock). */
+  private loteInicioMs: number | null = null;
   
   // Contabilidade
   contabilidades: Contabilidade[] = [];
@@ -537,6 +545,75 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return Math.round((this.empresasFinalizadas / this.totalEmpresas) * 100);
   }
 
+  /** Soma notas descobertas (Portal); "—" se nenhuma linha tem dado. */
+  get kpiNotasEncontradas(): string {
+    let somou = false;
+    let total = 0;
+    for (const r of this.executionRows) {
+      const m = r.metricas_operacionais?.notas_descobertas;
+      if (m != null) {
+        somou = true;
+        total += m;
+        continue;
+      }
+      if (r.status === 'OK' || r.status === 'ERRO' || r.qtd_emitidas > 0 || r.qtd_recebidas > 0) {
+        somou = true;
+        total += (r.qtd_emitidas ?? 0) + (r.qtd_recebidas ?? 0);
+      }
+    }
+    return somou ? formatarMetricaNumero(total) : '—';
+  }
+
+  /** XMLs SEFIN persistidos (≠ notas descobertas). */
+  get kpiXmlsRecuperados(): string {
+    let somou = false;
+    let total = 0;
+    for (const r of this.executionRows) {
+      const n = r.metricas_operacionais?.xmls_persistidos;
+      if (n != null) {
+        somou = true;
+        total += n;
+      }
+    }
+    return somou ? formatarMetricaNumero(total) : '—';
+  }
+
+  /** XMLs já disponíveis nos downloads (exportados + já existentes). */
+  get kpiXmlsDownloads(): string {
+    let somou = false;
+    let total = 0;
+    for (const r of this.executionRows) {
+      const n = xmlsDisponiveisDownloads(r.metricas_operacionais);
+      if (n != null) {
+        somou = true;
+        total += n;
+      }
+    }
+    return somou ? formatarMetricaNumero(total) : '—';
+  }
+
+  /** Tempo wall-clock do lote; fallback max(duração por empresa). */
+  get kpiTempoTotalLote(): string {
+    if (this.loteInicioMs != null) {
+      const fim =
+        this.executionRows.every((r) => r.status === 'OK' || r.status === 'ERRO') &&
+        this.executionRows.length > 0
+          ? Math.max(
+              ...this.executionRows.map((r) =>
+                r.finished_at ? Date.parse(r.finished_at) : Date.now()
+              )
+            )
+          : Date.now();
+      return formatarDuracaoMs(Math.max(0, fim - this.loteInicioMs));
+    }
+    let max: number | null = null;
+    for (const r of this.executionRows) {
+      const d = r.metricas_operacionais?.duracao_total_ms;
+      if (d != null && (max == null || d > max)) max = d;
+    }
+    return formatarDuracaoMs(max);
+  }
+
   async carregarEmpresasValidadas() {
     // Valida se há contabilidade selecionada
     if (!this.contabilidadeSelecionada) {
@@ -847,6 +924,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       // Armazena batch_id e conecta ao stream SSE
       if (response.batch_id) {
         this.batchId = response.batch_id;
+        this.loteInicioMs = Date.now();
         this.streamSubscription?.unsubscribe();
         this.streamSubscription = this.execucaoService
           .streamExecucoes(response.batch_id)
@@ -988,6 +1066,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null;
       competenciaFiscal?: string | null;
       patchFiscal?: Partial<ExecutionRow>;
+      metricas?: MetricasOperacionaisApi | null;
     }> = [];
     for (const s of statuses) {
       const empresaId = String(s.empresa_id ?? '');
@@ -1075,6 +1154,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           motor: motorInferido,
           competenciaFiscal: competenciaFiscal ?? null,
           patchFiscal,
+          metricas: s.metricas_operacionais ?? null,
         });
       }
     }
@@ -1096,6 +1176,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       motor,
       competenciaFiscal,
       patchFiscal,
+      metricas,
     } of rowUpdates) {
       executionRows = [
         ...executionRows.slice(0, idx),
@@ -1111,6 +1192,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           ...(motor !== undefined ? { motor } : {}),
           ...(competenciaFiscal ? { competencia_fiscal: competenciaFiscal } : {}),
           ...(patchFiscal ?? {}),
+          ...(metricas !== undefined ? { metricas_operacionais: metricas } : {}),
         },
         ...executionRows.slice(idx + 1),
       ];
@@ -1173,7 +1255,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
                   ? ('PORTAL_SEFIN' as const)
                   : undefined;
           const compStatus = status.competencia_fiscal || undefined;
-          if (motorStatus || compStatus || status.resultado_final) {
+          if (motorStatus || compStatus || status.resultado_final || status.metricas_operacionais) {
             this.executionRows = [
               ...this.executionRows.slice(0, rowIdxPoll),
               {
@@ -1182,6 +1264,9 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
                 ...(compStatus ? { competencia_fiscal: compStatus } : {}),
                 ...(status.resultado_final
                   ? { resultado_final: status.resultado_final }
+                  : {}),
+                ...(status.metricas_operacionais !== undefined
+                  ? { metricas_operacionais: status.metricas_operacionais }
                   : {}),
               },
               ...this.executionRows.slice(rowIdxPoll + 1),
@@ -1498,6 +1583,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.streamSubscription?.unsubscribe();
       this.streamSubscription = null;
       this.executionStarted = false;
+      this.loteInicioMs = null;
       this.execucoes = [];
       this.executionRows = [];
       this.execucoesFinalizadasFiltradas = [];

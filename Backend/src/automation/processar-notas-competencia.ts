@@ -24,6 +24,7 @@ import {
   urlConfirmaPesquisa,
   urlTemPeriodoSemExecutar,
 } from './nfse/discovery/discovery-validation';
+import { aguardarListagemPortalPronta } from './nfse/discovery/portal-listagem-ready';
 import {
   criarPeriodoConsultaPortal,
 } from './nfse/contracts/periodo';
@@ -899,23 +900,24 @@ export async function preencherDatasEFiltrar(
   await page.waitForTimeout(_minActionDelayMs);
 
   await submeterFiltroPortal(page);
-  await aguardarEstabilizarPagina(page, Math.min(15000, PLAYWRIGHT_TIMEOUT));
 
-  const urlApos = page.url();
-  if (urlConfirmaPesquisa(urlApos, periodo)) {
-    await page.waitForTimeout(_minActionDelayMs * 2);
-    return;
-  }
+  // API-02W — condição verificável (executar=1 + período + linhas|vazio), sem networkidle.
+  const timeoutListagem = Math.min(15000, PLAYWRIGHT_TIMEOUT);
+  let pronto = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+  if (pronto.urlOk) return;
 
   // Datas na URL sem executar=1 (ou clique sem efeito): GET controlado do contrato.
+  const urlApos = page.url();
   if (
     urlTemPeriodoSemExecutar(urlApos, periodo) ||
     !urlConfirmaPesquisa(urlApos, periodo)
   ) {
     const destino = montarUrlPesquisaPortal(urlApos, periodo);
     await page.goto(destino, { waitUntil: 'domcontentloaded', timeout: PLAYWRIGHT_TIMEOUT });
-    await aguardarEstabilizarPagina(page, Math.min(15000, PLAYWRIGHT_TIMEOUT));
+    pronto = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
   }
 
-  await page.waitForTimeout(_minActionDelayMs * 2);
+  if (!pronto.urlOk) {
+    await page.waitForTimeout(_minActionDelayMs * 2);
+  }
 }

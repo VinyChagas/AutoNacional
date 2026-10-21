@@ -66,8 +66,9 @@ export async function safePageTitle(page: Page): Promise<string> {
 }
 
 /**
- * Espera a página estabilizar sem falhar em networkidle
- * (portais com polling/analytics raramente ficam idle).
+ * Espera documento parseado (domcontentloaded).
+ * API-02W — sem networkidle (portais com analytics quase nunca ficam idle).
+ * Listagens Portal usam condições verificáveis em portal-listagem-ready.
  */
 export async function aguardarEstabilizarPagina(
   page: Page,
@@ -77,14 +78,7 @@ export async function aguardarEstabilizarPagina(
   try {
     await page.waitForLoadState('domcontentloaded', { timeout });
   } catch {
-    /* ignore */
-  }
-  try {
-    await page.waitForLoadState('networkidle', {
-      timeout: Math.min(5000, timeout),
-    });
-  } catch {
-    /* best-effort — não falha a execução */
+    /* ignore — timeout máximo permanece como proteção */
   }
 }
 
@@ -107,10 +101,9 @@ export async function aguardarRotaOuSeletor(
   const ready = page.locator(options.readySelector).first();
 
   if (jaNaRota) {
-    await ready
-      .waitFor({ state: 'visible', timeout: Math.min(15000, timeout) })
-      .catch(() => undefined);
-    await aguardarEstabilizarPagina(page, Math.min(10000, timeout));
+    const visivel = await ready.isVisible().catch(() => false);
+    if (visivel) return;
+    await ready.waitFor({ state: 'visible', timeout: Math.min(15000, timeout) });
     return;
   }
 
@@ -128,7 +121,13 @@ export async function aguardarRotaOuSeletor(
     }
   }
 
-  await aguardarEstabilizarPagina(page, Math.min(10000, timeout));
+  // Já na rota ou seletor pronto — sem segunda estabilização redundante.
+  const pronto = await ready.isVisible().catch(() => false);
+  if (!pronto) {
+    await ready
+      .waitFor({ state: 'visible', timeout: Math.min(15000, timeout) })
+      .catch(() => undefined);
+  }
 }
 
 /**

@@ -43,12 +43,16 @@ import { CAPTCHA_WINDOW_LAYOUT_ENABLED } from '../infrastructure/config';
 import { VIEWPORT_DESCOBERTA_PORTAL_SEFIN } from '../automation/nfse/discovery/portal-selectors';
 import {
   OrquestracaoNfseError,
+  CronometroMonotonico,
   decidirIntegracaoNativa,
   decidirMotorIniciar,
   exportarSefinParaDownloadsOperacionais,
+  metricasOperacionaisVazias,
   resolverRaizFiscalNativaProduto,
+  serializarMetricasOperacionais,
   tentarFluxoNativoControlado,
   type CodigoErroOrquestracaoNfse,
+  type MetricasOperacionaisNfse,
   type MotorProcessamentoIniciar,
   type ResultadoFluxoFiscalNativo,
 } from '../automation/nfse/orchestration';
@@ -202,6 +206,8 @@ interface ExecucaoInfo {
   startedAt?: Date;
   /** Progresso fiscal estruturado (UI-01e-B) — só em memória enquanto a execução está ativa. */
   progressoFiscal?: ProgressoFiscalNfse;
+  /** API-02W — durações e contadores operacionais (Portal+SEFIN). */
+  metricasOperacionais?: MetricasOperacionaisNfse;
 }
 
 type CertificateLoader = (cnpj: string) => Promise<CertificadoEmMemoria>;
@@ -589,6 +595,7 @@ export async function obterStatusBatch(
         competencia_fiscal: competenciaFromDataInicio(info.periodoInicio),
         periodo_inicio: info.periodoInicio,
         periodo_fim: info.periodoFim,
+        metricas_operacionais: serializarMetricasOperacionais(info.metricasOperacionais),
       };
       // Campo opcional: só quando há progresso fiscal associado a este lote/execução.
       if (
@@ -630,6 +637,7 @@ export async function obterStatusBatch(
       periodo_inicio: snap.periodo_inicio ?? null,
       periodo_fim: snap.periodo_fim ?? null,
       fiscal: snap.fiscal,
+      metricas_operacionais: snap.metricas_operacionais ?? null,
     };
     out.push(row);
   }
@@ -691,6 +699,7 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
     competencia_fiscal: competenciaFromDataInicio(info.periodoInicio),
     periodo_inicio: info.periodoInicio,
     periodo_fim: info.periodoFim,
+    metricas_operacionais: serializarMetricasOperacionais(info.metricasOperacionais),
   };
   if (
     info.progressoFiscal &&
@@ -735,6 +744,7 @@ function retenirProgressoFiscalDeInfo(
         execucao_id: String(info.execucaoDbId),
         cnpj: info.cnpj,
       },
+      metricas_operacionais: serializarMetricasOperacionais(info.metricasOperacionais),
     },
     { marcadoFinalizado: opcoes?.marcadoFinalizado === true }
   );
@@ -1011,7 +1021,11 @@ async function executarFluxoCompleto(
     logger.debug({ empresaId }, msg);
   };
 
+  const cronometro = new CronometroMonotonico();
+  info.metricasOperacionais = metricasOperacionaisVazias();
+
   const onLoginPageReady = () => {
+    cronometro.marcar('login_page_ready');
     logWorker(empresaId, 'login page ready');
     emitirEventoExecucao(batchId, {
       type: 'execution:login_ready',
@@ -1234,6 +1248,7 @@ async function executarFluxoCompleto(
     dataInicio: new Date(),
   });
 
+  cronometro.marcar('chromium_inicio');
   let resultadoAuth: Awaited<ReturnType<typeof abrirDashboardNfse>> | undefined;
 
   try {
@@ -1332,6 +1347,7 @@ async function executarFluxoCompleto(
     });
   }
 
+  cronometro.marcar('auth_ok');
   logWorker(empresaId, 'browser launched');
 
     const config = await settingsRepo.obterConfiguracoes();
@@ -1351,6 +1367,15 @@ async function executarFluxoCompleto(
     for (const logMsg of auth.logs) adicionarLog(logMsg);
     info.progresso = 30;
     info.mensagem = 'Autenticação concluída.';
+    // Chromium ≈ até tela de login; autenticação ≈ login pronto → dashboard.
+    const m = info.metricasOperacionais ?? metricasOperacionaisVazias();
+    m.duracoes.chromiumMs =
+      cronometro.entre('chromium_inicio', 'login_page_ready') ??
+      cronometro.entre('chromium_inicio', 'auth_ok');
+    m.duracoes.autenticacaoMs =
+      cronometro.entre('login_page_ready', 'auth_ok') ??
+      cronometro.entre('chromium_inicio', 'auth_ok');
+    info.metricasOperacionais = m;
     emitirEventoExecucao(batchId, {
       type: 'execution:stage',
       empresa_id: key,
@@ -1535,8 +1560,21 @@ async function executarFluxoCompleto(
           `loteLiberado=${resultadoNativo.loteLiberado}`
       );
 
+      const metricas = info.metricasOperacionais ?? metricasOperacionaisVazias();
+      metricas.duracoes.descobertaEmitidasMs =
+        resultadoNativo.duracoes?.descobertaEmitidasMs ?? null;
+      metricas.duracoes.descobertaRecebidasMs =
+        resultadoNativo.duracoes?.descobertaRecebidasMs ?? null;
+      metricas.duracoes.recuperacaoSefinMs =
+        resultadoNativo.duracoes?.recuperacaoSefinMs ?? null;
+      // Notas descobertas no Portal ≠ XMLs SEFIN persistidos.
+      metricas.contadores.notasDescobertas = resultadoNativo.descobertos;
+      metricas.contadores.xmlsPersistidos = resultadoNativo.persistidos;
+
       const avaliacao = avaliarResultadoPortalSefin(resultadoNativo);
       if (!avaliacao.ok) {
+        metricas.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
+        info.metricasOperacionais = metricas;
         throw new OrquestracaoNfseError(avaliacao.codigo, avaliacao.mensagem);
       }
 
@@ -1548,6 +1586,8 @@ async function executarFluxoCompleto(
           stage: 'sefin_exportacao_downloads',
           message: 'Exportando XMLs SEFIN para downloads…',
         });
+        const tExport = cronometro;
+        tExport.marcar('export_inicio');
         const raizFiscal = resolverRaizFiscalNativaProduto();
         const repositorioExport = new RepositorioFiscalNfse(criarResolvedorRaizInjetada(raizFiscal));
         const exportacao = await exportarSefinParaDownloadsOperacionais({
@@ -1560,12 +1600,24 @@ async function executarFluxoCompleto(
           mesExecucaoExtenso,
           nomeEmpresa,
         });
+        tExport.marcar('export_fim');
+        metricas.duracoes.persistenciaExportacaoMs = tExport.entre('export_inicio', 'export_fim');
+        metricas.contadores.xmlsExportados = exportacao.copiados;
+        metricas.contadores.xmlsJaExistentes = exportacao.jaIguais;
         if (!exportacao.ok) {
+          metricas.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
+          info.metricasOperacionais = metricas;
           throw new OrquestracaoNfseError('FALHA_EXPORTACAO', exportacao.motivo);
         }
         adicionarLog(exportacao.motivo);
+      } else {
+        metricas.contadores.xmlsExportados = 0;
+        metricas.contadores.xmlsJaExistentes = 0;
+        metricas.duracoes.persistenciaExportacaoMs = 0;
       }
 
+      metricas.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
+      info.metricasOperacionais = metricas;
       info.resultadoFinal = avaliacao.resultadoFinal;
       adicionarLog(avaliacao.mensagem);
     } else if (decisaoMotor.executarPortalSefin) {
@@ -1784,6 +1836,9 @@ async function executarFluxoCompleto(
     info.status = 'falhou';
     info.mensagem = msg;
     info.resultadoFinal = 'ERRO';
+    const m = info.metricasOperacionais ?? metricasOperacionaisVazias();
+    m.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
+    info.metricasOperacionais = m;
   } finally {
     const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
     const resultadoFinal = info.resultadoFinal ?? 'ERRO';

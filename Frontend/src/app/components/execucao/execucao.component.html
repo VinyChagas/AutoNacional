@@ -207,26 +207,26 @@
         <!-- Cards de resumo (aparecem acima da tabela após Iniciar) -->
         @if (executionStarted) {
           <section class="kpi-section kpi-section-inline">
-            <div class="kpi-grid">
+            <div class="kpi-grid kpi-grid-operacional">
               <div class="kpi-card">
-                <span class="kpi-label">Fila Restante</span>
-                <span class="kpi-value">{{ filaRestante }}</span>
-              </div>
-              <div class="kpi-card">
-                <span class="kpi-label">Em execução</span>
-                <span class="kpi-value">{{ totalEmExecucao }}</span>
-              </div>
-              <div class="kpi-card">
-                <span class="kpi-label">Navegadores abertos</span>
-                <span class="kpi-value">{{ totalNavegadoresAbertos }}</span>
-              </div>
-              <div class="kpi-card">
-                <span class="kpi-label">Sucesso</span>
+                <span class="kpi-label">Empresas concluídas</span>
                 <span class="kpi-value">{{ empresasFinalizadas }}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">Erro</span>
-                <span class="kpi-value">{{ totalErro }}</span>
+                <span class="kpi-label">Notas encontradas</span>
+                <span class="kpi-value">{{ kpiNotasEncontradas }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">XMLs recuperados</span>
+                <span class="kpi-value">{{ kpiXmlsRecuperados }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">XMLs nos downloads</span>
+                <span class="kpi-value">{{ kpiXmlsDownloads }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Tempo total do lote</span>
+                <span class="kpi-value">{{ kpiTempoTotalLote }}</span>
               </div>
             </div>
           </section>
@@ -243,13 +243,15 @@
               <thead>
                 <tr>
                   <th>Empresa</th>
-                  <th>Autenticação</th>
                   <th>Motor</th>
                   <th>Competência</th>
-                  <th>Inventário</th>
-                  <th>Validação</th>
-                  <th>Recuperação</th>
+                  <th>Emitidas</th>
+                  <th>Recebidas</th>
+                  <th>Total</th>
+                  <th title="XMLs confirmados/persistidos via SEFIN (≠ notas descobertas no Portal)">XMLs SEFIN</th>
+                  <th title="XMLs copiados para downloads nesta execução">Exportados</th>
                   <th>Status</th>
+                  <th>Duração</th>
                 </tr>
               </thead>
               <tbody>
@@ -263,21 +265,6 @@
                       <td class="td-empresa">
                         <div class="empresa-razao" [title]="row.razao_social || ''">{{ row.razao_social || '—' }}</div>
                         <div class="empresa-cnpj td-mono">{{ formatarCNPJ(row.cnpj) }}</div>
-                      </td>
-                      <td class="td-auth">
-                        <span
-                          class="login-metodo-badge"
-                          [class.badge-certificado]="v.autenticacao.metodo === 'CERTIFICADO'"
-                          [class.badge-credencial]="v.autenticacao.metodo === 'CREDENCIAL'"
-                        >
-                          {{ v.autenticacao.rotulo }}
-                        </span>
-                        @if (v.autenticacao.aguardandoCaptcha) {
-                          <span class="auth-captcha-flag">
-                            <span class="spinner-sm"></span>
-                            AGUARDANDO_CAPTCHA
-                          </span>
-                        }
                       </td>
                       <td class="td-motor">
                         @if (v.motor.rotulo) {
@@ -308,55 +295,11 @@
                           <span class="competencia-fiscal competencia-pendente">—</span>
                         }
                       </td>
-                      <td class="td-etapa">
-                        <span
-                          class="etapa-estado"
-                          [attr.data-estado]="v.inventario.estado"
-                        >{{ v.inventario.estado }}</span>
-                        @if (v.inventario.fonteEstruturada && v.inventario.completude) {
-                          <div class="etapa-hint" title="Completude nativa do inventário">{{ v.inventario.completude }}</div>
-                        }
-                        @if (v.inventario.exibirContagens) {
-                          <div
-                            class="etapa-contagens"
-                            [title]="v.inventario.fonteEstruturada
-                              ? 'Totais do inventário nativo (E/R/C/Σ descobertos).'
-                              : 'Contagens legadas desta execução (E/R/C). Não implica inventário nativo completo.'"
-                          >
-                            <span>E {{ v.inventario.contagens.emitidas }}</span>
-                            <span>R {{ v.inventario.contagens.recebidas }}</span>
-                            <span>C {{ v.inventario.contagens.canceladas }}</span>
-                            <span class="contagem-total">Σ {{ v.inventario.contagens.total }}</span>
-                          </div>
-                        } @else {
-                          <div class="etapa-contagens etapa-contagens-vazias">—</div>
-                        }
-                      </td>
-                      <td class="td-etapa">
-                        <span
-                          class="etapa-estado"
-                          [attr.data-estado]="v.validacao.estado"
-                        >{{ v.validacao.estado }}</span>
-                        @if (v.validacao.exibirContagens) {
-                          <div
-                            class="etapa-contagens"
-                            title="Classificação do inventário (vigentes / canceladas / indeterminadas)."
-                          >
-                            <span>V {{ v.validacao.vigentes }}</span>
-                            <span>C {{ v.validacao.canceladas }}</span>
-                            <span>I {{ v.validacao.indeterminadas }}</span>
-                          </div>
-                        }
-                      </td>
-                      <td class="td-etapa">
-                        <span
-                          class="etapa-estado"
-                          [attr.data-estado]="v.recuperacao.estado"
-                        >{{ v.recuperacao.estado }}</span>
-                        @if (v.discoveryOnly) {
-                          <div class="etapa-hint">Discovery-Only</div>
-                        }
-                      </td>
+                      <td class="td-num" title="Notas emitidas descobertas no Portal">{{ v.operacionais.emitidas }}</td>
+                      <td class="td-num" title="Notas recebidas descobertas no Portal">{{ v.operacionais.recebidas }}</td>
+                      <td class="td-num td-num-total" title="Total de notas descobertas no Portal">{{ v.operacionais.total }}</td>
+                      <td class="td-num" title="XMLs SEFIN persistidos (não confundir com notas descobertas)">{{ v.operacionais.xmlsSefin }}</td>
+                      <td class="td-num" title="XMLs exportados para downloads">{{ v.operacionais.exportados }}</td>
                       <td class="td-status-msg">
                         @if (row.status === 'EM_EXECUCAO') {
                           <span class="status-badge status-executando">
@@ -379,6 +322,7 @@
                           <div class="td-mensagem" [title]="v.status.mensagem">{{ v.status.mensagem }}</div>
                         }
                       </td>
+                      <td class="td-num td-duracao">{{ v.operacionais.duracao }}</td>
                     </tr>
                   </ng-container>
                 }

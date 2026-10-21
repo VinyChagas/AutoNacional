@@ -120,6 +120,8 @@ export interface ExecucaoStatusResponse {
   /** Progresso fiscal estruturado (UI-01e-B); ausente após expiração/restart. */
   fiscal?: ProgressoFiscalNfse;
   batch_id?: string;
+  /** API-02W — métricas operacionais (durações/contadores). */
+  metricas_operacionais?: import('../models/metricas-operacionais.model').MetricasOperacionaisApi | null;
 }
 
 export interface ResumoExecucoesResponse {

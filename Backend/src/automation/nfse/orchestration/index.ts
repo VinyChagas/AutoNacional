@@ -34,3 +34,15 @@ export type {
   ResultadoFluxoFiscalNativo,
   SituacaoDecisaoIntegracao,
 } from './types';
+export {
+  agoraMonotonicoMs,
+  deltaMonotonicoMs,
+  metricasOperacionaisVazias,
+  serializarMetricasOperacionais,
+  CronometroMonotonico,
+} from './metricas-operacionais';
+export type {
+  ContadoresOperacionaisNfse,
+  DuracoesOperacionaisNfse,
+  MetricasOperacionaisNfse,
+} from './metricas-operacionais';
