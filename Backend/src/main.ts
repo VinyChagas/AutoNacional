@@ -44,6 +44,10 @@ import metricsRouter from './routers/metrics';
 import { carregarCertificadoPorCnpj } from './services/certificate-loader';
 import { iniciarRelatorio2Captcha } from './automation/captcha-report';
 import { aplicarBootstrapCanalHomologacao } from './automation/nfse/homologacao/bootstrap-canal-homologacao';
+import {
+  aplicarBootstrapAdminSocket,
+  encerrarAdminSocket,
+} from './automation/nfse/homologacao/admin';
 
 if (!process.stdin.isTTY) {
   process.stdin.resume();
@@ -184,6 +188,22 @@ async function bootstrap() {
     );
   }
 
+  // H2.2.4-B1 — canal admin UDS opcional (health/status). Desativado por padrão.
+  // Configurado e inseguro → falha explícita (não habilita canal parcial).
+  const bootstrapAdmin = await aplicarBootstrapAdminSocket();
+  if (bootstrapAdmin.status === 'ativo') {
+    logger.info(
+      { socketPath: bootstrapAdmin.socketPath },
+      'Homologação: canal admin UDS ativo (somente diagnóstico)'
+    );
+  } else if (bootstrapAdmin.status === 'recusado') {
+    logger.error(
+      { codigo: bootstrapAdmin.codigo, motivo: bootstrapAdmin.motivo },
+      'Homologação: canal admin UDS recusado — encerrando Backend'
+    );
+    process.exit(1);
+  }
+
   const reportPath = iniciarRelatorio2Captcha();
   logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
 
@@ -209,6 +229,12 @@ async function bootstrap() {
     if (httpServer) {
       httpServer.close();
       httpServer.closeAllConnections?.();
+    }
+
+    try {
+      await encerrarAdminSocket();
+    } catch (err) {
+      logger.warn({ err }, 'Falha ao encerrar canal admin UDS');
     }
 
     try {

@@ -48,6 +48,12 @@ export {
   cliCancelar,
 } from './cli-homologacao-ops';
 export type { EntradaEmitirCli } from './cli-homologacao-ops';
+export {
+  aplicarBootstrapAdminSocket,
+  encerrarAdminSocket,
+  ENV_ADMIN_SOCKET_DIR,
+  ENV_ADMIN_SECRET_FILE,
+} from './admin';
 export type {
   CanalAutorizacaoHomologacao,
   TicketAutorizacaoOperacional,

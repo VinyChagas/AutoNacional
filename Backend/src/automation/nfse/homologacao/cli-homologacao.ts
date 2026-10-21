@@ -2,15 +2,16 @@
 /**
  * CLI administrativa local — homologação DISCOVERY_ONLY.
  *
- * Uso:
- *   npm run homologacao:cli -- consultar --store /abs/path --execucao-id 123
- *   npm run homologacao:cli -- emitir --store /abs/path --execucao-id 123 ...
- *   npm run homologacao:cli -- ativar --store /abs/path --autorizacao-id auth-... --motivo "..."
- *   npm run homologacao:cli -- cancelar --store /abs/path --autorizacao-id auth-... --motivo "..."
+ * Tickets (store):
+ *   npm run homologacao:cli -- consultar|emitir|ativar|cancelar ...
  *
- * Não inicia navegador, Discovery, SEFIN nem Backend HTTP.
- * Store: AUTONACIONAL_HOMOLOGACAO_STORE ou --store (absoluto).
+ * Canal admin UDS (diagnóstico):
+ *   npm run homologacao:cli -- admin health --socket-dir /abs/dir --secret-file /abs/secret
+ *   npm run homologacao:cli -- admin status --socket-dir /abs/dir --secret-file /abs/secret
+ *
+ * Não inicia navegador, Discovery, SEFIN nem enfileira jobs.
  */
+import * as path from 'node:path';
 import {
   ENV_HOMOLOGACAO_STORE,
   lerCaminhoStorePrivilegiado,
@@ -18,11 +19,28 @@ import {
 import { HomologacaoNfseError } from './types';
 import { mascararCnpjCli } from './cli-auditoria';
 import { cliAtivar, cliCancelar, cliConsultar, cliEmitir } from './cli-homologacao-ops';
+import {
+  ADMIN_SOCKET_FILENAME,
+  ENV_ADMIN_SECRET,
+  ENV_ADMIN_SECRET_FILE,
+  ENV_ADMIN_SOCKET_DIR,
+  enviarComandoAdminUds,
+} from './admin';
+import type { AdminOp } from './admin';
+import { carregarSegredoAdmin } from './admin/admin-seguranca';
 
 type Args = Record<string, string | boolean>;
 
-function parseArgs(argv: string[]): { comando: string; args: Args } {
+function parseArgs(argv: string[]): { comando: string; sub?: string; args: Args } {
   const [comando = '', ...rest] = argv;
+  if (comando === 'admin') {
+    const [sub = '', ...tail] = rest;
+    return { comando: 'admin', sub, args: parseFlags(tail) };
+  }
+  return { comando, args: parseFlags(rest) };
+}
+
+function parseFlags(rest: string[]): Args {
   const args: Args = {};
   for (let i = 0; i < rest.length; i += 1) {
     const tok = rest[i]!;
@@ -36,7 +54,7 @@ function parseArgs(argv: string[]): { comando: string; args: Args } {
       args[chave] = true;
     }
   }
-  return { comando, args };
+  return args;
 }
 
 function str(args: Args, chave: string): string {
@@ -69,11 +87,62 @@ function resolverStore(args: Args): string {
   );
 }
 
+/**
+ * Segredo apenas via arquivo (nunca --secret em argv — evita exposição em ps).
+ * Em não-produção, ENV_ADMIN_SECRET pode ser usado como fallback de teste.
+ */
+async function resolverTokenAdmin(args: Args): Promise<string> {
+  if (typeof args.secret === 'string') {
+    throw new HomologacaoNfseError(
+      'CONTEXTO_INVALIDO',
+      'Não use --secret em argv. Informe --secret-file (0600).'
+    );
+  }
+  const fileArg =
+    typeof args['secret-file'] === 'string' && args['secret-file'].trim()
+      ? args['secret-file'].trim()
+      : null;
+  const fileEnv = process.env[ENV_ADMIN_SECRET_FILE]?.trim() || null;
+  const inline =
+    process.env.NODE_ENV === 'production'
+      ? null
+      : process.env[ENV_ADMIN_SECRET]?.trim() || null;
+  return carregarSegredoAdmin({
+    secretFile: fileArg || fileEnv,
+    secretInline: inline,
+  });
+}
+
+function resolverSocketPath(args: Args): string {
+  if (typeof args.socket === 'string' && args.socket.trim()) {
+    return args.socket.trim();
+  }
+  const dir =
+    (typeof args['socket-dir'] === 'string' && args['socket-dir'].trim()) ||
+    process.env[ENV_ADMIN_SOCKET_DIR]?.trim() ||
+    '';
+  if (!dir) {
+    throw new HomologacaoNfseError(
+      'DIRETORIO_INSEGURO',
+      `Informe --socket-dir / --socket ou ${ENV_ADMIN_SOCKET_DIR}.`
+    );
+  }
+  if (!path.isAbsolute(dir)) {
+    throw new HomologacaoNfseError('DIRETORIO_INSEGURO', 'socket-dir deve ser absoluto.');
+  }
+  return path.join(dir, ADMIN_SOCKET_FILENAME);
+}
+
 async function main(): Promise<void> {
-  const { comando, args } = parseArgs(process.argv.slice(2));
+  const { comando, sub, args } = parseArgs(process.argv.slice(2));
   if (!comando || args.help === true || comando === 'help') {
     imprimirAjuda();
     process.exit(comando ? 0 : 1);
+  }
+
+  if (comando === 'admin') {
+    await rodarAdmin(sub ?? '', args);
+    return;
   }
 
   const store = resolverStore(args);
@@ -164,24 +233,45 @@ async function main(): Promise<void> {
     default:
       throw new HomologacaoNfseError(
         'CONTEXTO_INVALIDO',
-        `Comando desconhecido: ${comando}. Use consultar|emitir|ativar|cancelar.`
+        `Comando desconhecido: ${comando}. Use consultar|emitir|ativar|cancelar|admin.`
       );
+  }
+}
+
+async function rodarAdmin(sub: string, args: Args): Promise<void> {
+  if (sub !== 'health' && sub !== 'status') {
+    throw new HomologacaoNfseError(
+      'CONTEXTO_INVALIDO',
+      'Use: admin health | admin status'
+    );
+  }
+  const op = sub as AdminOp;
+  const socketPath = resolverSocketPath(args);
+  const token = await resolverTokenAdmin(args);
+  const resposta = await enviarComandoAdminUds({ socketPath, token, op });
+  console.log(JSON.stringify(resposta, null, 2));
+  if (!resposta.ok) {
+    process.exit(1);
   }
 }
 
 function imprimirAjuda(): void {
   console.log(`CLI homologação DISCOVERY_ONLY (local, sem HTTP)
 
-Comandos:
+Comandos de ticket (store):
   consultar  --store PATH --execucao-id ID
-  emitir     --store PATH --execucao-id ID --cnpj CNPJ \\
-             --periodo-inicio DD/MM/YYYY --periodo-fim DD/MM/YYYY \\
-             --diretorio-fiscal /abs/path --valido-ate ISO --motivo TEXTO
+  emitir     --store PATH --execucao-id ID --cnpj CNPJ ...
   ativar     --store PATH --autorizacao-id ID --motivo TEXTO
   cancelar   --store PATH --autorizacao-id ID --motivo TEXTO
 
-Env privilegiada (alternativa a --store): ${ENV_HOMOLOGACAO_STORE}
-Não inicia Discovery, navegador, SEFIN nem Backend.`);
+Comandos admin UDS (diagnóstico; sem preparar/liberar):
+  admin health  --socket-dir PATH --secret-file PATH
+  admin status  --socket-dir PATH --secret-file PATH
+
+Não passe segredo em argv (--secret é recusado).
+Env store: ${ENV_HOMOLOGACAO_STORE}
+Env admin: ${ENV_ADMIN_SOCKET_DIR}, ${ENV_ADMIN_SECRET_FILE}
+Não inicia Discovery, navegador, SEFIN nem PQueue.`);
 }
 
 main().catch((erro) => {
