@@ -1,15 +1,17 @@
 /**
  * Sincronização incremental ADN por cursor UltimoNSU.
  * COMPLETO = fim da distribuição NSU; NÃO declara inventário mensal completo.
+ * Persistência opcional por CNPJ; checkpoint só após lote processado/persistido.
  */
 import type { AmbienteAdn } from './endpoints';
 import { ErroAdn } from './errors';
-import { analisarLote, dedupeKeyDistribuicao } from './lote-analyzer';
+import { analisarLote, dedupeKeyDistribuicao, MAX_LOTE_DOCUMENTADO } from './lote-analyzer';
 import { processarItemDistribuicao } from './classifier';
 import {
   commitCheckpointAposLote,
   type PersistenciaCheckpointAdn,
 } from './checkpoint-store';
+import type { PersistenciaDocumentosAdn } from './document-store';
 import type { AdnClient } from './adn-client';
 import type {
   DocumentoDistribuidoAdn,
@@ -27,13 +29,19 @@ export interface SyncAdnOptions {
   resume?: boolean;
   /** Cursor forçado (sobrescreve checkpoint). */
   forcarNsu?: number;
+  /**
+   * Se true (default), remove o XML do objeto em memória após persistir
+   * (mantém caminhoArquivo / metadados).
+   */
+  descartarXmlEmMemoriaAposPersistir?: boolean;
 }
 
 export class SyncServiceAdn {
   constructor(
     private readonly client: AdnClient,
     private readonly checkpoint: PersistenciaCheckpointAdn,
-    private readonly limites: LimitesAdn = LIMITES_ADN_PADRAO
+    private readonly limites: LimitesAdn = LIMITES_ADN_PADRAO,
+    private readonly documentosStore: PersistenciaDocumentosAdn | null = null
   ) {}
 
   resolveCursorInicial(opts: SyncAdnOptions): number {
@@ -60,6 +68,9 @@ export class SyncServiceAdn {
     let intermediadas = 0;
     let eventos = 0;
     let naoClassificados = 0;
+    let persistidos = 0;
+    let duplicadosPersistencia = 0;
+    let semXml = 0;
     let ultimoNsuProcessado = cursor;
     let fimDistribuicaoConfirmado = false;
     let status: StatusSyncAdn = 'PARCIAL';
@@ -68,7 +79,12 @@ export class SyncServiceAdn {
 
     const maxRequests = opts.maxRequests ?? this.limites.maxRequests;
     const documentos: DocumentoDistribuidoAdn[] = [];
-    const seenKeys = new Set<string>();
+    const seenKeys = new Set<string>(
+      this.documentosStore
+        ? [...(await this.documentosStore.carregarChavesDedupe(cnpj, opts.ambiente))]
+        : []
+    );
+    const descartarXml = opts.descartarXmlEmMemoriaAposPersistir !== false;
 
     while (requests < maxRequests) {
       try {
@@ -113,6 +129,11 @@ export class SyncServiceAdn {
           break;
         }
 
+        if (lote.length > MAX_LOTE_DOCUMENTADO) {
+          // Contrato oficial: até 50. Acima disso processamos, mas sinalizamos no motivo.
+          motivoParada = 'lote_acima_do_documentado';
+        }
+
         if (analise.proximoCursor == null) {
           status = 'ERRO';
           motivoParada = 'ausencia_cursor_continuidade';
@@ -134,6 +155,22 @@ export class SyncServiceAdn {
             limites: this.limites,
           });
           if (!doc.xmlValido) xmlsInvalidos += 1;
+
+          if (this.documentosStore) {
+            const salvo = await this.documentosStore.salvar(cnpj, opts.ambiente, doc);
+            if (salvo.duplicado) {
+              duplicadosPersistencia += 1;
+              duplicidades += 1;
+            } else if (salvo.caminho) {
+              persistidos += 1;
+              doc.caminhoArquivo = salvo.caminho;
+            } else {
+              semXml += 1;
+            }
+            if (descartarXml && doc.xml) {
+              delete doc.xml;
+            }
+          }
 
           switch (doc.classificacao) {
             case 'emitida':
@@ -157,6 +194,7 @@ export class SyncServiceAdn {
         lotesProcessados += 1;
         ultimoNsuProcessado = analise.proximoCursor;
 
+        // Checkpoint somente após lote processado (e persistido, se store ativo).
         ultimoCheckpoint = commitCheckpointAposLote(this.checkpoint, {
           cnpj,
           ambiente: opts.ambiente,
@@ -221,6 +259,7 @@ export class SyncServiceAdn {
       requests,
       status,
       fimDistribuicaoConfirmado,
+      inventarioMensalCompletoDeclarado: false,
       motivoParada,
       duplicidades,
       xmlsInvalidos,
@@ -231,6 +270,9 @@ export class SyncServiceAdn {
         eventos,
         naoClassificados,
       },
+      persistencia: this.documentosStore
+        ? { persistidos, duplicadosPersistencia, semXml }
+        : undefined,
       checkpoint: ultimoCheckpoint,
     };
   }

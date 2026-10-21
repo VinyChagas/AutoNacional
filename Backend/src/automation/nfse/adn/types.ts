@@ -66,6 +66,8 @@ export interface DocumentoDistribuidoAdn {
   xmlValido: boolean;
   xml?: string;
   dataHoraGeracao?: string;
+  /** Caminho persistido (se store ativo). */
+  caminhoArquivo?: string;
 }
 
 export interface CheckpointDistribuicaoAdn {
@@ -116,6 +118,12 @@ export interface TransporteHttpAdn {
   ): Promise<RespostaHttpAdn>;
 }
 
+export interface PersistenciaSyncAdnResumo {
+  persistidos: number;
+  duplicadosPersistencia: number;
+  semXml: number;
+}
+
 export interface ResultadoSyncAdn {
   cnpj: string;
   ambiente: AmbienteAdn;
@@ -127,6 +135,11 @@ export interface ResultadoSyncAdn {
   status: StatusSyncAdn;
   /** Caught-up na distribuição NSU — NÃO equivale a inventário mensal completo. */
   fimDistribuicaoConfirmado: boolean;
+  /**
+   * Sempre false nesta etapa.
+   * Fim da fila NSU não autoriza declarar competência mensal completa.
+   */
+  inventarioMensalCompletoDeclarado: false;
   motivoParada: string;
   duplicidades: number;
   xmlsInvalidos: number;
@@ -137,5 +150,6 @@ export interface ResultadoSyncAdn {
     eventos: number;
     naoClassificados: number;
   };
+  persistencia?: PersistenciaSyncAdnResumo;
   checkpoint?: CheckpointDistribuicaoAdn;
 }

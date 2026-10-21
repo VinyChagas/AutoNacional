@@ -53,6 +53,13 @@ export {
   type PersistenciaCheckpointAdn,
 } from './checkpoint-store';
 export {
+  DocumentStoreArquivoAdn,
+  DocumentStoreMemoriaAdn,
+  chaveDedupeDocumento,
+  type PersistenciaDocumentosAdn,
+  type ResultadoPersistenciaDocumentoAdn,
+} from './document-store';
+export {
   criarTransporteHttpsMtlsAdn,
   classificarFalhaTransporteAdn,
 } from './mtls-transport';
@@ -83,3 +90,4 @@ export {
   type EntradaSmokeAdn,
   type ResumoSmokeAdn,
 } from './smoke-service';
+export type { PersistenciaSyncAdnResumo } from './types';

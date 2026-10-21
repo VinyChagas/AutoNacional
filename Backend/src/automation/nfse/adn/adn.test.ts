@@ -314,6 +314,7 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
     expect(r.ultimoNsuProcessado).toBe(61);
     expect(r.status).toBe('COMPLETO');
     expect(r.fimDistribuicaoConfirmado).toBe(true);
+    expect(r.inventarioMensalCompletoDeclarado).toBe(false);
     expect(r.contagens.emitidas).toBe(50);
     expect(r.contagens.recebidas).toBe(10);
     expect(store.ler(CNPJ, 'producao')?.ultimoNsuConfirmado).toBe(61);
@@ -489,6 +490,7 @@ describe('adaptador inventário — nunca COMPLETO só por NSU', () => {
       requests: 2,
       status: 'COMPLETO',
       fimDistribuicaoConfirmado: true,
+      inventarioMensalCompletoDeclarado: false,
       motivoParada: 'nenhum_documento_localizado',
       duplicidades: 0,
       xmlsInvalidos: 0,
