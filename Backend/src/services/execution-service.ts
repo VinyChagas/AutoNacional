@@ -48,6 +48,16 @@ import {
 import { criarPeriodoConsultaPortal } from '../automation/nfse/contracts/periodo';
 import { discoverNfse } from '../automation/nfse/discovery/discovery-service';
 import { avaliarPonteHomologacaoDiscoveryOnly } from '../automation/nfse/homologacao';
+import {
+  liberarExecucaoHomologacao,
+  prepararExecucaoHomologacao,
+  STATUS_HOMOLOGACAO_LIBERADA,
+  type DependenciasPreparacaoLiberacao,
+  type PayloadExecucaoHomologacao,
+} from '../automation/nfse/homologacao/preparacao-liberacao';
+import { obterCanalHomologacaoOperacional } from '../automation/nfse/homologacao/canal-autorizacao';
+import { registrarHandlersAdminPreparacaoLiberacao } from '../automation/nfse/homologacao/admin/admin-handlers';
+import { HomologacaoNfseError } from '../automation/nfse/homologacao/types';
 
 const logger = getLogger('execution-service');
 
@@ -282,6 +292,145 @@ export async function adicionarExecucao(
 
   return exec.id;
 }
+
+/**
+ * Enfileira execução já criada (homologação B2) na mesma PQueue.
+ * Não cria novo registro Prisma. Não consome ticket.
+ */
+async function enfileirarExecucaoHomologacaoPreparada(
+  payload: PayloadExecucaoHomologacao
+): Promise<void> {
+  if (encerrandoFila) {
+    throw new Error('Servidor em encerramento; novas execuções não são aceitas');
+  }
+
+  const config = await settingsRepo.obterConfiguracoes();
+  const headlessFinal =
+    payload.captchaMode === 'MANUAL'
+      ? false
+      : payload.headless ?? config?.headless ?? PLAYWRIGHT_HEADLESS;
+
+  const execId = Number(payload.execucaoId);
+  const tipoAuth: TipoAutenticacao =
+    payload.tipoAutenticacao === 'credenciais' ? 'credenciais' : 'certificado';
+
+  execucoesAtivas.set(String(payload.empresaId), {
+    empresaId: payload.empresaId,
+    cnpj: payload.cnpj,
+    periodoInicio: payload.periodoInicio,
+    periodoFim: payload.periodoFim,
+    tipo: payload.tipo || 'ambas',
+    headless: headlessFinal,
+    baixarPdf: payload.baixarPdf,
+    captchaMode: payload.captchaMode,
+    execucaoDbId: execId,
+    status: STATUS_HOMOLOGACAO_LIBERADA,
+    etapaAtual: 'aguardando_fila',
+    progresso: 0,
+    logs: [],
+    mensagem: 'Homologação liberada — aguardando worker',
+    qtdNotasEmitidas: 0,
+    qtdNotasRecebidas: 0,
+    qtdNotasCanceladas: 0,
+    resultadoFinal: null,
+    tipoAutenticacao: tipoAuth,
+  });
+
+  fila.concurrency = Math.max(fila.concurrency, await obterLimiteConcorrencia());
+
+  fila.add(async () => {
+    try {
+      await executarFluxoCompleto(
+        payload.empresaId,
+        payload.cnpj,
+        payload.periodoInicio,
+        payload.periodoFim,
+        payload.tipo || 'ambas',
+        headlessFinal,
+        execId,
+        undefined,
+        tipoAuth,
+        payload.baixarPdf
+      );
+    } catch (e) {
+      logger.error(
+        { err: e, empresaId: payload.empresaId, execucaoId: payload.execucaoId },
+        '[worker] Erro não tratado em executarFluxoCompleto (homologação liberada)'
+      );
+    }
+  });
+}
+
+function depsPreparacaoLiberacaoProducao(): DependenciasPreparacaoLiberacao {
+  return {
+    async criarExecucao(data) {
+      return execucoesRepo.criar(data);
+    },
+    async obterExecucao(id) {
+      const e = await execucoesRepo.obterPorId(id);
+      if (!e) return null;
+      return {
+        id: e.id,
+        status: e.status,
+        cnpj: e.cnpj,
+        periodoInicio: e.periodoInicio,
+        periodoFim: e.periodoFim,
+        empresaId: e.empresaId,
+      };
+    },
+    atualizarSeStatus: (id, statusAtual, data) =>
+      execucoesRepo.atualizarSeStatus(id, statusAtual, data),
+    enfileirar: enfileirarExecucaoHomologacaoPreparada,
+    obterCanal: obterCanalHomologacaoOperacional,
+    headlessPadrao: PLAYWRIGHT_HEADLESS,
+  };
+}
+
+function paramsAdminPreparar(params: Record<string, unknown>) {
+  const empresaId = Number(params.empresaId);
+  const cnpj = String(params.cnpj ?? '');
+  const periodoInicio = String(params.periodoInicio ?? '');
+  const periodoFim = String(params.periodoFim ?? '');
+  if (!Number.isInteger(empresaId) || empresaId < 1) {
+    throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'empresaId inválido.');
+  }
+  return prepararExecucaoHomologacao(
+    {
+      empresaId,
+      cnpj,
+      periodoInicio,
+      periodoFim,
+      tipo: params.tipo != null ? String(params.tipo) : 'DISCOVERY_ONLY',
+      tipoAutenticacao:
+        params.tipoAutenticacao === 'credenciais' ? 'credenciais' : 'certificado',
+      headless: typeof params.headless === 'boolean' ? params.headless : undefined,
+      baixarPdf: typeof params.baixarPdf === 'boolean' ? params.baixarPdf : undefined,
+      captchaMode:
+        typeof params.captchaMode === 'string'
+          ? (params.captchaMode as CaptchaMode)
+          : undefined,
+    },
+    depsPreparacaoLiberacaoProducao()
+  );
+}
+
+function paramsAdminLiberar(params: Record<string, unknown>) {
+  return liberarExecucaoHomologacao(
+    { execucaoId: String(params.execucaoId ?? '') },
+    depsPreparacaoLiberacaoProducao()
+  );
+}
+
+registrarHandlersAdminPreparacaoLiberacao({
+  preparar: async (params) => {
+    const r = await paramsAdminPreparar(params);
+    return { ...r };
+  },
+  liberar: async (params) => {
+    const r = await paramsAdminLiberar(params);
+    return { ...r };
+  },
+});
 
 /**
  * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).

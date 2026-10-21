@@ -1,5 +1,5 @@
 /**
- * Cliente UDS para a CLI administrativa (health / status).
+ * Cliente UDS para a CLI administrativa (health / status / preparar / liberar).
  */
 import { createConnection } from 'node:net';
 import { randomUUID } from 'node:crypto';
@@ -15,16 +15,21 @@ export async function enviarComandoAdminUds(entrada: {
   socketPath: string;
   token: string;
   op: AdminOp;
+  params?: Record<string, unknown>;
   timeoutMs?: number;
 }): Promise<AdminResponse> {
   const timeoutMs = entrada.timeoutMs ?? ADMIN_IO_TIMEOUT_MS;
   const id = randomUUID().slice(0, 32);
-  const payload = `${JSON.stringify({
+  const corpo: Record<string, unknown> = {
     v: ADMIN_PROTOCOL_VERSION,
     op: entrada.op,
     token: entrada.token,
     id,
-  })}\n`;
+  };
+  if (entrada.params && Object.keys(entrada.params).length > 0) {
+    corpo.params = entrada.params;
+  }
+  const payload = `${JSON.stringify(corpo)}\n`;
 
   if (Buffer.byteLength(payload, 'utf8') > ADMIN_MAX_MESSAGE_BYTES) {
     throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'Payload admin excede limite.');

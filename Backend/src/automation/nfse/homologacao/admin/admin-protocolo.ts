@@ -1,6 +1,6 @@
 /**
- * Protocolo mínimo versionado do canal admin UDS.
- * Somente health | status nesta etapa.
+ * Protocolo versionado do canal admin UDS.
+ * Ops: health | status | preparar | liberar
  */
 import {
   ADMIN_MAX_MESSAGE_BYTES,
@@ -8,7 +8,7 @@ import {
 } from './admin-config';
 import { HomologacaoNfseError } from '../types';
 
-export const ADMIN_OPS = ['health', 'status'] as const;
+export const ADMIN_OPS = ['health', 'status', 'preparar', 'liberar'] as const;
 export type AdminOp = (typeof ADMIN_OPS)[number];
 
 export interface AdminRequest {
@@ -16,6 +16,7 @@ export interface AdminRequest {
   readonly op: AdminOp;
   readonly token: string;
   readonly id: string;
+  readonly params?: Record<string, unknown>;
 }
 
 export interface AdminResponseOk {
@@ -68,18 +69,51 @@ export function parseAdminRequest(raw: Buffer | string): AdminRequest {
   if (typeof rec.id !== 'string' || !rec.id.trim() || rec.id.length > 64) {
     throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'id de requisição inválido.');
   }
-  // Rejeita campos perigosos / execução arbitrária.
+  // Rejeita campos perigosos / execução arbitrária no topo.
   for (const proibido of ['cmd', 'shell', 'eval', 'script', 'exec', 'path']) {
     if (proibido in rec) {
       throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'Campo proibido na mensagem admin.');
     }
   }
+
+  let params: Record<string, unknown> | undefined;
+  if (rec.params !== undefined) {
+    if (!rec.params || typeof rec.params !== 'object' || Array.isArray(rec.params)) {
+      throw new HomologacaoNfseError('CONTEXTO_INVALIDO', 'params admin inválidos.');
+    }
+    params = sanitizarParams(rec.params as Record<string, unknown>);
+  }
+
   return {
     v: ADMIN_PROTOCOL_VERSION,
     op: rec.op as AdminOp,
     token: rec.token,
     id: rec.id.trim(),
+    params,
   };
+}
+
+function sanitizarParams(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const permitidos = new Set([
+    'empresaId',
+    'cnpj',
+    'periodoInicio',
+    'periodoFim',
+    'tipo',
+    'tipoAutenticacao',
+    'execucaoId',
+    'headless',
+    'baixarPdf',
+    'captchaMode',
+  ]);
+  for (const [k, v] of Object.entries(raw)) {
+    if (!permitidos.has(k)) continue;
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null) {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 export function montarRespostaOk(

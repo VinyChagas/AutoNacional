@@ -171,8 +171,12 @@ describe('H2.2.4-B1 canal admin UDS offline', () => {
 
   it('14 comando desconhecido rejeitado', () => {
     expect(() =>
-      parseAdminRequest(JSON.stringify({ v: 1, op: 'preparar', token: SEGREDO, id: 'a' }))
+      parseAdminRequest(JSON.stringify({ v: 1, op: 'discover', token: SEGREDO, id: 'a' }))
     ).toThrow();
+    // B2: preparar/liberar passam no parse (execução exige handlers).
+    expect(
+      parseAdminRequest(JSON.stringify({ v: 1, op: 'preparar', token: SEGREDO, id: 'a' })).op
+    ).toBe('preparar');
   });
 
   it('15 health', async () => {
@@ -197,7 +201,7 @@ describe('H2.2.4-B1 canal admin UDS offline', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.data.prepararLiberar).toBe(false);
+      expect(r.data.prepararLiberar).toBe(true);
       expect(r.data.discoverNoAdmin).toBe(false);
       expect(r.data.sefin).toBe(false);
       expect(r.data.gateExecucaoReal).toBe(false);
@@ -243,7 +247,7 @@ describe('H2.2.4-B1 canal admin UDS offline', () => {
     });
     expect(status.ok).toBe(true);
     if (status.ok) {
-      expect(status.data.prepararLiberar).toBe(false);
+      expect(status.data.prepararLiberar).toBe(true);
       expect(status.data.sefin).toBe(false);
       expect(status.data.discoverNoAdmin).toBe(false);
     }
@@ -452,7 +456,8 @@ describe('H2.2.4-B1-R1 revisão segurança UDS', () => {
     });
     expect(st.ok).toBe(true);
     if (st.ok) {
-      expect(st.data.prepararLiberar).toBe(false);
+      // B2 expõe preparar/liberar no protocolo; handlers podem estar ausentes em teste isolado.
+      expect(st.data.prepararLiberar).toBe(true);
       expect(st.data.sefin).toBe(false);
       expect(st.data.discoverNoAdmin).toBe(false);
     }

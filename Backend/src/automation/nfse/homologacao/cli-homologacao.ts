@@ -5,11 +5,13 @@
  * Tickets (store):
  *   npm run homologacao:cli -- consultar|emitir|ativar|cancelar ...
  *
- * Canal admin UDS (diagnóstico):
- *   npm run homologacao:cli -- admin health --socket-dir /abs/dir --secret-file /abs/secret
- *   npm run homologacao:cli -- admin status --socket-dir /abs/dir --secret-file /abs/secret
+ * Canal admin UDS:
+ *   npm run homologacao:cli -- admin health|status --socket-dir /abs/dir --secret-file /abs/secret
+ *   npm run homologacao:cli -- admin preparar --empresa-id N --cnpj CNPJ --periodo-inicio D --periodo-fim D ...
+ *   npm run homologacao:cli -- admin liberar --execucao-id ID ...
  *
- * Não inicia navegador, Discovery, SEFIN nem enfileira jobs.
+ * preparar NÃO enfileira. liberar enfileira na PQueue do Backend (após ticket ativado).
+ * Não inicia Discovery/SEFIN no CLI; consumo de ticket permanece na ponte.
  */
 import * as path from 'node:path';
 import {
@@ -239,16 +241,32 @@ async function main(): Promise<void> {
 }
 
 async function rodarAdmin(sub: string, args: Args): Promise<void> {
-  if (sub !== 'health' && sub !== 'status') {
+  if (sub !== 'health' && sub !== 'status' && sub !== 'preparar' && sub !== 'liberar') {
     throw new HomologacaoNfseError(
       'CONTEXTO_INVALIDO',
-      'Use: admin health | admin status'
+      'Use: admin health | status | preparar | liberar'
     );
   }
   const op = sub as AdminOp;
   const socketPath = resolverSocketPath(args);
   const token = await resolverTokenAdmin(args);
-  const resposta = await enviarComandoAdminUds({ socketPath, token, op });
+  let params: Record<string, unknown> | undefined;
+  if (op === 'preparar') {
+    params = {
+      empresaId: Number(str(args, 'empresa-id')),
+      cnpj: str(args, 'cnpj'),
+      periodoInicio: str(args, 'periodo-inicio'),
+      periodoFim: str(args, 'periodo-fim'),
+      tipo: typeof args.tipo === 'string' ? args.tipo : 'DISCOVERY_ONLY',
+      tipoAutenticacao:
+        typeof args['tipo-autenticacao'] === 'string'
+          ? args['tipo-autenticacao']
+          : 'certificado',
+    };
+  } else if (op === 'liberar') {
+    params = { execucaoId: str(args, 'execucao-id') };
+  }
+  const resposta = await enviarComandoAdminUds({ socketPath, token, op, params });
   console.log(JSON.stringify(resposta, null, 2));
   if (!resposta.ok) {
     process.exit(1);
@@ -264,14 +282,19 @@ Comandos de ticket (store):
   ativar     --store PATH --autorizacao-id ID --motivo TEXTO
   cancelar   --store PATH --autorizacao-id ID --motivo TEXTO
 
-Comandos admin UDS (diagnóstico; sem preparar/liberar):
-  admin health  --socket-dir PATH --secret-file PATH
-  admin status  --socket-dir PATH --secret-file PATH
+Comandos admin UDS (Backend em execução):
+  admin health   --socket-dir PATH --secret-file PATH
+  admin status   --socket-dir PATH --secret-file PATH
+  admin preparar --socket-dir PATH --secret-file PATH \\
+                 --empresa-id N --cnpj CNPJ \\
+                 --periodo-inicio DD/MM/YYYY --periodo-fim DD/MM/YYYY
+  admin liberar  --socket-dir PATH --secret-file PATH --execucao-id ID
 
+Fluxo: preparar → emitir/ativar ticket → liberar → PQueue.
+Ticket NÃO é consumido em preparar/liberar (consumo na ponte).
 Não passe segredo em argv (--secret é recusado).
 Env store: ${ENV_HOMOLOGACAO_STORE}
-Env admin: ${ENV_ADMIN_SOCKET_DIR}, ${ENV_ADMIN_SECRET_FILE}
-Não inicia Discovery, navegador, SEFIN nem PQueue.`);
+Env admin: ${ENV_ADMIN_SOCKET_DIR}, ${ENV_ADMIN_SECRET_FILE}`);
 }
 
 main().catch((erro) => {

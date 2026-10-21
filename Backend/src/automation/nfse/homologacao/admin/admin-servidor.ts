@@ -1,6 +1,7 @@
 /**
- * Servidor Unix Domain Socket administrativo (health/status).
- * Não enfileira, não descoberta, não SEFIN.
+ * Servidor Unix Domain Socket administrativo.
+ * Ops: health | status | preparar | liberar.
+ * Não inicia Discovery/SEFIN/navegador no handler — liberar apenas enfileira via wire.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 import { getLogger } from '../../../../infrastructure/logger';
@@ -19,6 +20,11 @@ import {
   type AdminResponse,
 } from './admin-protocolo';
 import {
+  executarAdminLiberar,
+  executarAdminPreparar,
+  handlersAdminPreparacaoLiberacaoAtivos,
+} from './admin-handlers';
+import {
   aplicarPermissoesSocket,
   caminhoSocketAdmin,
   prepararDiretorioAdminSocket,
@@ -28,6 +34,8 @@ import {
 } from './admin-seguranca';
 
 const logger = getLogger('homologacao-admin-uds');
+
+const ADMIN_OPS_LIST = ['health', 'status', 'preparar', 'liberar'] as const;
 
 export interface AdminServidorAtivo {
   readonly socketPath: string;
@@ -77,11 +85,12 @@ export async function iniciarAdminServidorUds(entrada: {
     {
       socketPath,
       protocolo: ADMIN_PROTOCOL_VERSION,
-      ops: ['health', 'status'],
+      ops: ADMIN_OPS_LIST,
       discoverAutorizado: false,
       gateAberto: GATE_EXECUCAO_REAL_DISCOVERY_ONLY,
+      handlersPreparacao: handlersAdminPreparacaoLiberacaoAtivos(),
     },
-    'Canal admin UDS ativo (somente diagnóstico)'
+    'Canal admin UDS ativo'
   );
 
   return { socketPath, dir, fechar };
@@ -92,6 +101,7 @@ async function tratarConexao(socket: Socket, segredo: string): Promise<void> {
   const chunks: Buffer[] = [];
   let total = 0;
   let respondido = false;
+  let processando = false;
 
   const responder = (resposta: AdminResponse) => {
     if (respondido || socket.destroyed) return;
@@ -113,6 +123,7 @@ async function tratarConexao(socket: Socket, segredo: string): Promise<void> {
   });
 
   socket.on('data', (chunk) => {
+    if (respondido || processando) return;
     const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += piece.length;
     if (total > ADMIN_MAX_MESSAGE_BYTES) {
@@ -125,49 +136,8 @@ async function tratarConexao(socket: Socket, segredo: string): Promise<void> {
     if (!buf.includes(0x0a) && buf.length < ADMIN_MAX_MESSAGE_BYTES) {
       return;
     }
-    try {
-      const req = parseAdminRequest(buf);
-      if (!tokenAdminValido(req.token, segredo)) {
-        responder(
-          montarRespostaErro('CONTEXTO_INVALIDO', 'Cliente admin não autorizado.', {
-            op: req.op,
-            id: req.id,
-          })
-        );
-        return;
-      }
-      if (req.op === 'health') {
-        responder(
-          montarRespostaOk('health', req.id, {
-            status: 'ok',
-            protocolo: ADMIN_PROTOCOL_VERSION,
-            pid: process.pid,
-          })
-        );
-        return;
-      }
-      if (req.op === 'status') {
-        const canal = obterCanalHomologacaoOperacional();
-        responder(
-          montarRespostaOk('status', req.id, {
-            canalHomologacao: canal ? 'configurado' : 'ausente',
-            gateExecucaoReal: GATE_EXECUCAO_REAL_DISCOVERY_ONLY,
-            adminOps: ['health', 'status'],
-            prepararLiberar: false,
-            discoverNoAdmin: false,
-            sefin: false,
-            pid: process.pid,
-          })
-        );
-        return;
-      }
-      responder(montarRespostaErro('CONTEXTO_INVALIDO', 'Comando desconhecido.', { id: req.id }));
-    } catch (erro) {
-      const codigo =
-        erro instanceof HomologacaoNfseError ? erro.codigo : 'CONTEXTO_INVALIDO';
-      const mensagem = erro instanceof Error ? erro.message : 'Falha admin';
-      responder(montarRespostaErro(codigo, mensagem));
-    }
+    processando = true;
+    void processarPedido(buf, segredo, responder);
   });
 
   socket.on('end', () => {
@@ -175,4 +145,65 @@ async function tratarConexao(socket: Socket, segredo: string): Promise<void> {
       // conexão encerrada sem payload — silencioso
     }
   });
+}
+
+async function processarPedido(
+  buf: Buffer,
+  segredo: string,
+  responder: (r: AdminResponse) => void
+): Promise<void> {
+  try {
+    const req = parseAdminRequest(buf);
+    if (!tokenAdminValido(req.token, segredo)) {
+      responder(
+        montarRespostaErro('CONTEXTO_INVALIDO', 'Cliente admin não autorizado.', {
+          op: req.op,
+          id: req.id,
+        })
+      );
+      return;
+    }
+    if (req.op === 'health') {
+      responder(
+        montarRespostaOk('health', req.id, {
+          status: 'ok',
+          protocolo: ADMIN_PROTOCOL_VERSION,
+          pid: process.pid,
+        })
+      );
+      return;
+    }
+    if (req.op === 'status') {
+      const canal = obterCanalHomologacaoOperacional();
+      responder(
+        montarRespostaOk('status', req.id, {
+          canalHomologacao: canal ? 'configurado' : 'ausente',
+          gateExecucaoReal: GATE_EXECUCAO_REAL_DISCOVERY_ONLY,
+          adminOps: [...ADMIN_OPS_LIST],
+          prepararLiberar: true,
+          handlersRegistrados: handlersAdminPreparacaoLiberacaoAtivos(),
+          discoverNoAdmin: false,
+          sefin: false,
+          pid: process.pid,
+        })
+      );
+      return;
+    }
+    if (req.op === 'preparar') {
+      const data = await executarAdminPreparar(req.params ?? {});
+      responder(montarRespostaOk('preparar', req.id, data));
+      return;
+    }
+    if (req.op === 'liberar') {
+      const data = await executarAdminLiberar(req.params ?? {});
+      responder(montarRespostaOk('liberar', req.id, data));
+      return;
+    }
+    responder(montarRespostaErro('CONTEXTO_INVALIDO', 'Comando desconhecido.', { id: req.id }));
+  } catch (erro) {
+    const codigo =
+      erro instanceof HomologacaoNfseError ? erro.codigo : 'CONTEXTO_INVALIDO';
+    const mensagem = erro instanceof Error ? erro.message : 'Falha admin';
+    responder(montarRespostaErro(codigo, mensagem));
+  }
 }

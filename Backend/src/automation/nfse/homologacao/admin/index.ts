@@ -25,3 +25,8 @@ export {
   ADMIN_SECRET_MIN_LENGTH,
 } from './admin-seguranca';
 export { iniciarAdminServidorUds } from './admin-servidor';
+export {
+  registrarHandlersAdminPreparacaoLiberacao,
+  limparHandlersAdminPreparacaoLiberacaoSomenteTeste,
+  handlersAdminPreparacaoLiberacaoAtivos,
+} from './admin-handlers';

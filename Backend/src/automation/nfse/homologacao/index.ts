@@ -74,6 +74,23 @@ export type {
   SituacaoPonteHomologacao,
 } from './ponte-execution-homologacao';
 export {
+  prepararExecucaoHomologacao,
+  liberarExecucaoHomologacao,
+  STATUS_HOMOLOGACAO_PREPARADA,
+  STATUS_HOMOLOGACAO_LIBERADA,
+  STATUS_HOMOLOGACAO_BLOQUEADA,
+  limparRegistryPreparacaoSomenteTeste,
+  simularReinicioProcessoSomenteTeste,
+  obterPayloadPreparacao,
+} from './preparacao-liberacao';
+export type {
+  EntradaPrepararHomologacao,
+  ResultadoPrepararHomologacao,
+  ResultadoLiberarHomologacao,
+  PayloadExecucaoHomologacao,
+  DependenciasPreparacaoLiberacao,
+} from './preparacao-liberacao';
+export {
   ESTADOS_OPERACIONAIS_HOMOLOGACAO,
   mapearVereditoParaEstadoOperacional,
 } from './estados-operacionais';
