@@ -30,7 +30,7 @@ import { resolveStoragePath } from '../utils/path-resolve';
 import { abrirDashboardNfseComCredencial } from '../automation/login-credencial-nfse';
 import { assertPageUsable, clicarMenuNotasEAguardar, isTargetClosedError } from '../automation/playwright-nav';
 import * as credenciaisRepo from '../repositories/credenciais';
-import { emitirEventoExecucao } from './execution-events.service';
+import { emitirEventoExecucao, emitirProgressoFiscalSeAssociado } from './execution-events.service';
 import { persistirExecution } from './automation-metrics.service';
 import { cancelByExecution } from './manual-captcha.service';
 import type { CaptchaMode } from '../automation/captcha/types';
@@ -58,6 +58,12 @@ import {
 import { obterCanalHomologacaoOperacional } from '../automation/nfse/homologacao/canal-autorizacao';
 import { registrarHandlersAdminPreparacaoLiberacao } from '../automation/nfse/homologacao/admin/admin-handlers';
 import { HomologacaoNfseError } from '../automation/nfse/homologacao/types';
+import {
+  listarSnapshotsPorLote,
+  progressoFiscalDeDiscoveryOnly,
+  retenirProgressoFiscal,
+  type ProgressoFiscalNfse,
+} from '../automation/nfse/progresso-fiscal';
 
 const logger = getLogger('execution-service');
 
@@ -107,6 +113,8 @@ interface ExecucaoInfo {
   /** Slot visual reservado antes do launch (liberado ao fechar o browser). */
   windowSlot?: ReservedBrowserSlot;
   startedAt?: Date;
+  /** Progresso fiscal estruturado (UI-01e-B) — só em memória enquanto a execução está ativa. */
+  progressoFiscal?: ProgressoFiscalNfse;
 }
 
 type CertificateLoader = (cnpj: string) => Promise<CertificadoEmMemoria>;
@@ -463,7 +471,8 @@ registrarHandlersAdminPreparacaoLiberacao({
 /**
  * Obtém status de todas as execuções de um batch (para polling em lote, evita N requests).
  * @param batchId - UUID do batch
- * @param empresaIdsFallback - Se fornecido, para cada empresa_id não encontrado em memória, busca última execução no DB
+ * @param empresaIdsFallback - Se fornecido, para cada empresa_id não encontrado em memória ativa
+ *   nem na retenção fiscal do lote, busca última execução no DB (sem inventar `fiscal`).
  */
 export async function obterStatusBatch(
   batchId: string,
@@ -475,7 +484,7 @@ export async function obterStatusBatch(
   for (const [, info] of execucoesAtivas) {
     if (info.batchId === batchId) {
       seenEmpresas.add(info.empresaId);
-      out.push({
+      const row: Record<string, unknown> = {
         empresa_id: String(info.empresaId),
         cnpj: info.cnpj,
         batch_id: info.batchId,
@@ -489,8 +498,43 @@ export async function obterStatusBatch(
         qtd_notas_canceladas: info.qtdNotasCanceladas,
         resultado_final: info.resultadoFinal,
         tipo_autenticacao: info.tipoAutenticacao,
-      });
+      };
+      // Campo opcional: só quando há progresso fiscal associado a este lote/execução.
+      if (
+        info.progressoFiscal &&
+        info.progressoFiscal.empresa_id === String(info.empresaId) &&
+        info.progressoFiscal.execucao_id === String(info.execucaoDbId) &&
+        (info.progressoFiscal.batch_id === null || info.progressoFiscal.batch_id === batchId)
+      ) {
+        row.fiscal = info.progressoFiscal;
+      }
+      out.push(row);
     }
+  }
+
+  // UI-01e-B1 — após finalização: snapshots retidos do mesmo lote (mesmo processo).
+  for (const snap of listarSnapshotsPorLote(batchId)) {
+    const empNum = parseInt(snap.empresa_id, 10);
+    if (!Number.isFinite(empNum) || seenEmpresas.has(empNum)) continue;
+    if (snap.batch_id !== batchId) continue;
+    seenEmpresas.add(empNum);
+    const row: Record<string, unknown> = {
+      empresa_id: snap.empresa_id,
+      cnpj: snap.cnpj,
+      batch_id: batchId,
+      status: snap.status,
+      etapa_atual: snap.etapa_atual,
+      progresso: snap.progresso,
+      logs: [],
+      mensagem: snap.mensagem,
+      qtd_notas_emitidas: snap.qtd_notas_emitidas,
+      qtd_notas_recebidas: snap.qtd_notas_recebidas,
+      qtd_notas_canceladas: snap.qtd_notas_canceladas,
+      resultado_final: snap.resultado_final,
+      tipo_autenticacao: snap.tipo_autenticacao,
+      fiscal: snap.fiscal,
+    };
+    out.push(row);
   }
 
   if (empresaIdsFallback && empresaIdsFallback.length > 0) {
@@ -498,6 +542,7 @@ export async function obterStatusBatch(
       if (seenEmpresas.has(empId)) continue;
       const ultima = await execucoesRepo.obterUltimaPorEmpresa(empId);
       if (ultima && (ultima.status === 'concluido' || ultima.status === 'falhou')) {
+        // Sem `fiscal`: DB legado não guarda ProgressoFiscalNfse; não reconstruir por estimativa.
         out.push({
           empresa_id: String(empId),
           cnpj: ultima.cnpj ?? '',
@@ -526,7 +571,7 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
   const info = execucoesAtivas.get(empresaId);
   if (!info) return null;
 
-  return {
+  const status: Record<string, unknown> = {
     empresa_id: String(info.empresaId),
     cnpj: info.cnpj,
     batch_id: info.batchId,
@@ -541,9 +586,52 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
     resultado_final: info.resultadoFinal,
     tipo_autenticacao: info.tipoAutenticacao,
   };
+  if (
+    info.progressoFiscal &&
+    info.progressoFiscal.empresa_id === String(info.empresaId) &&
+    info.progressoFiscal.execucao_id === String(info.execucaoDbId)
+  ) {
+    status.fiscal = info.progressoFiscal;
+  }
+  return status;
 }
 
 const execucoesAtivas = new Map<string, ExecucaoInfo>();
+
+/** Retém snapshot de polling + fiscal (sobrevive à remoção de execucoesAtivas; não ao restart). */
+function retenirProgressoFiscalDeInfo(
+  info: ExecucaoInfo,
+  opcoes?: { marcadoFinalizado?: boolean }
+): void {
+  if (!info.progressoFiscal) return;
+  retenirProgressoFiscal(
+    {
+      empresa_id: String(info.empresaId),
+      cnpj: info.cnpj,
+      batch_id: info.batchId ?? null,
+      execucao_id: String(info.execucaoDbId),
+      status: info.status,
+      etapa_atual: info.etapaAtual,
+      progresso: info.progresso,
+      mensagem: info.mensagem,
+      qtd_notas_emitidas: info.qtdNotasEmitidas,
+      qtd_notas_recebidas: info.qtdNotasRecebidas,
+      qtd_notas_canceladas: info.qtdNotasCanceladas,
+      resultado_final: info.resultadoFinal,
+      tipo_autenticacao: info.tipoAutenticacao,
+      periodo_inicio: info.periodoInicio,
+      periodo_fim: info.periodoFim,
+      fiscal: {
+        ...info.progressoFiscal,
+        batch_id: info.batchId ?? info.progressoFiscal.batch_id,
+        empresa_id: String(info.empresaId),
+        execucao_id: String(info.execucaoDbId),
+        cnpj: info.cnpj,
+      },
+    },
+    { marcadoFinalizado: opcoes?.marcadoFinalizado === true }
+  );
+}
 
 const fila = new PQueue({
   concurrency: 3,
@@ -724,6 +812,21 @@ async function finalizarExecucao(params: FinalizarExecucaoParams): Promise<void>
   } catch (e) {
     logger.error({ err: e, execucaoId }, '[finalize] Erro ao atualizar DB/emitir SSE');
   } finally {
+    // UI-01e-B1/B2 — reter progresso fiscal antes de remover da mapa ativa (inicia TTL).
+    if (info?.progressoFiscal) {
+      retenirProgressoFiscalDeInfo(
+        {
+          ...info,
+          status: statusFinal,
+          mensagem: message,
+          qtdNotasEmitidas: contagens.emitidas,
+          qtdNotasRecebidas: contagens.recebidas,
+          qtdNotasCanceladas: contagens.canceladas,
+          resultadoFinal: resultado_final,
+        },
+        { marcadoFinalizado: true }
+      );
+    }
     execucoesAtivas.delete(key);
     logFinalize(execucaoId, 'REMOVED ACTIVE');
 
@@ -1019,6 +1122,36 @@ async function executarFluxoCompleto(
       info.qtdNotasEmitidas = totais?.emitidas ?? 0;
       info.qtdNotasRecebidas = totais?.recebidas ?? 0;
       info.qtdNotasCanceladas = totais?.canceladas ?? 0;
+
+      // UI-01e-B — progresso fiscal estruturado a partir do resultado real Discovery-Only.
+      const fiscal = progressoFiscalDeDiscoveryOnly({
+        identidade: {
+          batchId: batchId ?? null,
+          empresaId: key,
+          execucaoId: String(execucaoDbId),
+          cnpj,
+        },
+        resultado: ponteHomologacao.resultadoDiscovery,
+        estadoOperacional: ponteHomologacao.estadoOperacional,
+        codigoErroPonte: ponteHomologacao.codigoErro,
+        motivo: ponteHomologacao.motivo,
+      });
+      info.progressoFiscal = fiscal;
+      retenirProgressoFiscalDeInfo(info);
+      const emitiuFiscal = emitirProgressoFiscalSeAssociado({
+        batchId,
+        empresaId: key,
+        execucaoId: String(execucaoDbId),
+        cnpj,
+        fiscal,
+      });
+      if (!batchId) {
+        adicionarLog(
+          'Progresso fiscal retido em memória (sem batchId — SSE fiscal e polling de lote indisponíveis).'
+        );
+      } else if (!emitiuFiscal) {
+        adicionarLog('Progresso fiscal não emitido via SSE (associação lote/empresa/execução inválida).');
+      }
     } else {
     // Autorização nativa por execução NÃO é fornecida aqui (desativada por padrão).
     // Flag global sozinha não inicia SEFIN. Testes injetam autorizacaoNativa explicitamente.
