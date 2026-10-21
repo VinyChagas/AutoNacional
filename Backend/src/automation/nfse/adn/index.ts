@@ -50,6 +50,7 @@ export {
   CheckpointStoreArquivo,
   CheckpointStoreMemoria,
   commitCheckpointAposLote,
+  validarCheckpointAdn,
   type PersistenciaCheckpointAdn,
 } from './checkpoint-store';
 export {
@@ -58,7 +59,15 @@ export {
   chaveDedupeDocumento,
   type PersistenciaDocumentosAdn,
   type ResultadoPersistenciaDocumentoAdn,
+  type OpcoesDocumentStoreAdn,
 } from './document-store';
+export {
+  SyncLockMemoriaAdn,
+  SyncLockArquivoAdn,
+  SyncLockCompostoAdn,
+  type SyncLockAdn,
+} from './sync-lock';
+export { escreverArquivoAtomico, escreverArquivoAtomicoNovo } from './fs-atomic';
 export {
   criarTransporteHttpsMtlsAdn,
   classificarFalhaTransporteAdn,
@@ -90,4 +99,4 @@ export {
   type EntradaSmokeAdn,
   type ResumoSmokeAdn,
 } from './smoke-service';
-export type { PersistenciaSyncAdnResumo } from './types';
+export type { PersistenciaSyncAdnResumo, MotivoXmlInvalidoAdn } from './types';

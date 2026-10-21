@@ -19,6 +19,7 @@ export const LIMITES_SMOKE_ADN: LimitesAdn = {
   maxBytesXml: 4_000_000,
   rateLimitMs: 0,
   maxRequests: 1,
+  maxBytesArmazenamentoCnpj: 512 * 1024 * 1024,
 };
 
 /** Resumo operacional — campos permitidos na saída do smoke. */

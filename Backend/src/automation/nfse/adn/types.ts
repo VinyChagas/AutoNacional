@@ -51,6 +51,11 @@ export interface LoteDistribuicaoNsuResponse {
   DataHoraProcessamento?: string;
 }
 
+export type MotivoXmlInvalidoAdn =
+  | 'ausente'
+  | 'decode_falhou'
+  | 'sem_identificacao';
+
 export interface DocumentoDistribuidoAdn {
   nsu?: number;
   chaveAcesso?: string;
@@ -64,6 +69,8 @@ export interface DocumentoDistribuidoAdn {
   competencia?: string;
   sha256: string;
   xmlValido: boolean;
+  /** Presente somente quando xmlValido === false. */
+  motivoXmlInvalido?: MotivoXmlInvalidoAdn;
   xml?: string;
   dataHoraGeracao?: string;
   /** Caminho persistido (se store ativo). */
@@ -90,8 +97,11 @@ export interface LimitesAdn {
   maxBytesResposta: number;
   maxBytesGzip: number;
   maxBytesXml: number;
+  /** Intervalo mínimo entre requisições HTTP ADN (0 = desligado; testes usam 0). */
   rateLimitMs: number;
   maxRequests: number;
+  /** Teto de bytes em disco por CNPJ+ambiente (0 = sem limite). */
+  maxBytesArmazenamentoCnpj: number;
 }
 
 export const LIMITES_ADN_PADRAO: LimitesAdn = {
@@ -99,8 +109,9 @@ export const LIMITES_ADN_PADRAO: LimitesAdn = {
   maxBytesResposta: 4_000_000,
   maxBytesGzip: 1_500_000,
   maxBytesXml: 4_000_000,
-  rateLimitMs: 0,
+  rateLimitMs: 250,
   maxRequests: 20,
+  maxBytesArmazenamentoCnpj: 512 * 1024 * 1024,
 };
 
 export interface RespostaHttpAdn {
@@ -122,6 +133,8 @@ export interface PersistenciaSyncAdnResumo {
   persistidos: number;
   duplicadosPersistencia: number;
   semXml: number;
+  xmlsInvalidosPersistidos: number;
+  bytesEstimados?: number;
 }
 
 export interface ResultadoSyncAdn {

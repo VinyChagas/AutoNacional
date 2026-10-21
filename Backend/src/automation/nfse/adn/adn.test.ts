@@ -19,11 +19,22 @@ import { SyncServiceAdn } from './sync-service';
 import type {
   CredencialMtls,
   DistribuicaoNsuItem,
+  LimitesAdn,
   LoteDistribuicaoNsuResponse,
   ResultadoSyncAdn,
   TransporteHttpAdn,
 } from './types';
 import { decodificarArquivoXmlAdn } from './xml-decode';
+
+const LIMITES_TESTE: LimitesAdn = {
+  timeoutMs: 5_000,
+  maxBytesResposta: 4_000_000,
+  maxBytesGzip: 1_500_000,
+  maxBytesXml: 4_000_000,
+  rateLimitMs: 0,
+  maxRequests: 20,
+  maxBytesArmazenamentoCnpj: 0,
+};
 
 const CNPJ = '12345678000190';
 const CNPJ_B = '99888777000166';
@@ -293,21 +304,15 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
     ]);
 
     const store = new CheckpointStoreMemoria();
-    const client = new AdnClient(transporte, credencialDummy(), {
-      timeoutMs: 1000,
-      maxBytesResposta: 4_000_000,
-      maxBytesGzip: 1_500_000,
-      maxBytesXml: 4_000_000,
-      rateLimitMs: 0,
-      maxRequests: 10,
-    });
-    const sync = new SyncServiceAdn(client, store);
+    const client = new AdnClient(transporte, credencialDummy(), LIMITES_TESTE);
+    const sync = new SyncServiceAdn(client, store, LIMITES_TESTE);
     const r = await sync.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       maxRequests: 10,
       resume: false,
+      rateLimitMs: 0,
     });
 
     expect(r.lotesProcessados).toBe(2);
@@ -350,11 +355,16 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
     ]);
 
     const client = new AdnClient(transporte, credencialDummy());
-    const sync = new SyncServiceAdn(client, store);
+    const sync = new SyncServiceAdn(client, store, LIMITES_TESTE);
     const cursor = sync.resolveCursorInicial({ cnpj: CNPJ, ambiente: 'producao', resume: true });
     expect(cursor).toBe(51);
 
-    const r = await sync.syncDistribuicao({ cnpj: CNPJ, ambiente: 'producao', resume: true });
+    const r = await sync.syncDistribuicao({
+      cnpj: CNPJ,
+      ambiente: 'producao',
+      resume: true,
+      rateLimitMs: 0,
+    });
     expect(urls[0]).toContain('/DFe/51');
     expect(r.nsuInicial).toBe(51);
     expect(r.documentos).toHaveLength(1);
@@ -378,12 +388,13 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
       },
     ]);
     const store = new CheckpointStoreMemoria();
-    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), store);
+    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), store, LIMITES_TESTE);
     const r = await sync.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
     expect(r.documentos).toHaveLength(1);
     expect(r.duplicidades).toBe(1);
@@ -399,13 +410,14 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
       { status: 200, body: { StatusProcessamento: 'DOCUMENTOS_LOCALIZADOS', LoteDFe: lote } },
     ]);
     const store = new CheckpointStoreMemoria();
-    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), store);
+    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), store, LIMITES_TESTE);
     const r = await sync.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       maxRequests: 1,
       resume: false,
+      rateLimitMs: 0,
     });
     expect(r.status).toBe('PARCIAL');
     expect(r.fimDistribuicaoConfirmado).toBe(false);
@@ -415,12 +427,13 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
   it('trata HTTP 429 como PARCIAL (retomável)', async () => {
     const { transporte } = mockTransporte([{ status: 429, body: '' }]);
     const store = new CheckpointStoreMemoria();
-    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), store);
+    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), store, LIMITES_TESTE);
     const r = await sync.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
     expect(r.status).toBe('PARCIAL');
     expect(r.motivoParada).toBe('rate_limit');
@@ -434,10 +447,17 @@ describe('SyncServiceAdn — distribuição, paginação, retomada', () => {
     };
     const sync = new SyncServiceAdn(
       new AdnClient(transporte, credencialDummy()),
-      new CheckpointStoreMemoria()
+      new CheckpointStoreMemoria(),
+      LIMITES_TESTE
     );
     await expect(
-      sync.syncDistribuicao({ cnpj: CNPJ, ambiente: 'producao', forcarNsu: 1, resume: false })
+      sync.syncDistribuicao({
+        cnpj: CNPJ,
+        ambiente: 'producao',
+        forcarNsu: 1,
+        resume: false,
+        rateLimitMs: 0,
+      })
     ).rejects.toMatchObject({ codigo: 'HANDSHAKE_TLS' });
   });
 });

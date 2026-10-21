@@ -1,7 +1,7 @@
 /**
  * Sincronização incremental ADN por cursor UltimoNSU.
  * COMPLETO = fim da distribuição NSU; NÃO declara inventário mensal completo.
- * Persistência opcional por CNPJ; checkpoint só após lote processado/persistido.
+ * Lock CNPJ+ambiente; checkpoint só após lote persistido com sucesso.
  */
 import type { AmbienteAdn } from './endpoints';
 import { ErroAdn } from './errors';
@@ -12,6 +12,8 @@ import {
   type PersistenciaCheckpointAdn,
 } from './checkpoint-store';
 import type { PersistenciaDocumentosAdn } from './document-store';
+import type { SyncLockAdn } from './sync-lock';
+import { SyncLockMemoriaAdn } from './sync-lock';
 import type { AdnClient } from './adn-client';
 import type {
   DocumentoDistribuidoAdn,
@@ -34,15 +36,26 @@ export interface SyncAdnOptions {
    * (mantém caminhoArquivo / metadados).
    */
   descartarXmlEmMemoriaAposPersistir?: boolean;
+  /** Override pontual do rate limit (ms). */
+  rateLimitMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 export class SyncServiceAdn {
+  private readonly lock: SyncLockAdn;
+
   constructor(
     private readonly client: AdnClient,
     private readonly checkpoint: PersistenciaCheckpointAdn,
     private readonly limites: LimitesAdn = LIMITES_ADN_PADRAO,
-    private readonly documentosStore: PersistenciaDocumentosAdn | null = null
-  ) {}
+    private readonly documentosStore: PersistenciaDocumentosAdn | null = null,
+    lock?: SyncLockAdn | null
+  ) {
+    this.lock = lock ?? new SyncLockMemoriaAdn();
+  }
 
   resolveCursorInicial(opts: SyncAdnOptions): number {
     if (opts.forcarNsu != null) return opts.forcarNsu;
@@ -56,6 +69,22 @@ export class SyncServiceAdn {
 
   async syncDistribuicao(opts: SyncAdnOptions): Promise<ResultadoSyncAdn> {
     const cnpj = opts.cnpj.replace(/\D/g, '');
+    const liberar = await this.lock.adquirir(cnpj, opts.ambiente);
+    try {
+      return await this.executarSyncSobLock(opts, cnpj);
+    } finally {
+      liberar();
+    }
+  }
+
+  private async executarSyncSobLock(
+    opts: SyncAdnOptions,
+    cnpj: string
+  ): Promise<ResultadoSyncAdn> {
+    if (this.documentosStore?.reconciliar) {
+      await this.documentosStore.reconciliar(cnpj, opts.ambiente);
+    }
+
     const nsuInicial = this.resolveCursorInicial(opts);
     let cursor = nsuInicial;
     let requests = 0;
@@ -71,6 +100,8 @@ export class SyncServiceAdn {
     let persistidos = 0;
     let duplicadosPersistencia = 0;
     let semXml = 0;
+    let xmlsInvalidosPersistidos = 0;
+    let bytesEstimados = 0;
     let ultimoNsuProcessado = cursor;
     let fimDistribuicaoConfirmado = false;
     let status: StatusSyncAdn = 'PARCIAL';
@@ -78,6 +109,8 @@ export class SyncServiceAdn {
     let ultimoCheckpoint = this.checkpoint.ler(cnpj, opts.ambiente) ?? undefined;
 
     const maxRequests = opts.maxRequests ?? this.limites.maxRequests;
+    const rateLimitMs = opts.rateLimitMs ?? this.limites.rateLimitMs ?? 0;
+    let ultimoRequestAt = 0;
     const documentos: DocumentoDistribuidoAdn[] = [];
     const seenKeys = new Set<string>(
       this.documentosStore
@@ -88,12 +121,20 @@ export class SyncServiceAdn {
 
     while (requests < maxRequests) {
       try {
+        if (rateLimitMs > 0 && ultimoRequestAt > 0) {
+          const elapsed = Date.now() - ultimoRequestAt;
+          if (elapsed < rateLimitMs) {
+            await sleep(rateLimitMs - elapsed);
+          }
+        }
+
         const result = await this.client.consultarDFe({
           nsu: cursor,
           cnpjConsulta: cnpj,
           lote: true,
           ambiente: opts.ambiente,
         });
+        ultimoRequestAt = Date.now();
         requests += 1;
 
         const analise = analisarLote(result.data, cursor, result.statusHttp);
@@ -130,7 +171,6 @@ export class SyncServiceAdn {
         }
 
         if (lote.length > MAX_LOTE_DOCUMENTADO) {
-          // Contrato oficial: até 50. Acima disso processamos, mas sinalizamos no motivo.
           motivoParada = 'lote_acima_do_documentado';
         }
 
@@ -139,6 +179,8 @@ export class SyncServiceAdn {
           motivoParada = 'ausencia_cursor_continuidade';
           break;
         }
+
+        let falhaPersistencia = false;
 
         for (const item of lote) {
           const key = dedupeKeyDistribuicao(item);
@@ -157,18 +199,33 @@ export class SyncServiceAdn {
           if (!doc.xmlValido) xmlsInvalidos += 1;
 
           if (this.documentosStore) {
-            const salvo = await this.documentosStore.salvar(cnpj, opts.ambiente, doc);
-            if (salvo.duplicado) {
-              duplicadosPersistencia += 1;
-              duplicidades += 1;
-            } else if (salvo.caminho) {
-              persistidos += 1;
-              doc.caminhoArquivo = salvo.caminho;
-            } else {
-              semXml += 1;
-            }
-            if (descartarXml && doc.xml) {
-              delete doc.xml;
+            try {
+              const salvo = await this.documentosStore.salvar(cnpj, opts.ambiente, doc);
+              if (salvo.duplicado) {
+                duplicadosPersistencia += 1;
+                duplicidades += 1;
+              } else if (salvo.caminho) {
+                persistidos += 1;
+                doc.caminhoArquivo = salvo.caminho;
+                bytesEstimados += salvo.bytesGravados;
+              } else {
+                semXml += 1;
+              }
+              if (salvo.xmlInvalidoPersistido) xmlsInvalidosPersistidos += 1;
+              if (descartarXml && doc.xml) {
+                delete doc.xml;
+              }
+            } catch (persistErr) {
+              falhaPersistencia = true;
+              status = 'ERRO';
+              if (persistErr instanceof ErroAdn) {
+                motivoParada = `falha_persistencia:${persistErr.codigo.toLowerCase()}`;
+              } else {
+                motivoParada = 'falha_persistencia';
+              }
+              // Não avança checkpoint deste lote — documentos já gravados
+              // permanecem e serão deduplicados na retomada.
+              break;
             }
           }
 
@@ -191,10 +248,14 @@ export class SyncServiceAdn {
           documentos.push(doc);
         }
 
+        if (falhaPersistencia) {
+          break;
+        }
+
         lotesProcessados += 1;
         ultimoNsuProcessado = analise.proximoCursor;
 
-        // Checkpoint somente após lote processado (e persistido, se store ativo).
+        // Checkpoint somente após lote processado e persistido com sucesso.
         ultimoCheckpoint = commitCheckpointAposLote(this.checkpoint, {
           cnpj,
           ambiente: opts.ambiente,
@@ -221,10 +282,18 @@ export class SyncServiceAdn {
             motivoParada = err.codigo.toLowerCase();
             throw err;
           }
+          if (err.codigo === 'SYNC_EM_ANDAMENTO') {
+            throw err;
+          }
           if (err.codigo === 'RATE_LIMIT') {
             status = 'PARCIAL';
             motivoParada = 'rate_limit';
             break;
+          }
+          if (err.codigo === 'CHECKPOINT_CORROMPIDO' || err.codigo === 'CHECKPOINT_INVALIDO') {
+            status = 'ERRO';
+            motivoParada = err.codigo.toLowerCase();
+            throw err;
           }
           if (err.classe === 'TRANSITORIO') {
             status = 'PARCIAL';
@@ -271,7 +340,13 @@ export class SyncServiceAdn {
         naoClassificados,
       },
       persistencia: this.documentosStore
-        ? { persistidos, duplicadosPersistencia, semXml }
+        ? {
+            persistidos,
+            duplicadosPersistencia,
+            semXml,
+            xmlsInvalidosPersistidos,
+            bytesEstimados,
+          }
         : undefined,
       checkpoint: ultimoCheckpoint,
     };

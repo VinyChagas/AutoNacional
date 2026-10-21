@@ -19,9 +19,20 @@ import { SyncServiceAdn } from './sync-service';
 import type {
   CredencialMtls,
   DistribuicaoNsuItem,
+  LimitesAdn,
   LoteDistribuicaoNsuResponse,
   TransporteHttpAdn,
 } from './types';
+
+const LIMITES_TESTE: LimitesAdn = {
+  timeoutMs: 5_000,
+  maxBytesResposta: 4_000_000,
+  maxBytesGzip: 1_500_000,
+  maxBytesXml: 4_000_000,
+  rateLimitMs: 0,
+  maxRequests: 20,
+  maxBytesArmazenamentoCnpj: 0,
+};
 
 const CNPJ = '12345678000190';
 const CNPJ_B = '99888777000166';
@@ -208,13 +219,19 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
 
     const cp = new CheckpointStoreMemoria();
     const docs = new DocumentStoreMemoriaAdn();
-    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), cp, undefined, docs);
+    const sync = new SyncServiceAdn(
+      new AdnClient(transporte, credencialDummy()),
+      cp,
+      LIMITES_TESTE,
+      docs
+    );
 
     const r = await sync.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
 
     expect(r.documentos).toHaveLength(50);
@@ -242,12 +259,13 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
       { status: 200, body: { StatusProcessamento: 'DOCUMENTOS_LOCALIZADOS', LoteDFe: lote } },
       { status: 200, body: { StatusProcessamento: 'NENHUM_DOCUMENTO_LOCALIZADO', LoteDFe: [] } },
     ]);
-    const sync1 = new SyncServiceAdn(new AdnClient(t1, credencialDummy()), cp, undefined, docs);
+    const sync1 = new SyncServiceAdn(new AdnClient(t1, credencialDummy()), cp, LIMITES_TESTE, docs);
     const r1 = await sync1.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
     expect(r1.persistencia?.persistidos).toBe(1);
     expect(cp.ler(CNPJ, 'producao')?.ultimoNsuConfirmado).toBe(5);
@@ -268,12 +286,13 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
       { status: 200, body: { StatusProcessamento: 'DOCUMENTOS_LOCALIZADOS', LoteDFe: lote } },
       { status: 200, body: { StatusProcessamento: 'NENHUM_DOCUMENTO_LOCALIZADO', LoteDFe: [] } },
     ]);
-    const sync2 = new SyncServiceAdn(new AdnClient(t2, credencialDummy()), cp, undefined, docs);
+    const sync2 = new SyncServiceAdn(new AdnClient(t2, credencialDummy()), cp, LIMITES_TESTE, docs);
     const r2 = await sync2.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
 
     expect(r2.documentos).toHaveLength(0);
@@ -296,12 +315,18 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
       { status: 200, body: { StatusProcessamento: 'NENHUM_DOCUMENTO_LOCALIZADO', LoteDFe: [] } },
     ]);
 
-    const sync = new SyncServiceAdn(new AdnClient(transporte, credencialDummy()), cp, undefined, docs);
+    const sync = new SyncServiceAdn(
+      new AdnClient(transporte, credencialDummy()),
+      cp,
+      LIMITES_TESTE,
+      docs
+    );
     const r = await sync.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
 
     expect(r.contagens.emitidas).toBe(1);
@@ -332,7 +357,7 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
     const sync = new SyncServiceAdn(
       new AdnClient(transporte, credencialDummy()),
       new CheckpointStoreMemoria(),
-      undefined,
+      LIMITES_TESTE,
       new DocumentStoreMemoriaAdn()
     );
     const r = await sync.syncDistribuicao({
@@ -340,6 +365,7 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
       ambiente: 'producao',
       forcarNsu: 1,
       resume: false,
+      rateLimitMs: 0,
     });
 
     expect(r.status).toBe('COMPLETO');
@@ -370,13 +396,14 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
     const t1 = mockTransporte([
       { status: 200, body: { StatusProcessamento: 'DOCUMENTOS_LOCALIZADOS', LoteDFe: lote1 } },
     ]);
-    const sync1 = new SyncServiceAdn(new AdnClient(t1, credencialDummy()), cp, undefined, docs);
+    const sync1 = new SyncServiceAdn(new AdnClient(t1, credencialDummy()), cp, LIMITES_TESTE, docs);
     const r1 = await sync1.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       forcarNsu: 1,
       maxRequests: 1,
       resume: false,
+      rateLimitMs: 0,
     });
     expect(r1.status).toBe('PARCIAL');
     expect(r1.persistencia?.persistidos).toBe(2);
@@ -386,11 +413,12 @@ describe('SyncServiceAdn + persistência — lote ≤50, dedupe, retomada NSU', 
       { status: 200, body: { StatusProcessamento: 'DOCUMENTOS_LOCALIZADOS', LoteDFe: lote2 } },
       { status: 200, body: { StatusProcessamento: 'NENHUM_DOCUMENTO_LOCALIZADO', LoteDFe: [] } },
     ]);
-    const sync2 = new SyncServiceAdn(new AdnClient(t2, credencialDummy()), cp, undefined, docs);
+    const sync2 = new SyncServiceAdn(new AdnClient(t2, credencialDummy()), cp, LIMITES_TESTE, docs);
     const r2 = await sync2.syncDistribuicao({
       cnpj: CNPJ,
       ambiente: 'producao',
       resume: true,
+      rateLimitMs: 0,
     });
 
     expect(r2.nsuInicial).toBe(3);

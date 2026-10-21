@@ -59,6 +59,7 @@ export async function processarItemDistribuicao(params: {
       papeis: [],
       sha256: '',
       xmlValido: false,
+      motivoXmlInvalido: 'ausente',
       dataHoraGeracao: item.DataHoraGeracao ?? undefined,
     };
   }
@@ -76,6 +77,7 @@ export async function processarItemDistribuicao(params: {
       papeis: [],
       sha256: '',
       xmlValido: false,
+      motivoXmlInvalido: 'decode_falhou',
       dataHoraGeracao: item.DataHoraGeracao ?? undefined,
     };
   }
@@ -95,6 +97,8 @@ export async function processarItemDistribuicao(params: {
     (item.ChaveAcesso ? item.ChaveAcesso.replace(/\D/g, '') : undefined) ??
     undefined;
 
+  const xmlValido = Boolean(chave) || campos.bemFormado;
+
   return {
     nsu: item.NSU ?? undefined,
     chaveAcesso: chave,
@@ -107,7 +111,8 @@ export async function processarItemDistribuicao(params: {
     cnpjIntermediario: campos.cnpjIntermediario ?? undefined,
     competencia: normalizarCompetenciaAdn(campos.dCompet),
     sha256: campos.sha256,
-    xmlValido: Boolean(chave) || campos.bemFormado,
+    xmlValido,
+    motivoXmlInvalido: xmlValido ? undefined : 'sem_identificacao',
     xml,
     dataHoraGeracao: item.DataHoraGeracao ?? undefined,
   };
