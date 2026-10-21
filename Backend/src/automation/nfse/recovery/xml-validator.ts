@@ -68,6 +68,14 @@ export function validarXmlNfse(
     );
   }
 
+  if (arvore.idInfNfseInvalido && !arvore.chaveDeElemento) {
+    throw new ErroRecuperacaoSefin(
+      'ID_INFNFSE_INVALIDO',
+      'PERMANENTE',
+      'O atributo Id de infNFSe não segue o formato NFS + 50 dígitos.'
+    );
+  }
+
   const chaveXml = arvore.chave;
   const cnpjEsperado = esperado.cnpj;
   const cnpjPapel = esperado.direcao === 'EMITIDA' ? arvore.cnpjEmitente : arvore.cnpjTomador;
@@ -128,10 +136,29 @@ interface ArvoreXml {
   bemFormado: boolean;
   raiz: string | null;
   temInfNfse: boolean;
+  /** Preferência: texto de <chNFSe>; senão Id="NFS{50}". */
   chave: string | null;
+  chaveDeElemento: string | null;
+  chaveDeId: string | null;
+  idInfNfseInvalido: boolean;
   cnpjEmitente: string | null;
   cnpjTomador: string | null;
   dCompet: string | null;
+}
+
+/**
+ * Lê Id de infNFSe no formato nacional NFS + 50 dígitos.
+ * null = atributo ausente; ok:false = presente porém inválido.
+ */
+export function extrairChaveDoIdInfNfse(
+  brutoTag: string
+): { ok: true; chave: string } | { ok: false } | null {
+  const match = /\bId\s*=\s*["']([^"']*)["']/i.exec(brutoTag);
+  if (!match) return null;
+  const valor = (match[1] ?? '').trim();
+  const chaveMatch = /^NFS(\d{50})$/.exec(valor);
+  if (!chaveMatch?.[1]) return { ok: false };
+  return { ok: true, chave: chaveMatch[1] };
 }
 
 function lerArvore(xml: string): ArvoreXml {
@@ -140,6 +167,9 @@ function lerArvore(xml: string): ArvoreXml {
     raiz: null,
     temInfNfse: false,
     chave: null,
+    chaveDeElemento: null,
+    chaveDeId: null,
+    idInfNfseInvalido: false,
     cnpjEmitente: null,
     cnpjTomador: null,
     dCompet: null,
@@ -153,7 +183,9 @@ function lerArvore(xml: string): ArvoreXml {
     texto = '';
     if (!valor || pilha.length === 0) return;
     const atual = pilha[pilha.length - 1];
-    if (atual === 'chNFSe' && !arvore.chave) arvore.chave = valor.replace(/\D/g, '');
+    if (atual === 'chNFSe' && !arvore.chaveDeElemento) {
+      arvore.chaveDeElemento = valor.replace(/\D/g, '');
+    }
     if (atual === 'dCompet' && !arvore.dCompet) arvore.dCompet = valor;
     if (atual === 'CNPJ' && !arvore.cnpjEmitente && papelNoContexto(pilha, PAPEIS_EMITENTE)) {
       arvore.cnpjEmitente = valor.replace(/\D/g, '');
@@ -166,13 +198,13 @@ function lerArvore(xml: string): ArvoreXml {
   while (i < xml.length) {
     if (xml.startsWith('<?', i)) {
       const fim = xml.indexOf('?>', i);
-      if (fim < 0) return arvore;
+      if (fim < 0) return finalizarArvore(arvore);
       i = fim + 2;
       continue;
     }
     if (xml.startsWith('<!--', i)) {
       const fim = xml.indexOf('-->', i + 4);
-      if (fim < 0) return arvore;
+      if (fim < 0) return finalizarArvore(arvore);
       i = fim + 3;
       continue;
     }
@@ -183,23 +215,40 @@ function lerArvore(xml: string): ArvoreXml {
     }
     guardarTexto();
     const fim = fimDaTag(xml, i + 1);
-    if (fim < 0) return arvore;
+    if (fim < 0) return finalizarArvore(arvore);
     const bruto = xml.slice(i + 1, fim).trim();
     i = fim + 1;
     if (!bruto || bruto.startsWith('?') || bruto.startsWith('!')) continue;
     if (bruto.startsWith('/')) {
       const nome = nomeLocal(bruto.slice(1));
-      if (pilha.pop() !== nome) return arvore;
+      if (pilha.pop() !== nome) return finalizarArvore(arvore);
       continue;
     }
     const autoFecha = bruto.endsWith('/');
     const nome = nomeLocal(bruto);
     if (!arvore.raiz) arvore.raiz = nome;
-    if (nome === 'infNFSe') arvore.temInfNfse = true;
+    if (nome === 'infNFSe') {
+      arvore.temInfNfse = true;
+      if (!arvore.chaveDeId && !arvore.idInfNfseInvalido) {
+        const lido = extrairChaveDoIdInfNfse(bruto);
+        if (lido === null) {
+          // atributo Id ausente — chave pode vir de <chNFSe>
+        } else if (lido.ok) {
+          arvore.chaveDeId = lido.chave;
+        } else {
+          arvore.idInfNfseInvalido = true;
+        }
+      }
+    }
     if (!autoFecha) pilha.push(nome);
   }
   guardarTexto();
   arvore.bemFormado = pilha.length === 0;
+  return finalizarArvore(arvore);
+}
+
+function finalizarArvore(arvore: ArvoreXml): ArvoreXml {
+  arvore.chave = arvore.chaveDeElemento || arvore.chaveDeId || null;
   return arvore;
 }
 
