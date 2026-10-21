@@ -25,10 +25,16 @@ import { SyncLockArquivoAdn, SyncLockCompostoAdn } from './sync-lock';
 import { SyncServiceAdn } from './sync-service';
 import type { LimitesAdn, ResultadoSyncAdn, TransporteHttpAdn } from './types';
 import type { DependenciasFluxoAdnIniciar } from './iniciar-executor';
+import {
+  InventarioPersistidoArquivoAdn,
+  type FonteInventarioPersistidoAdn,
+} from './inventario-persistido';
 import path from 'node:path';
 
 /** Override de sync (testes offline). Null = factory padrão. */
 let syncOverride: DependenciasFluxoAdnIniciar['executarSync'] | null = null;
+/** Override da fonte de inventário persistido (testes). */
+let fonteInventarioOverride: FonteInventarioPersistidoAdn | null = null;
 
 /** Autorizações explícitas por CNPJ (ativação individual / testes). */
 const autorizacoesPorCnpj = new Map<string, boolean>();
@@ -37,6 +43,12 @@ export function setSyncAdnIniciarParaTestes(
   fn: DependenciasFluxoAdnIniciar['executarSync'] | null
 ): void {
   syncOverride = fn;
+}
+
+export function setFonteInventarioPersistidoParaTestes(
+  fonte: FonteInventarioPersistidoAdn | null
+): void {
+  fonteInventarioOverride = fonte;
 }
 
 export function autorizarAdnIniciarEmpresa(
@@ -64,6 +76,7 @@ export function obterAutorizacaoAdnIniciarRuntime(
 
 export function resetIniciarAdnRuntimeParaTestes(): void {
   syncOverride = null;
+  fonteInventarioOverride = null;
   autorizacoesPorCnpj.clear();
 }
 
@@ -135,9 +148,21 @@ export function obterDependenciasAdnIniciar(opcoes?: {
   env?: NodeJS.ProcessEnv;
   /** Testes offline: não exige NFSE_ALLOW_LIVE. */
   exigirGateLive?: boolean;
+  fonteInventarioPersistido?: FonteInventarioPersistidoAdn | null;
 }): DependenciasFluxoAdnIniciar {
+  const env = opcoes?.env ?? process.env;
+  let fonte: FonteInventarioPersistidoAdn | null;
+  if (opcoes?.fonteInventarioPersistido !== undefined) {
+    fonte = opcoes.fonteInventarioPersistido;
+  } else if (fonteInventarioOverride) {
+    fonte = fonteInventarioOverride;
+  } else {
+    const arvore = garantirArvoreHomologacaoAdn(resolverRaizHomologacaoAdn({ env }));
+    fonte = new InventarioPersistidoArquivoAdn(arvore.documentos);
+  }
   return {
-    executarSync: syncOverride ?? criarExecutarSyncAdnIniciarPadrao({ env: opcoes?.env }),
+    executarSync: syncOverride ?? criarExecutarSyncAdnIniciarPadrao({ env }),
+    fonteInventarioPersistido: fonte,
     exigirGateLive: opcoes?.exigirGateLive,
   };
 }

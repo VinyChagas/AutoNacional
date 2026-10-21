@@ -1,7 +1,7 @@
 /**
  * Executor do fluxo Iniciar A1 → ADN.
  * Sem Playwright, sem hCaptcha, sem SEFIN.
- * Reutiliza SyncServiceAdn + inventário parcial + progresso fiscal.
+ * Após sync, consolida inventário persistido por competência (não só a sessão).
  * Falha tipada — o chamador NÃO deve fazer fallback silencioso para o legado.
  */
 import type { AmbienteAdn } from './endpoints';
@@ -11,12 +11,18 @@ import {
   criarPeriodoReferenciaAdn,
   type ResultadoAdaptacaoInventarioAdn,
 } from './inventory-adapter';
+import {
+  consolidarInventarioPersistidoAdn,
+  decidirResultadoFinalAdnIniciar,
+  formatarMotivoConsolidacaoAdn,
+  type ConsolidacaoInventarioPersistidoAdn,
+  type FonteInventarioPersistidoAdn,
+  type ResultadoFinalAdnIniciar,
+} from './inventario-persistido';
 import { avaliarGateLiveAdn } from './live-gate';
 import type { ResultadoSyncAdn } from './types';
 import type { DecisaoRoteamentoAdnIniciar } from './iniciar-routing';
-import {
-  progressoFiscalDeSyncAdn,
-} from '../progresso-fiscal/from-adn-sync';
+import { progressoFiscalDeSyncAdn } from '../progresso-fiscal/from-adn-sync';
 import type { ProgressoFiscalNfse } from '../progresso-fiscal/types';
 import type { IdentidadeProgressoFiscal } from '../progresso-fiscal/from-discovery-only';
 
@@ -42,6 +48,8 @@ export interface DependenciasFluxoAdnIniciar {
     ambiente: AmbienteAdn;
     deveInterromper?: () => boolean;
   }) => Promise<ResultadoSyncAdn>;
+  /** Consulta índice/arquivos persistidos por CNPJ+ambiente. */
+  fonteInventarioPersistido?: FonteInventarioPersistidoAdn | null;
   /**
    * Se true, exige gate live (NFSE_ALLOW_LIVE) antes do sync.
    * Default true em produção; testes offline passam false.
@@ -57,11 +65,14 @@ export interface ResultadoFluxoAdnIniciar {
   hcaptchaUsado: false;
   sync: ResultadoSyncAdn | null;
   adaptacao: ResultadoAdaptacaoInventarioAdn | null;
+  consolidacao: ConsolidacaoInventarioPersistidoAdn | null;
   fiscal: ProgressoFiscalNfse | null;
   codigoErro: string | null;
   motivo: string;
-  /** Contagens para finalizarExecucao / métricas. */
+  /** Contagens para finalizarExecucao / métricas / Angular. */
   contagens: { emitidas: number; recebidas: number; canceladas: number };
+  /** Resultado final tipado (SEM_MOVIMENTO só com evidência na competência). */
+  resultadoFinal: ResultadoFinalAdnIniciar | 'ERRO';
 }
 
 /** Normaliza para DD/MM/YYYY (contrato PeriodoConsultaPortal). */
@@ -73,8 +84,28 @@ function normalizarDataPortal(data: string): string {
   return data.trim();
 }
 
+function falhaBase(
+  parcial: Partial<ResultadoFluxoAdnIniciar> & Pick<ResultadoFluxoAdnIniciar, 'codigoErro' | 'motivo'>
+): ResultadoFluxoAdnIniciar {
+  return {
+    ok: false,
+    chromiumAberto: false,
+    sefinChamado: false,
+    playwrightUsado: false,
+    hcaptchaUsado: false,
+    sync: null,
+    adaptacao: null,
+    consolidacao: null,
+    fiscal: null,
+    contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
+    resultadoFinal: 'ERRO',
+    ...parcial,
+  };
+}
+
 /**
  * Executa distribuição ADN após decisão ADN_SOLICITADO.
+ * Consolida inventário persistido por competência após o sync.
  * Retorna chromiumAberto=false sempre.
  */
 export async function executarFluxoAdnIniciar(
@@ -82,59 +113,34 @@ export async function executarFluxoAdnIniciar(
   deps: DependenciasFluxoAdnIniciar
 ): Promise<ResultadoFluxoAdnIniciar> {
   if (!entrada.decisao.executarAdn || entrada.decisao.abrirChromium) {
-    return {
-      ok: false,
-      chromiumAberto: false,
-      sefinChamado: false,
-      playwrightUsado: false,
-      hcaptchaUsado: false,
-      sync: null,
-      adaptacao: null,
-      fiscal: null,
+    return falhaBase({
       codigoErro: 'ROTEAMENTO_INVALIDO',
       motivo: 'executarFluxoAdnIniciar chamado sem decisão ADN_SOLICITADO.',
-      contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
-    };
+    });
   }
 
   const ambiente: AmbienteAdn = entrada.ambiente ?? 'producao';
   const cnpj = entrada.cnpj.replace(/\D/g, '');
   const exigirGate = deps.exigirGateLive !== false;
   const env = entrada.env ?? process.env;
+  const dataInicio = normalizarDataPortal(entrada.dataInicio);
+  const dataFim = normalizarDataPortal(entrada.dataFim);
 
   if (exigirGate) {
     const gate = avaliarGateLiveAdn({ confirmLive: true, env });
     if (!gate.ok) {
-      return {
-        ok: false,
-        chromiumAberto: false,
-        sefinChamado: false,
-        playwrightUsado: false,
-        hcaptchaUsado: false,
-        sync: null,
-        adaptacao: null,
-        fiscal: null,
+      return falhaBase({
         codigoErro: gate.codigo,
         motivo: `${gate.motivo} Sem fallback para Playwright.`,
-        contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
-      };
+      });
     }
   }
 
   if (entrada.deveInterromper?.()) {
-    return {
-      ok: false,
-      chromiumAberto: false,
-      sefinChamado: false,
-      playwrightUsado: false,
-      hcaptchaUsado: false,
-      sync: null,
-      adaptacao: null,
-      fiscal: null,
+    return falhaBase({
       codigoErro: 'INTERRUPCAO',
       motivo: 'Execução ADN interrompida antes do sync (sem Chromium).',
-      contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
-    };
+    });
   }
 
   let sync: ResultadoSyncAdn;
@@ -150,49 +156,54 @@ export async function executarFluxoAdnIniciar(
       e instanceof Error
         ? `${e.message} Sem fallback para Playwright.`
         : 'Falha ADN desconhecida. Sem fallback para Playwright.';
-    return {
-      ok: false,
-      chromiumAberto: false,
-      sefinChamado: false,
-      playwrightUsado: false,
-      hcaptchaUsado: false,
-      sync: null,
-      adaptacao: null,
-      fiscal: null,
-      codigoErro: codigo,
-      motivo,
-      contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
-    };
+    return falhaBase({ codigoErro: codigo, motivo });
   }
 
-  const periodo = criarPeriodoReferenciaAdn(
-    normalizarDataPortal(entrada.dataInicio),
-    normalizarDataPortal(entrada.dataFim)
-  );
+  const periodo = criarPeriodoReferenciaAdn(dataInicio, dataFim);
   const adaptacao = adaptarSyncAdnParaInventarioParcial({
     sync,
     periodoConsulta: periodo,
     inventarioId: `adn-iniciar-${cnpj}-${entrada.identidade.execucaoId}`,
   });
 
+  let consolidacao: ConsolidacaoInventarioPersistidoAdn | null = null;
+  if (deps.fonteInventarioPersistido) {
+    consolidacao = await consolidarInventarioPersistidoAdn({
+      cnpj,
+      ambiente,
+      dataInicio,
+      dataFim,
+      sync,
+      fonte: deps.fonteInventarioPersistido,
+    });
+  }
+
   const interrompido =
-    Boolean(entrada.deveInterromper?.()) ||
-    /interrompid/i.test(sync.motivoParada);
+    Boolean(entrada.deveInterromper?.()) || /interrompid/i.test(sync.motivoParada);
 
   const codigoErro =
-    sync.status === 'ERRO'
-      ? 'ADN_SYNC_ERRO'
-      : interrompido
-        ? 'INTERRUPCAO'
-        : null;
+    sync.status === 'ERRO' ? 'ADN_SYNC_ERRO' : interrompido ? 'INTERRUPCAO' : null;
+
+  const resultadoFinal: ResultadoFinalAdnIniciar | 'ERRO' = codigoErro
+    ? 'ERRO'
+    : consolidacao
+      ? decidirResultadoFinalAdnIniciar(consolidacao)
+      : sync.documentos.length > 0
+        ? 'NFS_ENCONTRADAS'
+        : 'ADN_INVENTARIO_INDETERMINADO';
+
+  const motivo = consolidacao
+    ? formatarMotivoConsolidacaoAdn(sync, consolidacao, resultadoFinal === 'ERRO' ? 'ADN_INVENTARIO_INDETERMINADO' : resultadoFinal)
+    : `Distribuição ADN ${sync.status}; documentos sessão=${adaptacao.inventario.documentos.length}; ` +
+      `fim NSU=${sync.fimDistribuicaoConfirmado}; inventário persistido indisponível; ` +
+      `completude mensal NÃO comprovada.`;
 
   const fiscal = progressoFiscalDeSyncAdn({
     identidade: entrada.identidade,
     sync,
     adaptacao,
-    motivo:
-      `Distribuição ADN ${sync.status}; documentos inventário=${adaptacao.inventario.documentos.length}; ` +
-      `fim NSU=${sync.fimDistribuicaoConfirmado}; completude mensal NÃO comprovada.`,
+    consolidacao,
+    motivo,
     codigoErro,
     interrompido,
   });
@@ -207,13 +218,15 @@ export async function executarFluxoAdnIniciar(
     hcaptchaUsado: false,
     sync,
     adaptacao,
+    consolidacao,
     fiscal,
     codigoErro,
-    motivo: fiscal.message ?? entrada.decisao.motivo,
+    motivo: fiscal.message ?? motivo,
     contagens: {
       emitidas: fiscal.inventario.totais.emitidas,
       recebidas: fiscal.inventario.totais.recebidas,
       canceladas: fiscal.inventario.totais.canceladas,
     },
+    resultadoFinal: ok ? resultadoFinal : 'ERRO',
   };
 }

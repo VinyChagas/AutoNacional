@@ -6,6 +6,7 @@
  * Sem SEFIN, sem percentuais artificiais.
  */
 import type { ResultadoAdaptacaoInventarioAdn } from '../adn/inventory-adapter';
+import type { ConsolidacaoInventarioPersistidoAdn } from '../adn/inventario-persistido';
 import type { ResultadoSyncAdn } from '../adn/types';
 import type { IdentidadeProgressoFiscal } from './from-discovery-only';
 import { REVISAO_FISCAL_NAO_PUBLICADA } from './revisao';
@@ -15,6 +16,8 @@ export interface EntradaAdaptadorSyncAdn {
   identidade: IdentidadeProgressoFiscal;
   sync: ResultadoSyncAdn;
   adaptacao: ResultadoAdaptacaoInventarioAdn;
+  /** Consolidação persistido+sessão (competência solicitada). */
+  consolidacao?: ConsolidacaoInventarioPersistidoAdn | null;
   /** Motivo operacional exibido na UI. */
   motivo?: string | null;
   /** Código de erro tipado (interrupção, gate, etc.). */
@@ -34,8 +37,28 @@ const TOTAIS_ZEROS: TotaisProgressoFiscal = {
 
 function totaisDe(
   sync: ResultadoSyncAdn,
-  adaptacao: ResultadoAdaptacaoInventarioAdn
+  adaptacao: ResultadoAdaptacaoInventarioAdn,
+  consolidacao?: ConsolidacaoInventarioPersistidoAdn | null
 ): TotaisProgressoFiscal {
+  // Preferir consolidação por competência (persistido + período solicitado).
+  if (consolidacao?.evidenciaPersistenciaOk) {
+    const p = consolidacao.periodo;
+    const emitidas = p.emitidas;
+    const recebidas = p.recebidas;
+    // Eventos na pasta ADN ≈ cancelamentos/eventos; sem vínculo 1:1 com chave.
+    const canceladas = p.eventos;
+    const indeterminadas = p.naoClassificados + p.intermediadas;
+    return {
+      emitidas,
+      recebidas,
+      canceladas,
+      vigentes: Math.max(0, emitidas + recebidas),
+      indeterminadas,
+      descobertos: emitidas + recebidas,
+      paginas: sync.lotesProcessados,
+    };
+  }
+
   const docs = adaptacao.inventario.documentos;
   let emitidas = 0;
   let recebidas = 0;
@@ -107,7 +130,7 @@ export function progressoFiscalDeSyncAdn(entrada: EntradaAdaptadorSyncAdn): Prog
   const codigoStr = entrada.codigoErro?.trim() || null;
   const interrompido = Boolean(entrada.interrompido);
   const inv = estadoInventario(sync, adaptacao, codigoStr, interrompido);
-  const totais = totaisDe(sync, adaptacao);
+  const totais = totaisDe(sync, adaptacao, entrada.consolidacao);
 
   // Garantia explícita: nunca COMPLETO via ADN nesta etapa.
   if (adaptacao.inventarioMensalCompletoDeclarado !== false) {

@@ -146,6 +146,7 @@ export {
 } from './iniciar-executor';
 export {
   setSyncAdnIniciarParaTestes,
+  setFonteInventarioPersistidoParaTestes,
   autorizarAdnIniciarEmpresa,
   limparAutorizacoesAdnIniciar,
   obterAutorizacaoAdnIniciarRuntime,
@@ -154,3 +155,16 @@ export {
   criarExecutarSyncAdnIniciarPadrao,
   syncAdnIniciarFixoParaTestes,
 } from './iniciar-runtime';
+export {
+  listarCompetenciasDoPeriodo,
+  consolidarInventarioPersistidoAdn,
+  decidirResultadoFinalAdnIniciar,
+  formatarMotivoConsolidacaoAdn,
+  InventarioPersistidoArquivoAdn,
+  InventarioPersistidoMemoriaAdn,
+  type ContagensClassificacaoAdn,
+  type ContagensCompetenciaAdn,
+  type ConsolidacaoInventarioPersistidoAdn,
+  type FonteInventarioPersistidoAdn,
+  type ResultadoFinalAdnIniciar,
+} from './inventario-persistido';

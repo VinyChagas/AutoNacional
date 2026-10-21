@@ -1025,14 +1025,14 @@ async function executarFluxoCompleto(
         info.resultadoFinal = 'ERRO';
         info.progresso = 100;
       } else {
-        const temDocs =
-          resultadoAdn.contagens.emitidas + resultadoAdn.contagens.recebidas > 0;
         info.status = 'concluido';
         info.progresso = 100;
         info.mensagem = resultadoAdn.motivo;
-        info.resultadoFinal = temDocs ? 'NFS_ENCONTRADAS' : 'SEM_MOVIMENTO';
+        // SEM_MOVIMENTO só com evidência na competência (ver decidirResultadoFinalAdnIniciar).
+        info.resultadoFinal = resultadoAdn.resultadoFinal;
         adicionarLog(
-          'ADN Iniciar concluído sem Chromium; inventário mensal permanece PARCIAL.'
+          `ADN Iniciar concluído sem Chromium; resultado=${resultadoAdn.resultadoFinal}; ` +
+            `inventário mensal permanece PARCIAL.`
         );
       }
     } catch (e) {
