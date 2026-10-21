@@ -4,6 +4,7 @@ import { Observable, Subject } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
+import type { ExecutionFiscalStreamEvent, ProgressoFiscalNfse } from '../models/progresso-fiscal.model';
 
 /** Eventos SSE de execução em tempo real */
 export interface ExecutionStreamEventStarted {
@@ -45,7 +46,8 @@ export type ExecutionStreamEvent =
   | ExecutionStreamEventStarted
   | ExecutionStreamEventStage
   | ExecutionStreamEventCounts
-  | ExecutionStreamEventFinished;
+  | ExecutionStreamEventFinished
+  | ExecutionFiscalStreamEvent;
 
 export type StatusExecucao = 'fila' | 'executando' | 'finalizado' | 'falhou';
 export type ResultadoFinal = 'SEM_MOVIMENTO' | 'NOTAS_EMITIDAS' | 'NOTAS_RECEBIDAS' | 'NFS_ENCONTRADAS';
@@ -104,6 +106,9 @@ export interface ExecucaoStatusResponse {
   qtd_notas_recebidas?: number;
   qtd_notas_canceladas?: number;
   resultado_final?: string;
+  /** Progresso fiscal estruturado (UI-01e-B); ausente após expiração/restart. */
+  fiscal?: ProgressoFiscalNfse;
+  batch_id?: string;
 }
 
 export interface ResumoExecucoesResponse {
@@ -343,7 +348,8 @@ export class ExecucaoService {
 
     const eventSource = new EventSource(url);
 
-    const eventNames = ['started', 'stage', 'counts', 'finished'] as const;
+    // Mesmo canal SSE; `fiscal` é adicional (UI-01e-C). Legados inalterados.
+    const eventNames = ['started', 'stage', 'counts', 'finished', 'fiscal'] as const;
     eventNames.forEach((name) => {
       eventSource.addEventListener(name, (e: MessageEvent) => {
         try {

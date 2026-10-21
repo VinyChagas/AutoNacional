@@ -1,23 +1,39 @@
 /**
- * UI-01d — Visão fiscal da linha de execução (somente Frontend).
- * Deriva Inventário / Validação / Recuperação dos dados já existentes
- * (status, contagens, stage, resultado_final). Não inventa métricas SSE.
+ * UI-01d + UI-01e-C — Visão fiscal da linha de execução (somente Frontend).
+ * Com `progresso_fiscal` estruturado: inventário/validação/recuperação do contrato nativo.
+ * Sem fiscal: fallback UI-01d (contagens legadas; sem misturar com nativo).
  */
 import type { ExecutionRow, ExecutionRowMetodo, ExecutionRowStatus } from './execution-row.model';
+import {
+  rotuloEstadoFaseFiscal,
+  type ProgressoFiscalNfse,
+} from './progresso-fiscal.model';
 
 export type InventarioEstado =
   | 'Aguardando'
   | 'Em andamento'
   | 'Concluído'
   | 'Incompleto'
-  | 'Falha';
+  | 'Completo'
+  | 'Parcial'
+  | 'Falha'
+  | 'Cancelado'
+  | 'Timeout'
+  | 'Limite atingido'
+  | 'Indisponível';
 
 export type ValidacaoEstado =
   | 'Não iniciada'
   | 'Em andamento'
   | 'Concluída'
+  | 'Completo'
+  | 'Parcial'
   | 'Incompleta'
   | 'Falha'
+  | 'Cancelado'
+  | 'Timeout'
+  | 'Limite atingido'
+  | 'Indisponível'
   | 'Não disponível';
 
 export type RecuperacaoEstado =
@@ -37,10 +53,19 @@ export interface InventarioView {
   contagens: ContagensFiscais;
   /** Exibir números só quando há dado real ou execução finalizada. */
   exibirContagens: boolean;
+  /** Completude nativa (só com progresso estruturado). */
+  completude?: string | null;
+  /** Totais vindos do contrato estruturado (não misturar com legado). */
+  fonteEstruturada?: boolean;
 }
 
 export interface ValidacaoView {
   estado: ValidacaoEstado;
+  vigentes?: number;
+  canceladas?: number;
+  indeterminadas?: number;
+  exibirContagens?: boolean;
+  fonteEstruturada?: boolean;
 }
 
 export interface RecuperacaoView {
@@ -67,6 +92,8 @@ export interface VisaoFiscalLinha {
   recuperacao: RecuperacaoView;
   status: StatusView;
   discoveryOnly: boolean;
+  /** true quando a linha usa ProgressoFiscalNfse (não contagens legadas). */
+  fiscalEstruturado: boolean;
 }
 
 function contagensDe(row: ExecutionRow): ContagensFiscais {
@@ -201,7 +228,66 @@ export function mapearAutenticacao(row: ExecutionRow): AutenticacaoView {
   };
 }
 
+function inventarioDeEstruturado(p: ProgressoFiscalNfse): InventarioView {
+  const t = p.inventario.totais;
+  const estado = rotuloEstadoFaseFiscal(p.inventario.estado) as InventarioEstado;
+  return {
+    estado,
+    contagens: {
+      emitidas: t.emitidas,
+      recebidas: t.recebidas,
+      canceladas: t.canceladas,
+      total: t.descobertos,
+    },
+    exibirContagens: true,
+    completude: p.inventario.completude,
+    fonteEstruturada: true,
+  };
+}
+
+function validacaoDeEstruturado(p: ProgressoFiscalNfse): ValidacaoView {
+  const estado = rotuloEstadoFaseFiscal(p.validacao.estado) as ValidacaoEstado;
+  // Não declarar completa se inventário não é confiável / parcial.
+  const estadoFinal =
+    !p.inventario.conclusao_confiavel && p.validacao.estado === 'completa'
+      ? ('Parcial' as ValidacaoEstado)
+      : estado;
+  return {
+    estado: estadoFinal,
+    vigentes: p.validacao.vigentes,
+    canceladas: p.validacao.canceladas,
+    indeterminadas: p.validacao.indeterminadas,
+    exibirContagens: p.validacao.origem === 'PORTAL',
+    fonteEstruturada: true,
+  };
+}
+
+function recuperacaoDeEstruturado(p: ProgressoFiscalNfse): RecuperacaoView {
+  // Discovery-Only / contrato: nunca exibir cobertura ou XMLs.
+  if (p.recuperacao.estado === 'nao_executada' || !p.recuperacao.conclusao_confiavel) {
+    return { estado: 'Não executada', exibirProgresso: false };
+  }
+  return { estado: 'Não disponível', exibirProgresso: false };
+}
+
 export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
+  const fiscal = row.progresso_fiscal;
+  if (fiscal) {
+    const msgFiscal = fiscal.message?.trim() || '';
+    return {
+      autenticacao: mapearAutenticacao(row),
+      inventario: inventarioDeEstruturado(fiscal),
+      validacao: validacaoDeEstruturado(fiscal),
+      recuperacao: recuperacaoDeEstruturado(fiscal),
+      status: {
+        status: row.status,
+        mensagem: row.status === 'OK' ? '' : row.mensagem || msgFiscal || '',
+      },
+      discoveryOnly: true,
+      fiscalEstruturado: true,
+    };
+  }
+
   return {
     autenticacao: mapearAutenticacao(row),
     inventario: mapearInventario(row),
@@ -212,5 +298,6 @@ export function mapearVisaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
       mensagem: row.status === 'OK' ? '' : row.mensagem || '',
     },
     discoveryOnly: isDiscoveryOnlyResultado(row.resultado_final),
+    fiscalEstruturado: false,
   };
 }

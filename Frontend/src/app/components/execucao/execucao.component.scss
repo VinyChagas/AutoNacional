@@ -576,13 +576,19 @@ $radius-pill: 9999px;
   .etapa-estado[data-estado='Aguardando'],
   .etapa-estado[data-estado='Não iniciada'],
   .etapa-estado[data-estado='Não disponível'],
-  .etapa-estado[data-estado='Não executada'] { color: #64748b; font-weight: 500; }
+  .etapa-estado[data-estado='Não executada'],
+  .etapa-estado[data-estado='Indisponível'] { color: #64748b; font-weight: 500; }
   .etapa-estado[data-estado='Em andamento'] { color: var(--primary); }
   .etapa-estado[data-estado='Concluído'],
-  .etapa-estado[data-estado='Concluída'] { color: #16a34a; }
+  .etapa-estado[data-estado='Concluída'],
+  .etapa-estado[data-estado='Completo'] { color: #16a34a; }
   .etapa-estado[data-estado='Incompleto'],
-  .etapa-estado[data-estado='Incompleta'] { color: #c47b16; }
-  .etapa-estado[data-estado='Falha'] { color: #dc2626; }
+  .etapa-estado[data-estado='Incompleta'],
+  .etapa-estado[data-estado='Parcial'],
+  .etapa-estado[data-estado='Timeout'],
+  .etapa-estado[data-estado='Limite atingido'] { color: #c47b16; }
+  .etapa-estado[data-estado='Falha'],
+  .etapa-estado[data-estado='Cancelado'] { color: #dc2626; }
 
   .etapa-contagens {
     display: flex;

@@ -278,10 +278,15 @@
                           class="etapa-estado"
                           [attr.data-estado]="v.inventario.estado"
                         >{{ v.inventario.estado }}</span>
+                        @if (v.inventario.fonteEstruturada && v.inventario.completude) {
+                          <div class="etapa-hint" title="Completude nativa do inventário">{{ v.inventario.completude }}</div>
+                        }
                         @if (v.inventario.exibirContagens) {
                           <div
                             class="etapa-contagens"
-                            title="Contagens desta execução (E/R/C). Não implica inventário nativo completo nem classificação documental."
+                            [title]="v.inventario.fonteEstruturada
+                              ? 'Totais do inventário nativo (E/R/C/Σ descobertos).'
+                              : 'Contagens legadas desta execução (E/R/C). Não implica inventário nativo completo.'"
                           >
                             <span>E {{ v.inventario.contagens.emitidas }}</span>
                             <span>R {{ v.inventario.contagens.recebidas }}</span>
@@ -297,6 +302,16 @@
                           class="etapa-estado"
                           [attr.data-estado]="v.validacao.estado"
                         >{{ v.validacao.estado }}</span>
+                        @if (v.validacao.exibirContagens) {
+                          <div
+                            class="etapa-contagens"
+                            title="Classificação do inventário (vigentes / canceladas / indeterminadas)."
+                          >
+                            <span>V {{ v.validacao.vigentes }}</span>
+                            <span>C {{ v.validacao.canceladas }}</span>
+                            <span>I {{ v.validacao.indeterminadas }}</span>
+                          </div>
+                        }
                       </td>
                       <td class="td-etapa">
                         <span

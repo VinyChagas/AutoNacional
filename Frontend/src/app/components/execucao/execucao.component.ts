@@ -15,6 +15,14 @@ import {
   mapearVisaoFiscal,
   type VisaoFiscalLinha,
 } from '../../models/execution-fiscal-view.model';
+import {
+  decidirAplicacaoFiscalSse,
+  decidirPollingFiscal,
+} from '../../models/progresso-fiscal-apply';
+import {
+  parseExecutionFiscalStreamEvent,
+  parseProgressoFiscalNfse,
+} from '../../models/progresso-fiscal.model';
 import { FiscalViewPipe } from '../../pipes/fiscal-view.pipe';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 import * as XLSX from 'xlsx';
@@ -126,6 +134,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   private batchPollingInterval: ReturnType<typeof setInterval> | null = null;
   private destroy$ = new Subject<void>();
   private streamSubscription: { unsubscribe: () => void } | null = null;
+  /** Sequência local de aplicação fiscal aceita (não é versão Backend). */
+  private fiscalSeq = 0;
 
   // Salvar Log
   batchId: string | null = null;
@@ -677,6 +687,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     // Reseta batch e log ao carregar novas empresas
     this.batchId = null;
     this.logSalvo = false;
+    this.fiscalSeq = 0;
 
     // Cria execuções pendentes e linhas de exibição
     const cnpjLimpo = (c: string) => c.replace(/[^\d]/g, '');
@@ -949,16 +960,13 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       qtdC: number;
       etapa: string;
       resultadoFinal?: string;
+      patchFiscal?: Partial<ExecutionRow>;
     }> = [];
     for (const s of statuses) {
       const empresaId = String(s.empresa_id ?? '');
-      const cnpj = String(s.cnpj ?? '');
-      const execIdx = this.execucoes.findIndex(
-        (e) => String(e.empresa_id) === empresaId || e.cnpj === cnpj
-      );
-      const rowIdx = this.executionRows.findIndex(
-        (r) => String(r.empresa_id) === empresaId || r.cnpj === cnpj
-      );
+      // Correlação fiscal: empresa_id do lote (não só CNPJ).
+      const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === empresaId);
+      const rowIdx = this.executionRows.findIndex((r) => String(r.empresa_id) === empresaId);
       if (execIdx >= 0 && rowIdx >= 0) {
         const statusMap = this.mapearStatusBackendParaFrontend(String(s.status ?? ''));
         let statusRow: ExecutionRowStatus =
@@ -989,6 +997,30 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtdNotasCanceladas: qtdC,
           resultadoFinal: (s.resultado_final as ResultadoFinal) ?? undefined,
         }});
+
+        let patchFiscal: Partial<ExecutionRow> | undefined;
+        if (this.batchId) {
+          const fiscalParsed = s.fiscal ? parseProgressoFiscalNfse(s.fiscal) : null;
+          const rowBase: ExecutionRow = {
+            ...this.executionRows[rowIdx],
+            status: statusRow,
+          };
+          const dec = decidirPollingFiscal(
+            rowBase,
+            fiscalParsed,
+            String(s.status ?? ''),
+            { batchIdAtual: this.batchId, proximoSeq: this.fiscalSeq }
+          );
+          this.fiscalSeq = dec.proximoSeq;
+          if (dec.acao === 'aplicar' || dec.acao === 'limpar') {
+            patchFiscal = {
+              progresso_fiscal: dec.row.progresso_fiscal,
+              execucao_id: dec.row.execucao_id,
+              fiscal_seq: dec.row.fiscal_seq,
+            };
+          }
+        }
+
         rowUpdates.push({
           idx: rowIdx,
           status: statusRow,
@@ -998,6 +1030,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtdC,
           etapa,
           resultadoFinal: s.resultado_final,
+          patchFiscal,
         });
       }
     }
@@ -1007,7 +1040,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     for (const { idx, upd } of execUpdates) {
       execucoes = [...execucoes.slice(0, idx), { ...execucoes[idx], ...upd }, ...execucoes.slice(idx + 1)];
     }
-    for (const { idx, status, mensagem, qtdE, qtdR, qtdC, etapa, resultadoFinal } of rowUpdates) {
+    for (const { idx, status, mensagem, qtdE, qtdR, qtdC, etapa, resultadoFinal, patchFiscal } of rowUpdates) {
       executionRows = [
         ...executionRows.slice(0, idx),
         {
@@ -1019,6 +1052,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtd_canceladas: qtdC,
           ...(etapa ? { ultimo_stage: etapa } : {}),
           ...(resultadoFinal ? { resultado_final: resultadoFinal } : {}),
+          ...(patchFiscal ?? {}),
         },
         ...executionRows.slice(idx + 1),
       ];
@@ -1145,6 +1179,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   private handleStreamEvent(ev: ExecutionStreamEvent): void {
+    if (ev.type === 'execution:fiscal') {
+      this.handleFiscalStreamEvent(ev);
+      return;
+    }
+
     const empresaId = ev.empresa_id;
     const idx = this.executionRows.findIndex((r) => String(r.empresa_id) === String(empresaId));
     if (idx < 0) return;
@@ -1168,6 +1207,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         ultimo_stage: ev.stage,
       };
     } else if (ev.type === 'execution:counts') {
+      // Contagens legadas — não misturar com progresso_fiscal estruturado.
       next = {
         qtd_emitidas: ev.qtd_emitidas,
         qtd_recebidas: ev.qtd_recebidas,
@@ -1212,6 +1252,36 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.executionRows = [
       ...this.executionRows.slice(0, idx),
       { ...row, ...next },
+      ...this.executionRows.slice(idx + 1),
+    ];
+    this.cdr.markForCheck();
+  }
+
+  /** UI-01e-C — aplica execution:fiscal com correlação batch/empresa/execução. */
+  private handleFiscalStreamEvent(raw: ExecutionStreamEvent): void {
+    if (!this.batchId) return;
+    const parsed = parseExecutionFiscalStreamEvent(raw);
+    if (!parsed) return;
+
+    const idx = this.executionRows.findIndex(
+      (r) => String(r.empresa_id) === String(parsed.empresa_id)
+    );
+    if (idx < 0) return;
+
+    const dec = decidirAplicacaoFiscalSse(
+      this.executionRows[idx],
+      parsed.batch_id,
+      parsed.empresa_id,
+      parsed.execucao_id,
+      parsed.fiscal,
+      { batchIdAtual: this.batchId, proximoSeq: this.fiscalSeq }
+    );
+    this.fiscalSeq = dec.proximoSeq;
+    if (dec.acao !== 'aplicar') return;
+
+    this.executionRows = [
+      ...this.executionRows.slice(0, idx),
+      dec.row,
       ...this.executionRows.slice(idx + 1),
     ];
     this.cdr.markForCheck();
