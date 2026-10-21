@@ -37,6 +37,8 @@ export interface ExecutionStreamEventFinished {
   qtd_emitidas?: number;
   qtd_recebidas?: number;
   qtd_canceladas?: number;
+  /** Já emitido pelo Backend; tipado no FE para UI-01d (sem novo evento). */
+  resultado_final?: string;
 }
 
 export type ExecutionStreamEvent =

@@ -11,13 +11,18 @@ import { Empresa } from '../../models/empresas.model';
 import { Contabilidade } from '../../models/contabilidade.model';
 import type { ExecutionBatchLogPayload, ExecutionBatchLogItem } from '../../models/execucao-batch-log.model';
 import type { ExecutionRow, ExecutionRowStatus } from '../../models/execution-row.model';
+import {
+  mapearVisaoFiscal,
+  type VisaoFiscalLinha,
+} from '../../models/execution-fiscal-view.model';
+import { FiscalViewPipe } from '../../pipes/fiscal-view.pipe';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 import * as XLSX from 'xlsx';
 
 @Component({
   selector: 'app-execucao',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FiscalViewPipe],
   templateUrl: './execucao.component.html',
   styleUrls: ['./execucao.component.scss']
 })
@@ -491,6 +496,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return temCredenciais || aguardando;
   }
 
+  /** UI-01d — visão Inventário / Validação / Recuperação a partir dos dados da linha. */
+  visaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
+    return mapearVisaoFiscal(row);
+  }
+
   abrirCentralCaptchas(): void {
     if (!this.podeAbrirCentralCaptchas || !this.batchId) return;
     const url = `${window.location.origin}/execucao/captchas/${encodeURIComponent(this.batchId)}`;
@@ -930,7 +940,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   private aplicarStatusBatch(statuses: ExecucaoStatusResponse[]) {
     if (statuses.length === 0) return;
     const execUpdates: Array<{ idx: number; upd: Partial<ExecucaoEmpresa> }> = [];
-    const rowUpdates: Array<{ idx: number; status: ExecutionRowStatus; mensagem: string; qtdE: number; qtdR: number; qtdC: number }> = [];
+    const rowUpdates: Array<{
+      idx: number;
+      status: ExecutionRowStatus;
+      mensagem: string;
+      qtdE: number;
+      qtdR: number;
+      qtdC: number;
+      etapa: string;
+      resultadoFinal?: string;
+    }> = [];
     for (const s of statuses) {
       const empresaId = String(s.empresa_id ?? '');
       const cnpj = String(s.cnpj ?? '');
@@ -970,7 +989,16 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtdNotasCanceladas: qtdC,
           resultadoFinal: (s.resultado_final as ResultadoFinal) ?? undefined,
         }});
-        rowUpdates.push({ idx: rowIdx, status: statusRow, mensagem: statusRow === 'ERRO' ? (s.mensagem || s.erro || '') : '', qtdE, qtdR, qtdC });
+        rowUpdates.push({
+          idx: rowIdx,
+          status: statusRow,
+          mensagem: statusRow === 'ERRO' ? (s.mensagem || s.erro || '') : (statusRow === 'OK' ? '' : msg),
+          qtdE,
+          qtdR,
+          qtdC,
+          etapa,
+          resultadoFinal: s.resultado_final,
+        });
       }
     }
     if (execUpdates.length === 0) return;
@@ -979,8 +1007,21 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     for (const { idx, upd } of execUpdates) {
       execucoes = [...execucoes.slice(0, idx), { ...execucoes[idx], ...upd }, ...execucoes.slice(idx + 1)];
     }
-    for (const { idx, status, mensagem, qtdE, qtdR, qtdC } of rowUpdates) {
-      executionRows = [...executionRows.slice(0, idx), { ...executionRows[idx], status, mensagem, qtd_emitidas: qtdE, qtd_recebidas: qtdR, qtd_canceladas: qtdC }, ...executionRows.slice(idx + 1)];
+    for (const { idx, status, mensagem, qtdE, qtdR, qtdC, etapa, resultadoFinal } of rowUpdates) {
+      executionRows = [
+        ...executionRows.slice(0, idx),
+        {
+          ...executionRows[idx],
+          status,
+          mensagem,
+          qtd_emitidas: qtdE,
+          qtd_recebidas: qtdR,
+          qtd_canceladas: qtdC,
+          ...(etapa ? { ultimo_stage: etapa } : {}),
+          ...(resultadoFinal ? { resultado_final: resultadoFinal } : {}),
+        },
+        ...executionRows.slice(idx + 1),
+      ];
     }
     this.execucoes = execucoes;
     this.executionRows = executionRows;
@@ -1124,6 +1165,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         mensagem: isAguardandoCaptcha
           ? (ev.message || 'Aguardando resolução manual do hCaptcha')
           : ev.message,
+        ultimo_stage: ev.stage,
       };
     } else if (ev.type === 'execution:counts') {
       next = {
@@ -1138,6 +1180,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         qtd_emitidas: ev.qtd_emitidas ?? row.qtd_emitidas,
         qtd_recebidas: ev.qtd_recebidas ?? row.qtd_recebidas,
         qtd_canceladas: ev.qtd_canceladas ?? row.qtd_canceladas ?? 0,
+        ...(ev.resultado_final ? { resultado_final: ev.resultado_final } : {}),
       };
       const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === String(empresaId) || e.cnpj === row.cnpj);
       if (execIdx >= 0) {

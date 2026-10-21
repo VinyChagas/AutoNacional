@@ -235,57 +235,102 @@
             </label>
           </div>
           <div class="table-scroll">
-            <table class="data-table execucao-linhas-table">
+            <table class="data-table execucao-linhas-table execucao-fiscal-table">
               <thead>
                 <tr>
-                  <th>CNPJ</th>
-                  <th>Razão Social</th>
-                  <th>Método</th>
-                  <th class="th-num">NF Emitidas</th>
-                  <th class="th-num">NF Recebidas</th>
-                  <th class="th-num">NF Canceladas</th>
+                  <th>Empresa</th>
+                  <th>Autenticação</th>
+                  <th>Inventário</th>
+                  <th>Validação</th>
+                  <th>Recuperação</th>
                   <th>Status</th>
-                  <th>Mensagem</th>
                 </tr>
               </thead>
               <tbody>
                 @for (row of executionRowsExibidas; track row.empresa_id) {
-                  <tr class="execucao-linha" [class.linha-erro]="row.status === 'ERRO'">
-                    <td class="td-mono">{{ formatarCNPJ(row.cnpj) }}</td>
-                    <td class="td-bold">{{ row.razao_social || '-' }}</td>
-                    <td>
-                      <span
-                        class="login-metodo-badge"
-                        [class.badge-certificado]="row.metodo === 'CERTIFICADO'"
-                        [class.badge-credencial]="row.metodo === 'CREDENCIAL'"
-                      >
-                        {{ row.metodo === 'CERTIFICADO' ? 'Certificado' : 'Credencial' }}
-                      </span>
-                    </td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_emitidas === 0 ? '—' : row.qtd_emitidas }}</td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_recebidas === 0 ? '—' : row.qtd_recebidas }}</td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_canceladas === 0 ? '—' : row.qtd_canceladas }}</td>
-                    <td>
-                      @if (row.status === 'EM_EXECUCAO') {
-                        <span class="status-badge status-executando">
-                          <span class="spinner-sm"></span>
-                          Executando
+                  <ng-container *ngIf="row | fiscalView as v">
+                    <tr
+                      class="execucao-linha"
+                      [class.linha-erro]="row.status === 'ERRO'"
+                      [class.linha-captcha]="row.status === 'AGUARDANDO_CAPTCHA'"
+                    >
+                      <td class="td-empresa">
+                        <div class="empresa-razao" [title]="row.razao_social || ''">{{ row.razao_social || '—' }}</div>
+                        <div class="empresa-cnpj td-mono">{{ formatarCNPJ(row.cnpj) }}</div>
+                      </td>
+                      <td class="td-auth">
+                        <span
+                          class="login-metodo-badge"
+                          [class.badge-certificado]="v.autenticacao.metodo === 'CERTIFICADO'"
+                          [class.badge-credencial]="v.autenticacao.metodo === 'CREDENCIAL'"
+                        >
+                          {{ v.autenticacao.rotulo }}
                         </span>
-                      } @else if (row.status === 'AGUARDANDO_CAPTCHA') {
-                        <span class="status-badge status-captcha">
-                          <span class="spinner-sm"></span>
-                          Aguardando captcha
-                        </span>
-                      } @else if (row.status === 'FILA') {
-                        <span class="status-badge status-fila">Fila</span>
-                      } @else if (row.status === 'OK') {
-                        <span class="status-badge status-ok">OK</span>
-                      } @else if (row.status === 'ERRO') {
-                        <span class="status-badge status-erro">ERRO</span>
-                      }
-                    </td>
-                    <td class="td-mensagem">{{ row.status === 'OK' ? '' : (row.mensagem || '—') }}</td>
-                  </tr>
+                        @if (v.autenticacao.aguardandoCaptcha) {
+                          <span class="auth-captcha-flag">
+                            <span class="spinner-sm"></span>
+                            AGUARDANDO_CAPTCHA
+                          </span>
+                        }
+                      </td>
+                      <td class="td-etapa">
+                        <span
+                          class="etapa-estado"
+                          [attr.data-estado]="v.inventario.estado"
+                        >{{ v.inventario.estado }}</span>
+                        @if (v.inventario.exibirContagens) {
+                          <div
+                            class="etapa-contagens"
+                            title="Contagens desta execução (E/R/C). Não implica inventário nativo completo nem classificação documental."
+                          >
+                            <span>E {{ v.inventario.contagens.emitidas }}</span>
+                            <span>R {{ v.inventario.contagens.recebidas }}</span>
+                            <span>C {{ v.inventario.contagens.canceladas }}</span>
+                            <span class="contagem-total">Σ {{ v.inventario.contagens.total }}</span>
+                          </div>
+                        } @else {
+                          <div class="etapa-contagens etapa-contagens-vazias">—</div>
+                        }
+                      </td>
+                      <td class="td-etapa">
+                        <span
+                          class="etapa-estado"
+                          [attr.data-estado]="v.validacao.estado"
+                        >{{ v.validacao.estado }}</span>
+                      </td>
+                      <td class="td-etapa">
+                        <span
+                          class="etapa-estado"
+                          [attr.data-estado]="v.recuperacao.estado"
+                        >{{ v.recuperacao.estado }}</span>
+                        @if (v.discoveryOnly) {
+                          <div class="etapa-hint">Discovery-Only</div>
+                        }
+                      </td>
+                      <td class="td-status-msg">
+                        @if (row.status === 'EM_EXECUCAO') {
+                          <span class="status-badge status-executando">
+                            <span class="spinner-sm"></span>
+                            Executando
+                          </span>
+                        } @else if (row.status === 'AGUARDANDO_CAPTCHA') {
+                          <span class="status-badge status-captcha">
+                            <span class="spinner-sm"></span>
+                            Aguardando captcha
+                          </span>
+                        } @else if (row.status === 'FILA') {
+                          <span class="status-badge status-fila">Fila</span>
+                        } @else if (row.status === 'OK') {
+                          <span class="status-badge status-ok">OK</span>
+                        } @else if (row.status === 'ERRO') {
+                          <span class="status-badge status-erro">ERRO</span>
+                        }
+                        @if (v.status.mensagem) {
+                          <div class="td-mensagem" [title]="v.status.mensagem">{{ v.status.mensagem }}</div>
+                        }
+                      </td>
+                    </tr>
+                  </ng-container>
                 }
               </tbody>
             </table>

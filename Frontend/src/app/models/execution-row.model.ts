@@ -17,4 +17,8 @@ export interface ExecutionRow {
   mensagem: string;
   started_at?: string;
   finished_at?: string;
+  /** Último stage SSE (execution:stage) — opcional, para visão fiscal UI-01d. */
+  ultimo_stage?: string;
+  /** resultado_final do finished/polling quando disponível (ex.: HOMOLOGACAO_DISCOVERY_ONLY_*). */
+  resultado_final?: string;
 }

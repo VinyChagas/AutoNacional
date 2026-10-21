@@ -508,15 +508,95 @@ $radius-pill: 9999px;
 
   .td-mensagem {
     color: var(--text-muted);
-    font-size: 0.85rem;
-    max-width: 280px;
+    font-size: 0.8rem;
+    max-width: 220px;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 0.25rem;
   }
 
   .linha-erro {
     background: rgba(239, 68, 68, 0.06);
   }
+
+  .linha-captcha {
+    background: rgba(196, 123, 22, 0.06);
+  }
+}
+
+// UI-01d — tabela fiscal compacta
+.execucao-fiscal-table {
+  font-size: 0.85rem;
+
+  thead th {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    cursor: default;
+    &:hover { background: transparent; }
+  }
+
+  td {
+    padding: 0.6rem 0.75rem;
+    vertical-align: top;
+  }
+
+  .td-empresa { min-width: 140px; max-width: 220px; }
+  .empresa-razao {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .empresa-cnpj { margin-top: 0.1rem; font-size: 0.72rem; color: var(--text-muted); }
+
+  .td-auth {
+    min-width: 110px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .auth-captcha-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #8a5a10;
+  }
+
+  .td-etapa { min-width: 100px; max-width: 150px; }
+  .etapa-estado {
+    display: inline-block;
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+  .etapa-estado[data-estado='Aguardando'],
+  .etapa-estado[data-estado='Não iniciada'],
+  .etapa-estado[data-estado='Não disponível'],
+  .etapa-estado[data-estado='Não executada'] { color: #64748b; font-weight: 500; }
+  .etapa-estado[data-estado='Em andamento'] { color: var(--primary); }
+  .etapa-estado[data-estado='Concluído'],
+  .etapa-estado[data-estado='Concluída'] { color: #16a34a; }
+  .etapa-estado[data-estado='Incompleto'],
+  .etapa-estado[data-estado='Incompleta'] { color: #c47b16; }
+  .etapa-estado[data-estado='Falha'] { color: #dc2626; }
+
+  .etapa-contagens {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.45rem;
+    margin-top: 0.25rem;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+  .etapa-contagens .contagem-total { font-weight: 600; color: var(--text-primary); }
+  .etapa-contagens-vazias, .etapa-hint { color: var(--text-muted); font-size: 0.68rem; }
+  .etapa-hint { margin-top: 0.15rem; }
+  .td-status-msg { min-width: 130px; max-width: 220px; }
 }
 
 .status-badge {
