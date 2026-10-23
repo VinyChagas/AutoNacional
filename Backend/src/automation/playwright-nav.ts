@@ -7,6 +7,13 @@
  */
 import type { Locator, Page, Response } from 'playwright';
 import { PLAYWRIGHT_TIMEOUT } from '../infrastructure/config';
+import { getLogger } from '../infrastructure/logger';
+import {
+  agoraMonotonicoMs,
+  deltaMonotonicoMs,
+} from './nfse/orchestration/metricas-operacionais';
+
+const loggerTempos = getLogger('nfse-discovery-timing');
 
 export class PageClosedError extends Error {
   constructor(
@@ -82,51 +89,100 @@ export async function aguardarEstabilizarPagina(
   }
 }
 
+export interface ResultadoRotaOuSeletor {
+  /** Como a espera terminou. */
+  via: 'imediato' | 'rota' | 'seletor' | 'timeout';
+  /** URL já contém a rota alvo. */
+  rotaOk: boolean;
+  /** Seletor de prontidão (#datainicio) presente no DOM. */
+  seletorOk: boolean;
+  /** Duração monotônica da espera (ms). */
+  ms: number;
+  /** Estourou o timeout máximo sem confirmar rota nem seletor. */
+  timedOut: boolean;
+}
+
 /**
- * Aguarda URL alvo OU seletor de conteúdo pronto (o que vier primeiro).
+ * Aguarda a rota alvo OU o seletor de prontidão (#datainicio), o que vier primeiro.
+ *
+ * API-02Y — Causa raiz do timeout de ~60s/navegação:
+ *   O modelo anterior corria `page.waitForURL(urlGlob)` contra
+ *   `ready.waitFor({ state: 'visible' })`. Quando a navegação já havia ocorrido
+ *   (ou a URL final trazia query string que o glob `** /Notas/Tipo` não casa) o
+ *   `waitForURL` ficava aguardando a PRÓXIMA navegação — que nunca vinha — e o
+ *   `state: 'visible'` podia não resolver para um input renderizado porém ainda
+ *   sem layout. Resultado: a corrida só terminava no timeout máximo (60s) mesmo
+ *   com a navegação bem-sucedida. Repetido por direção (navegação + retentativa)
+ *   produzia os ~120s observados.
+ *
+ * Correção: resolver pela CONDIÇÃO REAL via polling curto — rota presente na URL
+ * (substring, casa com query string) OU seletor de filtro anexado ao DOM —
+ * retornando no instante em que qualquer uma é verdadeira. O timeout máximo
+ * permanece como proteção apenas para falhas reais.
+ *
+ * API-02Z — a presença de #datainicio NÃO confirma prontidão quando a URL
+ * pertence a uma direção incorreta (`urlSubstringsProibidas`). Isso evita falso
+ * positivo: estar em /Notas/Emitidas (com #datainicio) não pode confirmar uma
+ * navegação solicitada para /Notas/Recebidas e vice-versa.
  */
 export async function aguardarRotaOuSeletor(
   page: Page,
   options: {
-    urlGlob: string;
     urlSubstring: string;
     readySelector: string;
     timeout?: number;
+    intervaloMs?: number;
+    /** Substrings de rotas de outras direções que invalidam o seletor. */
+    urlSubstringsProibidas?: string[];
   }
-): Promise<void> {
+): Promise<ResultadoRotaOuSeletor> {
   const timeout = options.timeout ?? PLAYWRIGHT_TIMEOUT;
+  const intervaloMs = options.intervaloMs ?? 100;
+  const proibidas = options.urlSubstringsProibidas ?? [];
   assertPageUsable(page);
 
-  const jaNaRota = page.url().includes(options.urlSubstring);
+  const inicio = agoraMonotonicoMs();
   const ready = page.locator(options.readySelector).first();
+  const naRota = () => page.url().includes(options.urlSubstring);
+  const emRotaProibida = () => proibidas.some((s) => page.url().includes(s));
+  const seletorPresente = async () => (await ready.count().catch(() => 0)) > 0;
 
-  if (jaNaRota) {
-    const visivel = await ready.isVisible().catch(() => false);
-    if (visivel) return;
-    await ready.waitFor({ state: 'visible', timeout: Math.min(15000, timeout) });
-    return;
+  // Rota já correta e formulário presente: sucesso imediato, sem aguardar navegação.
+  if (naRota() && (await seletorPresente())) {
+    return {
+      via: 'imediato',
+      rotaOk: true,
+      seletorOk: true,
+      ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()),
+      timedOut: false,
+    };
   }
 
-  try {
-    await Promise.race([
-      page.waitForURL(options.urlGlob, { timeout }),
-      ready.waitFor({ state: 'visible', timeout }),
-    ]);
-  } catch (err) {
-    if (isTargetClosedError(err)) throw err;
-    const urlOk = page.url().includes(options.urlSubstring);
-    const selOk = await ready.isVisible().catch(() => false);
-    if (!urlOk && !selOk) {
-      throw err;
+  // Poll por condição verificável: rota correta OU #datainicio no DOM —
+  // mas o seletor só conta se a URL NÃO estiver em rota de direção incorreta.
+  for (;;) {
+    assertPageUsable(page);
+    const rotaOk = naRota();
+    const seletorOk = (await seletorPresente()) && !emRotaProibida();
+    if (rotaOk || seletorOk) {
+      return {
+        via: rotaOk ? 'rota' : 'seletor',
+        rotaOk,
+        seletorOk,
+        ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()),
+        timedOut: false,
+      };
     }
-  }
-
-  // Já na rota ou seletor pronto — sem segunda estabilização redundante.
-  const pronto = await ready.isVisible().catch(() => false);
-  if (!pronto) {
-    await ready
-      .waitFor({ state: 'visible', timeout: Math.min(15000, timeout) })
-      .catch(() => undefined);
+    if (deltaMonotonicoMs(inicio, agoraMonotonicoMs()) >= timeout) {
+      return {
+        via: 'timeout',
+        rotaOk,
+        seletorOk,
+        ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()),
+        timedOut: true,
+      };
+    }
+    await page.waitForTimeout(intervaloMs);
   }
 }
 
@@ -143,23 +199,52 @@ export async function clicarMenuNotasEAguardar(
   const timeout = options.timeout ?? PLAYWRIGHT_TIMEOUT;
   const log = options.log ?? (() => undefined);
   const urlSubstring = `/Notas/${tipo}`;
-  const urlGlob = `**/Notas/${tipo}`;
+  const tipoOposto = tipo === 'Emitidas' ? 'Recebidas' : 'Emitidas';
+  const urlSubstringsProibidas = [`/Notas/${tipoOposto}`];
   const readySelector = '#datainicio';
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     assertPageUsable(page);
     log(`Abrindo Notas ${tipo} (tentativa ${attempt}/${maxAttempts})…`);
+
+    const inicioClick = agoraMonotonicoMs();
     await menu.click({ timeout: Math.min(15000, timeout) });
+    const clickMs = deltaMonotonicoMs(inicioClick, agoraMonotonicoMs());
+
     try {
-      await aguardarRotaOuSeletor(page, {
-        urlGlob,
+      const r = await aguardarRotaOuSeletor(page, {
         urlSubstring,
         readySelector,
         timeout,
+        urlSubstringsProibidas,
       });
-      log(`Tela de Notas ${tipo} pronta: ${page.url()}`);
-      return;
+      loggerTempos.info(
+        {
+          op: 'abrir_menu',
+          tipo,
+          tentativa: attempt,
+          clickMs,
+          esperaMs: r.ms,
+          via: r.via,
+          rotaOk: r.rotaOk,
+          seletorOk: r.seletorOk,
+          timedOut: r.timedOut,
+        },
+        'Tempo: clique no menu + confirmação de rota'
+      );
+      if (r.rotaOk || r.seletorOk) {
+        log(`Tela de Notas ${tipo} pronta: ${page.url()}`);
+        return;
+      }
+      // Timeout real (nem rota nem seletor): retenta ou falha.
+      if (attempt === maxAttempts) {
+        throw new Error(
+          `Navegação para Notas ${tipo} não confirmada após ${r.ms}ms (via=${r.via}).`
+        );
+      }
+      log(`Navegação para Notas ${tipo} incompleta — retentando clique`);
+      await new Promise((rr) => setTimeout(rr, 1500));
     } catch (err) {
       if (isTargetClosedError(err) || attempt === maxAttempts) {
         throw err;
@@ -168,7 +253,7 @@ export async function clicarMenuNotasEAguardar(
       log(
         `Navegação para Notas ${tipo} incompleta (${msg.slice(0, 100)}) — retentando clique`
       );
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((rr) => setTimeout(rr, 1500));
     }
   }
 }

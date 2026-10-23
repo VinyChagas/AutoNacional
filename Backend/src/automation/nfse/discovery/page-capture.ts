@@ -10,6 +10,11 @@ import {
 } from '../../processar-notas-competencia';
 import { clicarMenuNotasEAguardar } from '../../playwright-nav';
 import { PLAYWRIGHT_TIMEOUT } from '../../../infrastructure/config';
+import { getLogger } from '../../../infrastructure/logger';
+import {
+  agoraMonotonicoMs,
+  deltaMonotonicoMs,
+} from '../orchestration/metricas-operacionais';
 import { DIRECAO_PARA_TIPO_NOTA_UI, type DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
 import {
@@ -49,6 +54,8 @@ const PROXIMA = [
 ] as const;
 
 const LINHAS = SELETOR_LINHAS_LISTAGEM_PORTAL;
+
+const loggerTempos = getLogger('nfse-discovery-timing');
 
 interface NoDom {
   getAttribute(nome: string): string | null;
@@ -239,6 +246,7 @@ export function criarPortalDaPage(page: Page): PortalListagem {
     ): Promise<LeituraFiltroPortal> {
       let seletorFiltro: string | undefined;
       const timeoutListagem = Math.min(15000, PLAYWRIGHT_TIMEOUT);
+      const inicioFiltro = agoraMonotonicoMs();
       try {
         const botao = await localizarBotaoFiltrarPortal(page).catch(() => null);
         seletorFiltro = botao?.seletor;
@@ -252,9 +260,20 @@ export function criarPortalDaPage(page: Page): PortalListagem {
           { seletor: seletorFiltro, url: urlDiagnosticoPortal(page.url()) }
         );
       }
+      loggerTempos.info(
+        {
+          op: 'aplicar_filtro',
+          ms: deltaMonotonicoMs(inicioFiltro, agoraMonotonicoMs()),
+        },
+        'Tempo: preenchimento + submissão do filtro'
+      );
 
       // API-02W — preencherDatasEFiltrar já aguardou URL+conteúdo; não repetir.
       if (pesquisaPortalConfirmadaNaUrl(page.url(), periodo)) {
+        loggerTempos.info(
+          { op: 'confirmar_pesquisa', confirmada: true, viaGet: false },
+          'Pesquisa confirmada sem GET adicional'
+        );
         return lerFiltroDaPagina(page);
       }
 
@@ -271,6 +290,8 @@ export function criarPortalDaPage(page: Page): PortalListagem {
         /* fallback GET abaixo */
       }
 
+      const inicioGet = agoraMonotonicoMs();
+      let getTimedOut = false;
       try {
         const destino = montarUrlPesquisaPortal(page.url(), periodo);
         seletorFiltro = seletorFiltro ?? 'GET executar=1 (contrato Portal)';
@@ -280,8 +301,18 @@ export function criarPortalDaPage(page: Page): PortalListagem {
         });
         await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
       } catch {
+        getTimedOut = true;
         /* confirmação em confirmarFiltroAplicado */
       }
+      loggerTempos.info(
+        {
+          op: 'get_controlado',
+          ms: deltaMonotonicoMs(inicioGet, agoraMonotonicoMs()),
+          timedOut: getTimedOut,
+          confirmada: pesquisaPortalConfirmadaNaUrl(page.url(), periodo),
+        },
+        'Tempo: GET controlado (executar=1) + confirmação da listagem'
+      );
       return lerFiltroDaPagina(page);
     },
     capturar(pagina: number): Promise<PaginaListagem> {

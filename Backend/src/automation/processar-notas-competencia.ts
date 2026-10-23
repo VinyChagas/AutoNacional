@@ -26,6 +26,10 @@ import {
 } from './nfse/discovery/discovery-validation';
 import { aguardarListagemPortalPronta } from './nfse/discovery/portal-listagem-ready';
 import {
+  agoraMonotonicoMs,
+  deltaMonotonicoMs,
+} from './nfse/orchestration/metricas-operacionais';
+import {
   criarPeriodoConsultaPortal,
 } from './nfse/contracts/periodo';
 import { captchaConfigurado, CaptchaError } from './captcha-solver';
@@ -63,6 +67,7 @@ import {
 } from './captcha-diagnostic';
 
 const logger = getLogger('processar-notas');
+const loggerTempos = getLogger('nfse-discovery-timing');
 
 export { setDownloadsBasePath };
 
@@ -899,11 +904,21 @@ export async function preencherDatasEFiltrar(
 
   await page.waitForTimeout(_minActionDelayMs);
 
+  const inicioSubmit = agoraMonotonicoMs();
   await submeterFiltroPortal(page);
 
   // API-02W — condição verificável (executar=1 + período + linhas|vazio), sem networkidle.
   const timeoutListagem = Math.min(15000, PLAYWRIGHT_TIMEOUT);
   let pronto = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+  loggerTempos.info(
+    {
+      op: 'submeter_filtro',
+      ms: deltaMonotonicoMs(inicioSubmit, agoraMonotonicoMs()),
+      urlOk: pronto.urlOk,
+      conteudo: pronto.conteudo,
+    },
+    'Tempo: submissão do filtro + confirmação da listagem'
+  );
   if (pronto.urlOk) return;
 
   // Datas na URL sem executar=1 (ou clique sem efeito): GET controlado do contrato.
@@ -912,9 +927,25 @@ export async function preencherDatasEFiltrar(
     urlTemPeriodoSemExecutar(urlApos, periodo) ||
     !urlConfirmaPesquisa(urlApos, periodo)
   ) {
+    const inicioGet = agoraMonotonicoMs();
     const destino = montarUrlPesquisaPortal(urlApos, periodo);
-    await page.goto(destino, { waitUntil: 'domcontentloaded', timeout: PLAYWRIGHT_TIMEOUT });
+    let getTimedOut = false;
+    try {
+      await page.goto(destino, { waitUntil: 'domcontentloaded', timeout: PLAYWRIGHT_TIMEOUT });
+    } catch {
+      getTimedOut = true;
+    }
     pronto = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+    loggerTempos.info(
+      {
+        op: 'get_controlado',
+        ms: deltaMonotonicoMs(inicioGet, agoraMonotonicoMs()),
+        timedOut: getTimedOut,
+        urlOk: pronto.urlOk,
+        conteudo: pronto.conteudo,
+      },
+      'Tempo: GET controlado (executar=1) + confirmação da listagem'
+    );
   }
 
   if (!pronto.urlOk) {
