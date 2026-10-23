@@ -8,7 +8,7 @@ import {
   preencherDatasEFiltrar,
   submeterFiltroPortal,
 } from '../../processar-notas-competencia';
-import { clicarMenuNotasEAguardar } from '../../playwright-nav';
+import { aguardarRotaOuSeletor, clicarMenuNotasEAguardar } from '../../playwright-nav';
 import { PLAYWRIGHT_TIMEOUT } from '../../../infrastructure/config';
 import { getLogger } from '../../../infrastructure/logger';
 import {
@@ -30,6 +30,7 @@ import {
 } from './pagination';
 import {
   aguardarConteudoListagemPortal,
+  aguardarListagemEstavel,
   aguardarListagemPortalPronta,
   pesquisaPortalConfirmadaNaUrl,
   SELETOR_LINHAS_LISTAGEM_PORTAL,
@@ -38,6 +39,7 @@ import { evidenciaSituacaoVazia } from './row-parser';
 import {
   seletoresMenuNotas,
   urlDiagnosticoPortal,
+  urlNotasPortal,
 } from './portal-selectors';
 import type {
   LeituraFiltroPortal,
@@ -166,6 +168,13 @@ export async function capturarPaginaListagem(page: Page, pagina: number): Promis
   // então esses seletores NUNCA existem. Guardamos com count() (retorno imediato)
   // e só lemos innerText quando o elemento de fato existe.
   const inicioCaptura = agoraMonotonicoMs();
+
+  // API-02Z — estabiliza a listagem (contagem de linhas) antes de ler, evitando
+  // captura parcial durante a transição do filtro. Teto curto, sem hang.
+  const estabil = await aguardarListagemEstavel(page, {
+    timeoutMs: Math.min(15000, PLAYWRIGHT_TIMEOUT),
+  });
+
   const bodyText = await page.locator('body').innerText().catch(() => '');
 
   const info = page.locator('.dataTables_info, .pagination-info').first();
@@ -202,6 +211,8 @@ export async function capturarPaginaListagem(page: Page, pagina: number): Promis
       op: 'capturar_pagina',
       pagina,
       ms: deltaMonotonicoMs(inicioCaptura, agoraMonotonicoMs()),
+      estabilizacaoMs: estabil.ms,
+      estavel: estabil.estavel,
       linhas: quantidade,
       infoPresente,
       indicadorPresente,
@@ -251,19 +262,63 @@ async function localizarMenuNotas(
   );
 }
 
+/**
+ * API-02Z — recupera a rota de Notas quando a sessão foi desviada (ex.: "/").
+ * Re-navega à URL da direção reaproveitando a sessão/cert vigente (mTLS do
+ * contexto). Não realiza novo login nem toca no fluxo por credenciais.
+ * Retorna true se a rota ficou correta e o formulário (#datainicio) presente.
+ */
+async function recuperarRotaNotas(
+  page: Page,
+  direcao: DirecaoDocumentoFiscal
+): Promise<boolean> {
+  const tipoUi = DIRECAO_PARA_TIPO_NOTA_UI[direcao];
+  const destino = urlNotasPortal(direcao);
+  try {
+    await page.goto(destino, {
+      waitUntil: 'domcontentloaded',
+      timeout: Math.min(30000, PLAYWRIGHT_TIMEOUT),
+    });
+  } catch {
+    return false;
+  }
+  const r = await aguardarRotaOuSeletor(page, {
+    urlSubstring: `/Notas/${tipoUi}`,
+    readySelector: '#datainicio',
+    urlSubstringsProibidas: [
+      `/Notas/${tipoUi === 'Emitidas' ? 'Recebidas' : 'Emitidas'}`,
+    ],
+    timeout: Math.min(15000, PLAYWRIGHT_TIMEOUT),
+  });
+  return r.rotaOk || r.seletorOk;
+}
+
 export function criarPortalDaPage(page: Page): PortalListagem {
   return {
     async abrir(direcao: DirecaoDocumentoFiscal): Promise<void> {
-      const { locator: menu, seletor } = await localizarMenuNotas(page, direcao);
+      const tipoUi = DIRECAO_PARA_TIPO_NOTA_UI[direcao];
+      let seletor: string | undefined;
       try {
-        await menu.scrollIntoViewIfNeeded().catch(() => undefined);
-        await clicarMenuNotasEAguardar(page, menu, DIRECAO_PARA_TIPO_NOTA_UI[direcao]);
+        const alvo = await localizarMenuNotas(page, direcao);
+        seletor = alvo.seletor;
+        await alvo.locator.scrollIntoViewIfNeeded().catch(() => undefined);
+        await clicarMenuNotasEAguardar(page, alvo.locator, tipoUi);
+        return;
       } catch (erro) {
+        // API-02Z — sob concorrência mTLS a sessão pode ser desviada para "/"
+        // (menu ausente). Recuperação: re-navega à rota de Notas reaproveitando
+        // a sessão/cert vigente (sem novo login/credenciais). Só então falha.
+        const recuperou = await recuperarRotaNotas(page, direcao).catch(() => false);
+        if (recuperou) {
+          loggerTempos.info(
+            { op: 'abrir_menu_recuperado', direcao, url: urlDiagnosticoPortal(page.url()) },
+            'Rota de Notas recuperada por re-navegação (sessão desviada)'
+          );
+          return;
+        }
         throw new PortalDescobertaError(
           'abrir_menu',
-          `Falha ao abrir ${DIRECAO_PARA_TIPO_NOTA_UI[direcao]}: ${
-            erro instanceof Error ? erro.message : String(erro)
-          }`,
+          `Falha ao abrir ${tipoUi}: ${erro instanceof Error ? erro.message : String(erro)}`,
           { seletor, url: urlDiagnosticoPortal(page.url()) }
         );
       }

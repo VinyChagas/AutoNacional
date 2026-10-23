@@ -6,6 +6,10 @@ import type { Page } from 'playwright';
 import type { PeriodoConsultaPortal } from '../contracts/periodo';
 import { urlConfirmaPesquisa } from './discovery-validation';
 import { textoIndicaSemRegistros } from './pagination';
+import {
+  agoraMonotonicoMs,
+  deltaMonotonicoMs,
+} from '../orchestration/metricas-operacionais';
 
 export const SELETOR_LINHAS_LISTAGEM_PORTAL = 'table tbody tr';
 
@@ -79,6 +83,62 @@ export async function aguardarConteudoListagemPortal(
     return 'vazio';
   }
   return 'linhas';
+}
+
+export interface ResultadoListagemEstavel {
+  estavel: boolean;
+  linhas: number;
+  vazio: boolean;
+  ms: number;
+}
+
+/**
+ * API-02Z — aguarda a listagem ESTABILIZAR antes da captura.
+ *
+ * O sinal "linhas" de aguardarConteudoListagemPortal dispara na PRIMEIRA linha
+ * anexada (ou em linha remanescente da listagem anterior durante a transição do
+ * filtro). Capturar nesse instante lia a tabela parcial (ex.: 1 linha em vez de
+ * 12). Aqui aguardamos a contagem de linhas parar de mudar por algumas leituras
+ * consecutivas (ou a confirmação de lista vazia), com teto curto — sem hang.
+ */
+export async function aguardarListagemEstavel(
+  page: Page,
+  opcoes: {
+    timeoutMs?: number;
+    intervaloMs?: number;
+    repeticoesEstaveis?: number;
+  } = {}
+): Promise<ResultadoListagemEstavel> {
+  const timeoutMs = opcoes.timeoutMs ?? 15000;
+  const intervaloMs = opcoes.intervaloMs ?? 250;
+  const repeticoesEstaveis = opcoes.repeticoesEstaveis ?? 3;
+  const linhas = page.locator(SELETOR_LINHAS_LISTAGEM_PORTAL);
+  const inicio = agoraMonotonicoMs();
+
+  let anterior = -1;
+  let repeticoes = 0;
+  for (;;) {
+    const n = await linhas.count().catch(() => 0);
+    if (n === 0) {
+      const body = await page.locator('body').innerText().catch(() => '');
+      if (textoIndicaSemRegistros(body) || TEXTO_LISTA_VAZIA.test(body)) {
+        return { estavel: true, linhas: 0, vazio: true, ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()) };
+      }
+    }
+    if (n > 0 && n === anterior) {
+      repeticoes += 1;
+      if (repeticoes >= repeticoesEstaveis) {
+        return { estavel: true, linhas: n, vazio: false, ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()) };
+      }
+    } else {
+      repeticoes = 0;
+      anterior = n;
+    }
+    if (deltaMonotonicoMs(inicio, agoraMonotonicoMs()) >= timeoutMs) {
+      return { estavel: false, linhas: n, vazio: n === 0, ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()) };
+    }
+    await page.waitForTimeout(intervaloMs);
+  }
 }
 
 /**

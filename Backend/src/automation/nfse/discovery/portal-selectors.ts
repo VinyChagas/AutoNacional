@@ -15,6 +15,14 @@ export const VIEWPORT_DESCOBERTA_PORTAL_SEFIN = {
   height: 900,
 } as const;
 
+/** Base do Portal Nacional (Emissor). Rota de Notas reaproveita a sessão vigente. */
+export const BASE_PORTAL_EMISSOR = 'https://www.nfse.gov.br/EmissorNacional';
+
+/** URL absoluta da listagem da direção (sem query) para recuperação de rota. */
+export function urlNotasPortal(direcao: DirecaoDocumentoFiscal): string {
+  return `${BASE_PORTAL_EMISSOR}/Notas/${DIRECAO_PARA_TIPO_NOTA_UI[direcao]}`;
+}
+
 export function seletoresMenuNotas(direcao: DirecaoDocumentoFiscal): string[] {
   const tipo = DIRECAO_PARA_TIPO_NOTA_UI[direcao];
   const caminho = `/Notas/${tipo}`;

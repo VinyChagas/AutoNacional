@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { capturarPaginaListagem } from './page-capture';
+import { aguardarListagemEstavel } from './portal-listagem-ready';
 import type { Page } from 'playwright';
 
 interface LocatorFake {
@@ -89,5 +90,64 @@ describe('API-02Z — capturarPaginaListagem sem hang de 60s', () => {
     expect(r.linhas).toHaveLength(0);
     expect(r.semRegistros).toBe(true);
     expect(r.proxima.presente).toBe(false);
+  });
+});
+
+/** Page fake para estabilização: count() segue uma sequência; body configurável. */
+function criarPageEstavel(counts: number[], bodyText = ''): Page {
+  let idx = 0;
+  const linhas = {
+    count: async () => counts[Math.min(idx, counts.length - 1)],
+  };
+  return {
+    locator: (sel: string) => {
+      if (sel === 'body') return { innerText: async () => bodyText };
+      // SELETOR_LINHAS_LISTAGEM_PORTAL
+      return linhas;
+    },
+    waitForTimeout: async () => {
+      idx += 1;
+    },
+  } as unknown as Page;
+}
+
+describe('API-02Z — aguardarListagemEstavel', () => {
+  it('espera a contagem estabilizar (1 → 12) antes de retornar', async () => {
+    // placeholder 1 linha, depois 12 que se mantêm.
+    const page = criarPageEstavel([1, 12, 12, 12, 12], '');
+    const r = await aguardarListagemEstavel(page, {
+      timeoutMs: 15000,
+      intervaloMs: 1,
+      repeticoesEstaveis: 3,
+    });
+    expect(r.estavel).toBe(true);
+    expect(r.linhas).toBe(12);
+    expect(r.vazio).toBe(false);
+  });
+
+  it('lista vazia confirmada retorna rápido (estavel/vazio)', async () => {
+    const page = criarPageEstavel([0, 0], 'Nenhum registro encontrado');
+    const r = await aguardarListagemEstavel(page, { timeoutMs: 15000, intervaloMs: 1 });
+    expect(r.estavel).toBe(true);
+    expect(r.vazio).toBe(true);
+    expect(r.linhas).toBe(0);
+  });
+
+  it('contagem instável até o teto → estavel=false (proteção, sem hang)', async () => {
+    // Contagem sempre crescente: nunca estabiliza.
+    let c = 0;
+    const page = {
+      locator: (sel: string) =>
+        sel === 'body'
+          ? { innerText: async () => '' }
+          : { count: async () => ++c },
+      waitForTimeout: async () => undefined,
+    } as unknown as Page;
+    const r = await aguardarListagemEstavel(page, {
+      timeoutMs: 5,
+      intervaloMs: 1,
+      repeticoesEstaveis: 3,
+    });
+    expect(r.estavel).toBe(false);
   });
 });
