@@ -160,20 +160,36 @@ async function inspecionarProxima(page: Page): Promise<PaginaListagem['proxima']
 
 export async function capturarPaginaListagem(page: Page, pagina: number): Promise<PaginaListagem> {
   // API-02W — listagem já deve estar pronta após aplicarPeriodo; sem networkidle.
+  // API-02Z — CAUSA RAIZ do ~120s/direção: innerText() sobre elementos ausentes
+  // (.dataTables_info / ul.pagination li.active) herdava o setDefaultTimeout (60s)
+  // e travava 60s cada antes do .catch(). O Portal Nacional não usa DataTables,
+  // então esses seletores NUNCA existem. Guardamos com count() (retorno imediato)
+  // e só lemos innerText quando o elemento de fato existe.
+  const inicioCaptura = agoraMonotonicoMs();
   const bodyText = await page.locator('body').innerText().catch(() => '');
+
   const info = page.locator('.dataTables_info, .pagination-info').first();
-  const infoTexto = (await info.innerText().catch(() => '')) || bodyText.match(/[^\n]*registros?[^\n]*/i)?.[0] || '';
+  const infoPresente = (await info.count().catch(() => 0)) > 0;
+  const infoTexto =
+    (infoPresente ? await info.innerText().catch(() => '') : '') ||
+    bodyText.match(/[^\n]*registros?[^\n]*/i)?.[0] ||
+    '';
+
   const linhas = page.locator(LINHAS);
   const quantidade = await linhas.count().catch(() => 0);
   const capturadas: LinhaListagem[] = [];
   for (let i = 0; i < quantidade; i += 1) {
     capturadas.push(await lerLinha(linhas.nth(i), pagina, i));
   }
+
   const indicador = page.locator('ul.pagination li.active, .pagination .active').first();
-  const textoIndicador = await indicador.innerText().catch(() => '');
+  const indicadorPresente = (await indicador.count().catch(() => 0)) > 0;
+  const textoIndicador = indicadorPresente
+    ? await indicador.innerText().catch(() => '')
+    : '';
   const numero = textoIndicador.match(/\d+/)?.[0];
 
-  return comFingerprint({
+  const pagResultado = comFingerprint({
     url: page.url(),
     paginaIndicador: numero ? Number(numero) : pagina,
     totalizador: parseTotalizador(infoTexto),
@@ -181,6 +197,18 @@ export async function capturarPaginaListagem(page: Page, pagina: number): Promis
     linhas: capturadas,
     proxima: await inspecionarProxima(page),
   });
+  loggerTempos.info(
+    {
+      op: 'capturar_pagina',
+      pagina,
+      ms: deltaMonotonicoMs(inicioCaptura, agoraMonotonicoMs()),
+      linhas: quantidade,
+      infoPresente,
+      indicadorPresente,
+    },
+    'Tempo: captura da página da listagem'
+  );
+  return pagResultado;
 }
 
 export async function lerFiltroDaPagina(page: Page): Promise<LeituraFiltroPortal> {
