@@ -9,6 +9,10 @@ import { disconnectDb, initDb, prisma } from './db/client';
 import { seedDefaultSettings } from './db/init';
 import * as settingsRepo from './repositories/settings';
 import {
+  aplicarHomologRootConfigNoEnv,
+  carregarConfigAdnIniciar,
+} from './automation/nfse/adn/iniciar-config';
+import {
   obterEstadoFila,
   pararFilaExecucao,
   setCertificateLoader,
@@ -43,6 +47,11 @@ import nfseRouter from './routers/nfse';
 import metricsRouter from './routers/metrics';
 import { carregarCertificadoPorCnpj } from './services/certificate-loader';
 import { iniciarRelatorio2Captcha } from './automation/captcha-report';
+import { aplicarBootstrapCanalHomologacao } from './automation/nfse/homologacao/bootstrap-canal-homologacao';
+import {
+  aplicarBootstrapAdminSocket,
+  encerrarAdminSocket,
+} from './automation/nfse/homologacao/admin';
 
 if (!process.stdin.isTTY) {
   process.stdin.resume();
@@ -124,6 +133,25 @@ async function bootstrap() {
     );
   }
 
+  // API-02K — config persistente (exceções Playwright; ADN complementar).
+  // A1 padrão no Iniciar: Portal + SEFIN (não ADN automático).
+  try {
+    const cfgAdn = carregarConfigAdnIniciar({ criarSeAusente: true });
+    aplicarHomologRootConfigNoEnv(cfgAdn);
+    logger.info(
+      {
+        adnPadraoA1: cfgAdn.adnPadraoA1,
+        excecoesPlaywright: cfgAdn.playwrightExcecaoCnpjs.length,
+        maxRequests: cfgAdn.maxRequests,
+        homologRoot: cfgAdn.homologRoot,
+        motorPadraoA1: 'PORTAL_SEFIN',
+      },
+      'Config Iniciar carregada (A1→Portal+SEFIN; ADN complementar)'
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Falha ao carregar config ADN Iniciar — usando defaults em memória');
+  }
+
   let storageOk = false;
   try {
     await assertCertificateStorageReady();
@@ -168,6 +196,37 @@ async function bootstrap() {
 
   setCertificateLoader(carregarCertificadoPorCnpj);
 
+  // H2.2.4-A — canal Discovery-Only: só monta store se env privilegiada presente.
+  // Não emite/ativa tickets, não abre gate, não executa descoberta.
+  const bootstrapHomologacao = await aplicarBootstrapCanalHomologacao();
+  if (bootstrapHomologacao.status === 'configurado') {
+    logger.info(
+      { store: bootstrapHomologacao.store },
+      'Homologação: canal arquivo disponível (sem autorização automática)'
+    );
+  } else if (bootstrapHomologacao.status === 'recusado') {
+    logger.warn(
+      { codigo: bootstrapHomologacao.codigo, motivo: bootstrapHomologacao.motivo },
+      'Homologação: bootstrap recusado — legado preservado'
+    );
+  }
+
+  // H2.2.4-B1 — canal admin UDS opcional (health/status). Desativado por padrão.
+  // Configurado e inseguro → falha explícita (não habilita canal parcial).
+  const bootstrapAdmin = await aplicarBootstrapAdminSocket();
+  if (bootstrapAdmin.status === 'ativo') {
+    logger.info(
+      { socketPath: bootstrapAdmin.socketPath },
+      'Homologação: canal admin UDS ativo (somente diagnóstico)'
+    );
+  } else if (bootstrapAdmin.status === 'recusado') {
+    logger.error(
+      { codigo: bootstrapAdmin.codigo, motivo: bootstrapAdmin.motivo },
+      'Homologação: canal admin UDS recusado — encerrando Backend'
+    );
+    process.exit(1);
+  }
+
   const reportPath = iniciarRelatorio2Captcha();
   logger.info({ reportPath }, 'Relatório 2captcha pronto para diagnóstico (chave mascarada)');
 
@@ -193,6 +252,12 @@ async function bootstrap() {
     if (httpServer) {
       httpServer.close();
       httpServer.closeAllConnections?.();
+    }
+
+    try {
+      await encerrarAdminSocket();
+    } catch (err) {
+      logger.warn({ err }, 'Falha ao encerrar canal admin UDS');
     }
 
     try {

@@ -4,6 +4,7 @@ import { Observable, Subject } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
+import type { ExecutionFiscalStreamEvent, ProgressoFiscalNfse } from '../models/progresso-fiscal.model';
 
 /** Eventos SSE de execução em tempo real */
 export interface ExecutionStreamEventStarted {
@@ -12,6 +13,9 @@ export interface ExecutionStreamEventStarted {
   cnpj: string;
   razao_social?: string;
   metodo: 'CERTIFICADO' | 'CREDENCIAL';
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
+  /** Competência fiscal (YYYY-MM), distinta do mês da pasta de downloads. */
+  competencia_fiscal?: string;
 }
 
 export interface ExecutionStreamEventStage {
@@ -37,16 +41,41 @@ export interface ExecutionStreamEventFinished {
   qtd_emitidas?: number;
   qtd_recebidas?: number;
   qtd_canceladas?: number;
+  /** Já emitido pelo Backend; tipado no FE para UI-01d (sem novo evento). */
+  resultado_final?: string;
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
+  competencia_fiscal?: string;
+}
+
+/** API-03G — retry transitório agendado. */
+export interface ExecutionStreamEventRetry {
+  type: 'execution:retry';
+  empresa_id: string;
+  tentativa_atual: number;
+  max_tentativas: number;
+  proxima_tentativa: number;
+  delay_ms: number;
+  proxima_tentativa_em: string;
+  motivo: string;
+  codigo: string;
+  message: string;
 }
 
 export type ExecutionStreamEvent =
   | ExecutionStreamEventStarted
   | ExecutionStreamEventStage
   | ExecutionStreamEventCounts
-  | ExecutionStreamEventFinished;
+  | ExecutionStreamEventFinished
+  | ExecutionStreamEventRetry
+  | ExecutionFiscalStreamEvent;
 
 export type StatusExecucao = 'fila' | 'executando' | 'finalizado' | 'falhou';
-export type ResultadoFinal = 'SEM_MOVIMENTO' | 'NOTAS_EMITIDAS' | 'NOTAS_RECEBIDAS' | 'NFS_ENCONTRADAS';
+export type ResultadoFinal =
+  | 'SEM_MOVIMENTO'
+  | 'NOTAS_EMITIDAS'
+  | 'NOTAS_RECEBIDAS'
+  | 'NFS_ENCONTRADAS'
+  | 'CONCLUIDA_COM_PENDENCIAS';
 
 export interface ExecucaoEmpresa {
   id: string;
@@ -102,6 +131,24 @@ export interface ExecucaoStatusResponse {
   qtd_notas_recebidas?: number;
   qtd_notas_canceladas?: number;
   resultado_final?: string;
+  /** Motor efetivo (API-02K: PORTAL_SEFIN padrão A1). */
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null;
+  /** Competência fiscal consultada (YYYY-MM). */
+  competencia_fiscal?: string | null;
+  periodo_inicio?: string | null;
+  periodo_fim?: string | null;
+  /** Progresso fiscal estruturado (UI-01e-B); ausente após expiração/restart. */
+  fiscal?: ProgressoFiscalNfse;
+  batch_id?: string;
+  /** API-02W — métricas operacionais (durações/contadores). */
+  metricas_operacionais?: import('../models/metricas-operacionais.model').MetricasOperacionaisApi | null;
+  /** API-03B — reconciliação fiscal comprovável. */
+  reconciliacao?: import('../models/reconciliacao-execucao.model').ReconciliacaoApi | null;
+  /** API-03G */
+  tentativa_atual?: number | null;
+  max_tentativas?: number | null;
+  motivo_ultima_falha?: string | null;
+  proxima_tentativa_em?: string | null;
 }
 
 export interface ResumoExecucoesResponse {
@@ -135,6 +182,8 @@ export interface MultiplasExecucoesRequest {
   contabilidade_id?: number | null;
   /** TWO_CAPTCHA (padrão) | MANUAL (Central de Captchas) */
   captchaMode?: 'TWO_CAPTCHA' | 'MANUAL';
+  /** API-03B — filtro de autenticação: todas | certificado | credenciais */
+  filtro_autenticacao?: 'todas' | 'certificado' | 'credenciais';
 }
 
 export interface MultiplasExecucoesResponse {
@@ -158,9 +207,15 @@ export interface EmpresaExecucaoItem {
   razao_social: string;
   status_geral: 'OPERACIONAL' | 'ATENCAO' | 'PARCIAL' | 'INOPERANTE';
   login_metodo: 'CERTIFICADO' | 'CREDENCIAL' | null;
+  /** Presente no summary unificado (UI-01b); opcional por compatibilidade. */
+  automation_eligibility?: 'ELIGIBLE' | 'ELIGIBLE_WITH_WARNING' | 'NOT_ELIGIBLE';
 }
 
-/** Resposta do endpoint GET /execucao/companies/summary */
+/**
+ * Resposta do endpoint GET /execucao/companies/summary.
+ * status_geral: partições exclusivas (operacional+atenção+parcial+inoperante = total).
+ * aptas: elegibilidade (pode sobrepor atenção/parcial).
+ */
 export interface ExecutionSummaryResponse {
   total_empresas: number;
   total_aptas: number;
@@ -168,6 +223,9 @@ export interface ExecutionSummaryResponse {
   total_atencao: number;
   total_inoperante: number;
   total_parcial: number;
+  /** Universo cadastral completo (sem duplicar grupos sobrepostos). */
+  todas?: EmpresaExecucaoItem[];
+  /** Elegíveis para execução (= total_aptas); inclui parciais elegíveis. */
   aptas: EmpresaExecucaoItem[];
   inoperantes: EmpresaExecucaoItem[];
   parciais: EmpresaExecucaoItem[];
@@ -220,6 +278,53 @@ export class ExecucaoService {
         return throwError(() => error);
       })
     );
+  }
+
+  /**
+   * API-03I — retry manual de empresa com erro definitivo.
+   * Preserva período/batch; reinicia orçamento só desta empresa.
+   */
+  reintentarEmpresaManual(
+    empresaId: string | number,
+    body: {
+      dataInicio: string;
+      dataFim: string;
+      tipo?: string;
+      headless?: boolean;
+      baixarPdf?: boolean;
+      captchaMode?: 'TWO_CAPTCHA' | 'MANUAL';
+      batch_id?: string | null;
+      tipo_autenticacao?: string;
+    }
+  ): Observable<{
+    id: number;
+    empresa_id: string;
+    cnpj: string;
+    batch_id?: string | null;
+    status: string;
+    mensagem: string;
+    tentativa_atual: number;
+    max_tentativas: number;
+    retry_manual: boolean;
+  }> {
+    return this.http
+      .post<{
+        id: number;
+        empresa_id: string;
+        cnpj: string;
+        batch_id?: string | null;
+        status: string;
+        mensagem: string;
+        tentativa_atual: number;
+        max_tentativas: number;
+        retry_manual: boolean;
+      }>(`${this.baseUrl}/execucao/${empresaId}/retry`, body)
+      .pipe(
+        catchError((error) => {
+          console.error('Erro no retry manual:', error);
+          return throwError(() => error);
+        })
+      );
   }
 
   /** Status de todas as execuções do batch em 1 request (evita N requests e crash da UI) */
@@ -332,7 +437,8 @@ export class ExecucaoService {
 
     const eventSource = new EventSource(url);
 
-    const eventNames = ['started', 'stage', 'counts', 'finished'] as const;
+    // Mesmo canal SSE; `fiscal` é adicional (UI-01e-C). Legados inalterados.
+    const eventNames = ['started', 'stage', 'counts', 'finished', 'fiscal'] as const;
     eventNames.forEach((name) => {
       eventSource.addEventListener(name, (e: MessageEvent) => {
         try {

@@ -15,6 +15,23 @@ import {
   PLAYWRIGHT_TIMEOUT,
 } from '../infrastructure/config';
 import { aguardarEstabilizarPagina } from './playwright-nav';
+import {
+  SELETORES_BOTAO_FILTRAR_PORTAL,
+  SELETOR_FORM_FILTRO_PORTAL,
+} from './nfse/discovery/portal-selectors';
+import {
+  montarUrlPesquisaPortal,
+  urlConfirmaPesquisa,
+  urlTemPeriodoSemExecutar,
+} from './nfse/discovery/discovery-validation';
+import { aguardarListagemPortalPronta } from './nfse/discovery/portal-listagem-ready';
+import {
+  agoraMonotonicoMs,
+  deltaMonotonicoMs,
+} from './nfse/orchestration/metricas-operacionais';
+import {
+  criarPeriodoConsultaPortal,
+} from './nfse/contracts/periodo';
 import { captchaConfigurado, CaptchaError } from './captcha-solver';
 import {
   reportCaptchaDetectado,
@@ -50,6 +67,7 @@ import {
 } from './captcha-diagnostic';
 
 const logger = getLogger('processar-notas');
+const loggerTempos = getLogger('nfse-discovery-timing');
 
 export { setDownloadsBasePath };
 
@@ -761,27 +779,176 @@ export async function processarTabelaRecebidas(
 }
 
 /**
- * Preenche datas e clica em filtrar.
+ * Localiza o botão Pesquisar/Filtrar da barra de datas do Portal.
+ * Prioriza name="executar" (inclui executar=1 no GET); XPath absoluto é último recurso.
+ */
+export async function localizarBotaoFiltrarPortal(page: Page): Promise<{
+  locator: Locator;
+  seletor: string;
+}> {
+  for (const seletor of SELETORES_BOTAO_FILTRAR_PORTAL) {
+    const botao = page.locator(seletor).first();
+    const n = await botao.count().catch(() => 0);
+    if (n === 0) continue;
+    const visivel = await botao.isVisible().catch(() => false);
+    if (!visivel) continue;
+    return { locator: botao, seletor };
+  }
+  throw new Error(
+    'Botão filtrar/pesquisar do Portal não encontrado (searchbar / #datainicio).'
+  );
+}
+
+async function localizarFormFiltroPortal(page: Page): Promise<Locator | null> {
+  for (const seletor of SELETOR_FORM_FILTRO_PORTAL) {
+    const form = page.locator(seletor).first();
+    if ((await form.count().catch(() => 0)) > 0) return form;
+  }
+  return null;
+}
+
+/**
+ * Submete a pesquisa pelo mecanismo real do formulário.
+ * Preferência: clique no submitter name=executar (leva executar=1 na query).
+ * requestSubmit(submitter) em seguida; form.submit() sozinho NÃO envia name do botão.
+ */
+export async function submeterFiltroPortal(page: Page): Promise<{ seletor: string }> {
+  const { locator: botao, seletor } = await localizarBotaoFiltrarPortal(page);
+  await botao.scrollIntoViewIfNeeded().catch(() => undefined);
+
+  const viaRequestSubmit = await page
+    .evaluate(
+      ({ formSelectors, buttonSelector }) => {
+        // Executa no browser; evita tipos DOM no tsc do Backend (lib sem "dom").
+        const doc = globalThis as unknown as {
+          document: {
+            querySelector(s: string): {
+              querySelector(s: string): unknown;
+              requestSubmit?: (el?: unknown) => void;
+            } | null;
+          };
+        };
+        const forms = formSelectors
+          .map((s) => doc.document.querySelector(s))
+          .filter(Boolean);
+        const form = forms[0] as {
+          querySelector(s: string): unknown;
+          requestSubmit?: (el?: unknown) => void;
+        } | null;
+        if (!form || typeof form.requestSubmit !== 'function') return false;
+        const submitter =
+          form.querySelector('[name="executar"]') ||
+          (buttonSelector ? doc.document.querySelector(buttonSelector) : null);
+        if (!submitter) return false;
+        form.requestSubmit(submitter);
+        return true;
+      },
+      {
+        formSelectors: [...SELETOR_FORM_FILTRO_PORTAL],
+        buttonSelector: seletor.startsWith('xpath=') ? '' : seletor,
+      }
+    )
+    .catch(() => false);
+
+  if (!viaRequestSubmit) {
+    await botao.click({ timeout: 10000 });
+  }
+  return { seletor };
+}
+
+/**
+ * Preenche datas e submete a pesquisa (GET com executar=1).
+ * Se a URL ficar só com datas (sem executar=1), navega de forma controlada
+ * para o GET observado do Portal — mesma listagem, sessão preservada.
  */
 export async function preencherDatasEFiltrar(
   page: Page,
   dataInicio: string,
   dataFim: string
 ): Promise<void> {
-  const campoInicio = page.locator('xpath=//*[@id="datainicio"]');
-  const campoFim = page.locator('xpath=//*[@id="datafim"]');
+  const periodo = criarPeriodoConsultaPortal(dataInicio, dataFim);
+  const campoInicio = page.locator('#datainicio');
+  const campoFim = page.locator('#datafim');
   await campoInicio.waitFor({ state: 'visible', timeout: 10000 });
   await campoFim.waitFor({ state: 'visible', timeout: 10000 });
+  await campoInicio.scrollIntoViewIfNeeded().catch(() => undefined);
+  await campoFim.scrollIntoViewIfNeeded().catch(() => undefined);
 
   await campoInicio.fill('');
   await campoInicio.fill(dataInicio);
   await campoFim.fill('');
   await campoFim.fill(dataFim);
 
+  // Se o DOM só tem botão name=executar, o clique/requestSubmit basta.
+  // Se não há name=executar algum, injeta hidden=1 para o GET do form (sem inventar path).
+  const form = await localizarFormFiltroPortal(page);
+  if (form) {
+    await form
+      .evaluate((el) => {
+        const raiz = el as {
+          querySelector(s: string): unknown;
+          appendChild(n: unknown): void;
+        };
+        if (raiz.querySelector('[name="executar"]')) return;
+        const doc = globalThis as unknown as {
+          document: { createElement(tag: string): Record<string, string> };
+        };
+        const hidden = doc.document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'executar';
+        hidden.value = '1';
+        raiz.appendChild(hidden);
+      })
+      .catch(() => undefined);
+  }
+
   await page.waitForTimeout(_minActionDelayMs);
 
-  const botaoFiltrar = page.locator('xpath=//*[@id="searchbar"]/form/div[2]/div[2]/div[2]/button');
-  await botaoFiltrar.click();
-  await aguardarEstabilizarPagina(page, Math.min(15000, PLAYWRIGHT_TIMEOUT));
-  await page.waitForTimeout(_minActionDelayMs * 2);
+  const inicioSubmit = agoraMonotonicoMs();
+  await submeterFiltroPortal(page);
+
+  // API-02W — condição verificável (executar=1 + período + linhas|vazio), sem networkidle.
+  const timeoutListagem = Math.min(15000, PLAYWRIGHT_TIMEOUT);
+  let pronto = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+  loggerTempos.info(
+    {
+      op: 'submeter_filtro',
+      ms: deltaMonotonicoMs(inicioSubmit, agoraMonotonicoMs()),
+      urlOk: pronto.urlOk,
+      conteudo: pronto.conteudo,
+    },
+    'Tempo: submissão do filtro + confirmação da listagem'
+  );
+  if (pronto.urlOk) return;
+
+  // Datas na URL sem executar=1 (ou clique sem efeito): GET controlado do contrato.
+  const urlApos = page.url();
+  if (
+    urlTemPeriodoSemExecutar(urlApos, periodo) ||
+    !urlConfirmaPesquisa(urlApos, periodo)
+  ) {
+    const inicioGet = agoraMonotonicoMs();
+    const destino = montarUrlPesquisaPortal(urlApos, periodo);
+    let getTimedOut = false;
+    try {
+      await page.goto(destino, { waitUntil: 'domcontentloaded', timeout: PLAYWRIGHT_TIMEOUT });
+    } catch {
+      getTimedOut = true;
+    }
+    pronto = await aguardarListagemPortalPronta(page, periodo, timeoutListagem);
+    loggerTempos.info(
+      {
+        op: 'get_controlado',
+        ms: deltaMonotonicoMs(inicioGet, agoraMonotonicoMs()),
+        timedOut: getTimedOut,
+        urlOk: pronto.urlOk,
+        conteudo: pronto.conteudo,
+      },
+      'Tempo: GET controlado (executar=1) + confirmação da listagem'
+    );
+  }
+
+  if (!pronto.urlOk) {
+    await page.waitForTimeout(_minActionDelayMs * 2);
+  }
 }

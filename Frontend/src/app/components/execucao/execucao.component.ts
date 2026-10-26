@@ -11,6 +11,31 @@ import { Empresa } from '../../models/empresas.model';
 import { Contabilidade } from '../../models/contabilidade.model';
 import type { ExecutionBatchLogPayload, ExecutionBatchLogItem } from '../../models/execucao-batch-log.model';
 import type { ExecutionRow, ExecutionRowStatus } from '../../models/execution-row.model';
+import {
+  mapearVisaoFiscal,
+  type VisaoFiscalLinha,
+} from '../../models/execution-fiscal-view.model';
+import {
+  formatarDuracaoMs,
+  formatarMetricaNumero,
+  xmlsDisponiveisDownloads,
+  type MetricasOperacionaisApi,
+} from '../../models/metricas-operacionais.model';
+import {
+  contarStatusFiscal,
+  mapearReconciliacaoLinha,
+  percentualProcessadas,
+  type ReconciliacaoApi,
+  type ReconciliacaoLinhaView,
+} from '../../models/reconciliacao-execucao.model';
+import {
+  decidirAplicacaoFiscalSse,
+  decidirPollingFiscal,
+} from '../../models/progresso-fiscal-apply';
+import {
+  parseExecutionFiscalStreamEvent,
+  parseProgressoFiscalNfse,
+} from '../../models/progresso-fiscal.model';
 import { Subject, takeUntil, firstValueFrom } from 'rxjs';
 import * as XLSX from 'xlsx';
 
@@ -31,6 +56,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   mostrarApenasFalhas = false;
   /** True após clicar Iniciar - controla exibição dos cards de resumo */
   executionStarted = false;
+  /** Epoch ms do início do lote (KPI tempo total wall-clock). */
+  private loteInicioMs: number | null = null;
   
   // Contabilidade
   contabilidades: Contabilidade[] = [];
@@ -65,15 +92,22 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   todosSelecionados = false;
   carregandoCertificadosDisponiveis = false;
   buscaEmpresa: string = ''; // Campo de busca por nome da empresa
+  /** API-03B — filtro de autenticação no modal de seleção. */
+  filtroAutenticacao: 'todas' | 'certificado' | 'credenciais' = 'todas';
+  /** Linhas de erro / pendência fiscal expandidas (empresa_id). */
+  errosExpandidos = new Set<string>();
+  /** API-03I — anti duplo clique no retry manual. */
+  private retriesManuaisPendentes = new Set<string>();
   
   carregandoCertificados = false;
+  /** Preferência de headless para empresas A1 (credenciais ignoram e forçam visível). */
   headlessMode = false;
   dataInicio: string = ''; // Formato DD/MM/YYYY (ex: 01/12/2025)
   dataFim: string = ''; // Formato DD/MM/YYYY (ex: 31/12/2025)
-  tipoNotas: 'emitidas' | 'recebidas' | 'ambas' = 'ambas';
-  baixarPdf = true; // true = XML + PDF (DANFS-e); false = apenas XML
-  /** Modo de resolução de captcha do lote (padrão: 2Captcha). */
-  captchaMode: 'TWO_CAPTCHA' | 'MANUAL' = 'TWO_CAPTCHA';
+  /** UI-01c: sempre ambas (emitidas + recebidas); sem seletor na UI. */
+  readonly tipoNotas: 'ambas' = 'ambas';
+  /** UI-01c: prioriza XML; PDF legado não removido no Backend. */
+  readonly baixarPdf = false;
 
   // Formata data enquanto o usuário digita (DD/MM/YYYY)
   formatarData(event: Event, tipo: 'inicio' | 'fim') {
@@ -120,6 +154,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   private batchPollingInterval: ReturnType<typeof setInterval> | null = null;
   private destroy$ = new Subject<void>();
   private streamSubscription: { unsubscribe: () => void } | null = null;
+  /** Sequência local de aplicação fiscal aceita (não é versão Backend). */
+  private fiscalSeq = 0;
 
   // Salvar Log
   batchId: string | null = null;
@@ -196,11 +232,14 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.grupoModal = grupo;
     switch (grupo) {
       case 'total':
-        this.empresasGrupoModal = [
-          ...this.summary.aptas,
-          ...this.summary.inoperantes,
-          ...this.summary.parciais,
-        ];
+        // Universo cadastral sem duplicar aptas∩parciais (UI-01b).
+        this.empresasGrupoModal = this.summary.todas?.length
+          ? [...this.summary.todas]
+          : [
+              ...this.summary.aptas.filter((e) => e.status_geral !== 'PARCIAL'),
+              ...this.summary.parciais,
+              ...this.summary.inoperantes,
+            ];
         break;
       case 'aptas':
         this.empresasGrupoModal = [...this.summary.aptas];
@@ -267,11 +306,12 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  /** Ordenação: EM_EXECUCAO / AGUARDANDO_CAPTCHA primeiro, depois FILA, OK, ERRO */
+  /** Ordenação: EM_EXECUCAO / AGUARDANDO_* primeiro, depois FILA, OK, ERRO */
   private ordemStatus(a: ExecutionRowStatus): number {
     const ord: Record<ExecutionRowStatus, number> = {
       EM_EXECUCAO: 0,
       AGUARDANDO_CAPTCHA: 0,
+      AGUARDANDO_RETRY: 0,
       FILA: 1,
       OK: 2,
       ERRO: 3,
@@ -389,7 +429,13 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
 
   // Getter para verificar se há execuções em andamento
   get temExecucoesEmAndamento(): boolean {
-    return this.executionRows.some((r) => r.status === 'EM_EXECUCAO' || r.status === 'AGUARDANDO_CAPTCHA' || (r.status === 'FILA' && r.mensagem !== 'Aguardando início...')) ||
+    return this.executionRows.some(
+      (r) =>
+        r.status === 'EM_EXECUCAO' ||
+        r.status === 'AGUARDANDO_CAPTCHA' ||
+        r.status === 'AGUARDANDO_RETRY' ||
+        (r.status === 'FILA' && r.mensagem !== 'Aguardando início...')
+    ) ||
       this.execucoes.some((e) => e.status === 'executando' || (e.status === 'fila' && e.mensagem !== 'Aguardando início...'));
   }
 
@@ -445,12 +491,27 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     return Math.max(emExecucaoOuFila.length - 30, 0);
   }
 
-  // Barra de progresso geral
+  // Barra de progresso geral (API-03B: processadas = OK+ERRO, não só sucesso)
   get totalEmpresas(): number {
     return this.executionRows.length || this.execucoes.length;
   }
 
+  /** Tentativas encerradas (sucesso ou erro). */
+  get empresasProcessadas(): number {
+    if (this.executionRows.length) {
+      return this.executionRows.filter((r) => r.status === 'OK' || r.status === 'ERRO').length;
+    }
+    return this.execucoes.filter(
+      (e) => e.status === 'finalizado' || e.status === 'falhou'
+    ).length;
+  }
+
+  /** Alias legado — agora = sucessos fiscais OK (não processadas). */
   get empresasFinalizadas(): number {
+    return this.totalSucessos;
+  }
+
+  get totalSucessos(): number {
     return (this.executionRows.length ? this.executionRows.filter((r) => r.status === 'OK').length : 0) ||
       this.execucoes.filter((e) => e.status === 'finalizado').length;
   }
@@ -460,20 +521,62 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.execucoes.filter((e) => e.status === 'falhou').length;
   }
 
+  get totalReconciliadas(): number {
+    return contarStatusFiscal(this.executionRows, 'reconciliada');
+  }
+
+  get totalSemMovimento(): number {
+    return contarStatusFiscal(this.executionRows, 'sem_movimento');
+  }
+
   /** Empresas aguardando na fila (ainda não iniciaram) */
   get filaRestante(): number {
     return this.executionRows.filter((r) => r.status === 'FILA').length;
   }
 
-  /** Empresas em execução (navegadores abertos), inclui aguardando captcha */
+  /** Empresas em execução (qualquer motor), inclui aguardando captcha */
   get totalEmExecucao(): number {
     return this.executionRows.filter(
-      (r) => r.status === 'EM_EXECUCAO' || r.status === 'AGUARDANDO_CAPTCHA'
+      (r) =>
+        r.status === 'EM_EXECUCAO' ||
+        r.status === 'AGUARDANDO_CAPTCHA' ||
+        r.status === 'AGUARDANDO_RETRY'
     ).length;
   }
 
+  /**
+   * Chromium/hCaptcha abertos — exclui motor ADN (sem navegador).
+   * Fallback: etapa adn_* também não conta.
+   */
+  get totalNavegadoresAbertos(): number {
+    return this.executionRows.filter((r) => {
+      if (r.status === 'AGUARDANDO_CAPTCHA') return true;
+      if (r.status !== 'EM_EXECUCAO') return false;
+      if (r.motor === 'ADN') return false;
+      const etapa = (r.ultimo_stage || '').toLowerCase();
+      if (etapa.startsWith('adn_')) return false;
+      return true;
+    }).length;
+  }
+
+  /**
+   * Central de CAPTCHA: lote com credenciais (CAPTCHA manual por empresa)
+   * ou alguma linha aguardando captcha.
+   */
   get podeAbrirCentralCaptchas(): boolean {
-    return this.captchaMode === 'MANUAL' && !!this.batchId;
+    if (!this.batchId) return false;
+    const temCredenciais = this.execucoes.some(
+      (e) => e.tipoAutenticacao === 'credenciais'
+    );
+    const aguardando = this.executionRows.some(
+      (r) => r.status === 'AGUARDANDO_CAPTCHA'
+    );
+    return temCredenciais || aguardando;
+  }
+
+  /** UI-01d — visão Inventário / Validação / Recuperação a partir dos dados da linha. */
+  visaoFiscal(row: ExecutionRow): VisaoFiscalLinha {
+    return mapearVisaoFiscal(row);
   }
 
   abrirCentralCaptchas(): void {
@@ -482,9 +585,171 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  retryManualEmAndamento(empresaId: string | number): boolean {
+    return this.retriesManuaisPendentes.has(String(empresaId));
+  }
+
+  /**
+   * API-03I — reenfileira só esta empresa (erro definitivo).
+   * ERRO → AGUARDANDO_RETRY/FILA → EXECUTANDO; KPIs seguem o status da linha.
+   */
+  async tentarNovamenteEmpresa(row: ExecutionRow, event?: Event): Promise<void> {
+    event?.stopPropagation();
+    const key = String(row.empresa_id);
+    if (row.status !== 'ERRO' || this.retriesManuaisPendentes.has(key)) return;
+    if (!this.dataInicio || !this.dataFim) {
+      this.toastService.error('Defina o período do lote antes do retry manual.');
+      return;
+    }
+
+    this.retriesManuaisPendentes.add(key);
+    row.status = 'AGUARDANDO_RETRY';
+    row.mensagem = 'Retry manual enfileirado…';
+    row.finished_at = undefined;
+    row.tentativa_atual = 1;
+    this.cdr.markForCheck();
+
+    try {
+      const tipoAuth = this.tiposAutenticacao.get(row.empresa_id);
+      const res = await firstValueFrom(
+        this.execucaoService.reintentarEmpresaManual(row.empresa_id, {
+          dataInicio: this.dataInicio,
+          dataFim: this.dataFim,
+          tipo: this.tipoNotas,
+          headless: this.headlessMode,
+          baixarPdf: this.baixarPdf,
+          captchaMode: 'TWO_CAPTCHA',
+          batch_id: this.batchId,
+          tipo_autenticacao: tipoAuth === 'credenciais' ? 'credenciais' : 'certificado',
+        })
+      );
+      row.execucao_id = String(res.id);
+      row.tentativa_atual = res.tentativa_atual;
+      row.max_tentativas = res.max_tentativas;
+      row.mensagem = res.mensagem || row.mensagem;
+      row.status = 'FILA';
+      if (this.batchId) {
+        this.iniciarPollingBatch(this.batchId);
+      }
+      this.toastService.success(`Retry enfileirado: ${row.razao_social || row.cnpj}`);
+    } catch (err: unknown) {
+      row.status = 'ERRO';
+      const detail =
+        err && typeof err === 'object' && 'error' in err
+          ? String((err as { error?: { detail?: string } }).error?.detail ?? 'Falha ao enfileirar retry.')
+          : 'Falha ao enfileirar retry.';
+      row.mensagem = detail;
+      this.toastService.error(detail);
+    } finally {
+      this.retriesManuaisPendentes.delete(key);
+      this.cdr.markForCheck();
+    }
+  }
+
+  /** Progresso operacional = processadas / total (inclui erros). */
   get percentualFinalizado(): number {
-    if (this.totalEmpresas === 0) return 0;
-    return Math.round((this.empresasFinalizadas / this.totalEmpresas) * 100);
+    return percentualProcessadas(this.executionRows);
+  }
+
+  /** Notas vigentes (quando conhecidas); "—" se nenhuma linha tem dado. */
+  get kpiNotasVigentes(): string {
+    let somou = false;
+    let total = 0;
+    for (const r of this.executionRows) {
+      const v = mapearReconciliacaoLinha(r);
+      const raw = r.reconciliacao?.vigentes ?? r.progresso_fiscal?.validacao?.vigentes;
+      if (raw != null) {
+        somou = true;
+        total += raw;
+      }
+    }
+    return somou ? formatarMetricaNumero(total) : '—';
+  }
+
+  /** Compat: alias antigo aponta para vigentes (não descobertas brutas). */
+  get kpiNotasEncontradas(): string {
+    return this.kpiNotasVigentes;
+  }
+
+  /** XMLs válidos confirmados (persistidos / reconciliação). */
+  get kpiXmlsConfirmados(): string {
+    let somou = false;
+    let total = 0;
+    for (const r of this.executionRows) {
+      const n =
+        r.reconciliacao?.xmls_validos_confirmados ?? r.metricas_operacionais?.xmls_persistidos;
+      if (n != null) {
+        somou = true;
+        total += n;
+      }
+    }
+    return somou ? formatarMetricaNumero(total) : '—';
+  }
+
+  get kpiXmlsRecuperados(): string {
+    return this.kpiXmlsConfirmados;
+  }
+
+  /** XMLs já disponíveis nos downloads (exportados + já existentes). */
+  get kpiXmlsDownloads(): string {
+    let somou = false;
+    let total = 0;
+    for (const r of this.executionRows) {
+      const n =
+        r.reconciliacao?.xmls_downloads ?? xmlsDisponiveisDownloads(r.metricas_operacionais);
+      if (n != null) {
+        somou = true;
+        total += n;
+      }
+    }
+    return somou ? formatarMetricaNumero(total) : '—';
+  }
+
+  reconciliacaoDe(row: ExecutionRow): ReconciliacaoLinhaView {
+    return mapearReconciliacaoLinha(row);
+  }
+
+  /** Duração da linha; "—" se métrica ausente (não inventa zero). */
+  duracaoLinha(row: ExecutionRow): string {
+    return formatarDuracaoMs(row.metricas_operacionais?.duracao_total_ms ?? null);
+  }
+
+  linhaExpandivel(row: ExecutionRow): boolean {
+    if (row.status === 'ERRO') return true;
+    const rec = this.reconciliacaoDe(row);
+    return rec.temPendenciasFiscais || rec.statusFiscal === 'concluida_com_pendencias';
+  }
+
+  toggleErroExpandido(empresaId: string | number): void {
+    const k = String(empresaId);
+    if (this.errosExpandidos.has(k)) this.errosExpandidos.delete(k);
+    else this.errosExpandidos.add(k);
+  }
+
+  erroExpandido(empresaId: string | number): boolean {
+    return this.errosExpandidos.has(String(empresaId));
+  }
+
+  /** Tempo wall-clock do lote; fallback max(duração por empresa). */
+  get kpiTempoTotalLote(): string {
+    if (this.loteInicioMs != null) {
+      const fim =
+        this.executionRows.every((r) => r.status === 'OK' || r.status === 'ERRO') &&
+        this.executionRows.length > 0
+          ? Math.max(
+              ...this.executionRows.map((r) =>
+                r.finished_at ? Date.parse(r.finished_at) : Date.now()
+              )
+            )
+          : Date.now();
+      return formatarDuracaoMs(Math.max(0, fim - this.loteInicioMs));
+    }
+    let max: number | null = null;
+    for (const r of this.executionRows) {
+      const d = r.metricas_operacionais?.duracao_total_ms;
+      if (d != null && (max == null || d > max)) max = d;
+    }
+    return formatarDuracaoMs(max);
   }
 
   async carregarEmpresasValidadas() {
@@ -509,9 +774,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.tiposAutenticacao.clear();
 
     try {
+      // Mesma fonte do card "Aptas": summary.aptas (inclui parciais elegíveis).
+      // Só busca /companies se o summary ainda não foi carregado.
       let aptas: EmpresaExecucaoItem[];
-      if (this.summary?.aptas?.length !== undefined && this.summary.aptas.length > 0) {
-        aptas = this.summary.aptas;
+      if (this.summary) {
+        aptas = this.summary.aptas ?? [];
       } else {
         const response = await firstValueFrom(
           this.execucaoService.listarEmpresasAptas(this.contabilidadeSelecionada!)
@@ -562,35 +829,32 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     dataVencimento?: string;
   }> = [];
 
-  // Método para filtrar empresas unificadas
+  // Método para filtrar empresas unificadas (auth + busca)
   filtrarCertificados() {
-    if (!this.buscaEmpresa || this.buscaEmpresa.trim() === '') {
-      this.empresasUnificadasFiltradas = [...this.empresasUnificadas];
-      this.cdr.markForCheck();
-      return;
-    }
-    
-    const termoBusca = this.buscaEmpresa.toLowerCase().trim();
+    const termoBusca = (this.buscaEmpresa || '').toLowerCase().trim();
     const termoBuscaLimpo = termoBusca.replace(/[^\d]/g, '');
-    
-    this.empresasUnificadasFiltradas = this.empresasUnificadas.filter(emp => {
+
+    this.empresasUnificadasFiltradas = this.empresasUnificadas.filter((emp) => {
+      const tipoAuth =
+        this.tiposAutenticacao.get(emp.id) ||
+        (emp.tipo === 'certificado' ? 'certificado' : 'credenciais');
+      if (this.filtroAutenticacao === 'certificado' && tipoAuth !== 'certificado') return false;
+      if (this.filtroAutenticacao === 'credenciais' && tipoAuth !== 'credenciais') return false;
+
+      if (!termoBusca) return true;
       const nomeEmpresa = (emp.nomeEmpresa || '').toLowerCase();
       const cnpjLimpo = (emp.cnpj || '').replace(/[^\d]/g, '');
-      
-      // Busca no nome da empresa
-      if (nomeEmpresa.includes(termoBusca)) {
-        return true;
-      }
-      
-      // Busca no CNPJ (apenas se o termo tiver números)
-      if (termoBuscaLimpo.length > 0 && cnpjLimpo.includes(termoBuscaLimpo)) {
-        return true;
-      }
-      
+      if (nomeEmpresa.includes(termoBusca)) return true;
+      if (termoBuscaLimpo.length > 0 && cnpjLimpo.includes(termoBuscaLimpo)) return true;
       return false;
     });
-    
+
     this.cdr.markForCheck();
+  }
+
+  onFiltroAutenticacaoChange(): void {
+    this.filtrarCertificados();
+    this.atualizarEstadoTodosSelecionados();
   }
 
   atualizarEstadoTodosSelecionados() {
@@ -650,6 +914,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     // Reseta batch e log ao carregar novas empresas
     this.batchId = null;
     this.logSalvo = false;
+    this.fiscalSeq = 0;
 
     // Cria execuções pendentes e linhas de exibição
     const cnpjLimpo = (c: string) => c.replace(/[^\d]/g, '');
@@ -672,6 +937,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       };
     });
 
+    const competenciaPrevia =
+      this.dataInicio && this.dataInicio.length === 10 ? this.obterCompetencia() : null;
     this.executionRows = empresasSelecionadas.map(emp => {
       const c = cnpjLimpo(emp.cnpj);
       const empresaIdParam = emp.empresa_id && emp.empresa_id > 0 ? String(emp.empresa_id) : c;
@@ -681,6 +948,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         cnpj: c,
         razao_social: emp.nomeEmpresa || c,
         metodo,
+        competencia_fiscal: competenciaPrevia,
         qtd_emitidas: 0,
         qtd_recebidas: 0,
         qtd_canceladas: 0,
@@ -757,18 +1025,27 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // API-02G — competência fiscal do período Iniciar (não confundir com pasta downloads).
+    const competenciaFiscal = this.obterCompetencia();
+    this.executionRows = this.executionRows.map((r) => ({
+      ...r,
+      competencia_fiscal: competenciaFiscal,
+    }));
+
     this.carregandoCertificados = true;
 
     try {
+      // UI-01c: tipo/baixarPdf fixos; headless = preferência A1;
+      // captchaMode/headless por empresa resolvidos no Backend via tipo_autenticacao.
       const request: MultiplasExecucoesRequest = {
         empresas: empresas,
         dataInicio: this.dataInicio,
         dataFim: this.dataFim,
-        tipo: this.tipoNotas,
+        tipo: 'ambas',
         headless: this.headlessMode,
-        baixarPdf: this.baixarPdf,
+        baixarPdf: false,
         contabilidade_id: this.contabilidadeSelecionada ?? undefined,
-        captchaMode: this.captchaMode,
+        filtro_autenticacao: this.filtroAutenticacao,
       };
 
       console.log('[Iniciar] Enviando requisição ao backend:', JSON.stringify(request, null, 2));
@@ -783,6 +1060,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       // Armazena batch_id e conecta ao stream SSE
       if (response.batch_id) {
         this.batchId = response.batch_id;
+        this.loteInicioMs = Date.now();
         this.streamSubscription?.unsubscribe();
         this.streamSubscription = this.execucaoService
           .streamExecucoes(response.batch_id)
@@ -893,7 +1171,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         const statuses = res.execucoes || [];
         if (statuses.length === 0) {
           const temPendentes = this.executionRows.some(
-            (r) => r.status === 'FILA' || r.status === 'EM_EXECUCAO'
+            (r) =>
+              r.status === 'FILA' ||
+              r.status === 'EM_EXECUCAO' ||
+              r.status === 'AGUARDANDO_RETRY' ||
+              r.status === 'AGUARDANDO_CAPTCHA'
           );
           if (!temPendentes) {
             clearInterval(intervalo);
@@ -912,20 +1194,45 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   private aplicarStatusBatch(statuses: ExecucaoStatusResponse[]) {
     if (statuses.length === 0) return;
     const execUpdates: Array<{ idx: number; upd: Partial<ExecucaoEmpresa> }> = [];
-    const rowUpdates: Array<{ idx: number; status: ExecutionRowStatus; mensagem: string; qtdE: number; qtdR: number; qtdC: number }> = [];
+    const rowUpdates: Array<{
+      idx: number;
+      status: ExecutionRowStatus;
+      mensagem: string;
+      qtdE: number;
+      qtdR: number;
+      qtdC: number;
+      etapa: string;
+      resultadoFinal?: string;
+      motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null;
+      competenciaFiscal?: string | null;
+      patchFiscal?: Partial<ExecutionRow>;
+      metricas?: MetricasOperacionaisApi | null;
+      reconciliacao?: ReconciliacaoApi | null;
+      tentativa_atual?: number | null;
+      max_tentativas?: number | null;
+      motivo_ultima_falha?: string | null;
+      proxima_tentativa_em?: string | null;
+    }> = [];
     for (const s of statuses) {
       const empresaId = String(s.empresa_id ?? '');
-      const cnpj = String(s.cnpj ?? '');
-      const execIdx = this.execucoes.findIndex(
-        (e) => String(e.empresa_id) === empresaId || e.cnpj === cnpj
-      );
-      const rowIdx = this.executionRows.findIndex(
-        (r) => String(r.empresa_id) === empresaId || r.cnpj === cnpj
-      );
+      // Correlação fiscal: empresa_id do lote (não só CNPJ).
+      const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === empresaId);
+      const rowIdx = this.executionRows.findIndex((r) => String(r.empresa_id) === empresaId);
       if (execIdx >= 0 && rowIdx >= 0) {
-        const statusMap = this.mapearStatusBackendParaFrontend(String(s.status ?? ''));
+        const statusBackend = String(s.status ?? '');
+        const statusMap = this.mapearStatusBackendParaFrontend(statusBackend);
         let statusRow: ExecutionRowStatus =
-          statusMap === 'executando' ? 'EM_EXECUCAO' : statusMap === 'fila' ? 'FILA' : statusMap === 'finalizado' ? 'OK' : statusMap === 'falhou' ? 'ERRO' : 'FILA';
+          statusBackend === 'aguardando_retry'
+            ? 'AGUARDANDO_RETRY'
+            : statusMap === 'executando'
+              ? 'EM_EXECUCAO'
+              : statusMap === 'fila'
+                ? 'FILA'
+                : statusMap === 'finalizado'
+                  ? 'OK'
+                  : statusMap === 'falhou'
+                    ? 'ERRO'
+                    : 'FILA';
         const msg = s.mensagem ?? '';
         const etapa = s.etapa_atual ?? '';
         if (
@@ -952,7 +1259,64 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           qtdNotasCanceladas: qtdC,
           resultadoFinal: (s.resultado_final as ResultadoFinal) ?? undefined,
         }});
-        rowUpdates.push({ idx: rowIdx, status: statusRow, mensagem: statusRow === 'ERRO' ? (s.mensagem || s.erro || '') : '', qtdE, qtdR, qtdC });
+
+        let patchFiscal: Partial<ExecutionRow> | undefined;
+        if (this.batchId) {
+          const fiscalParsed = s.fiscal ? parseProgressoFiscalNfse(s.fiscal) : null;
+          const rowBase: ExecutionRow = {
+            ...this.executionRows[rowIdx],
+            status: statusRow,
+          };
+          const dec = decidirPollingFiscal(
+            rowBase,
+            fiscalParsed,
+            String(s.status ?? ''),
+            { batchIdAtual: this.batchId, proximoSeq: this.fiscalSeq }
+          );
+          this.fiscalSeq = dec.proximoSeq;
+          if (dec.acao === 'aplicar' || dec.acao === 'limpar') {
+            patchFiscal = {
+              progresso_fiscal: dec.row.progresso_fiscal,
+              execucao_id: dec.row.execucao_id,
+              fiscal_seq: dec.row.fiscal_seq,
+            };
+          }
+        }
+
+        const motorInferido: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN' | null | undefined =
+          s.motor === 'ADN' || s.motor === 'PLAYWRIGHT' || s.motor === 'PORTAL_SEFIN'
+            ? s.motor
+            : etapa.toLowerCase().startsWith('adn_')
+              ? 'ADN'
+              : etapa.toLowerCase().includes('portal_sefin') ||
+                  etapa.toLowerCase().includes('sefin_')
+                ? 'PORTAL_SEFIN'
+                : undefined;
+        const competenciaFiscal =
+          s.competencia_fiscal ||
+          (s.periodo_inicio && /^\d{2}\/\d{2}\/\d{4}$/.test(s.periodo_inicio)
+            ? `${s.periodo_inicio.slice(6, 10)}-${s.periodo_inicio.slice(3, 5)}`
+            : undefined);
+
+        rowUpdates.push({
+          idx: rowIdx,
+          status: statusRow,
+          mensagem: statusRow === 'ERRO' ? (s.mensagem || s.erro || '') : (statusRow === 'OK' ? '' : msg),
+          qtdE,
+          qtdR,
+          qtdC,
+          etapa,
+          resultadoFinal: s.resultado_final,
+          motor: motorInferido,
+          competenciaFiscal: competenciaFiscal ?? null,
+          patchFiscal,
+          metricas: s.metricas_operacionais ?? null,
+          reconciliacao: s.reconciliacao ?? null,
+          tentativa_atual: s.tentativa_atual ?? null,
+          max_tentativas: s.max_tentativas ?? null,
+          motivo_ultima_falha: s.motivo_ultima_falha ?? null,
+          proxima_tentativa_em: s.proxima_tentativa_em ?? null,
+        });
       }
     }
     if (execUpdates.length === 0) return;
@@ -961,8 +1325,48 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     for (const { idx, upd } of execUpdates) {
       execucoes = [...execucoes.slice(0, idx), { ...execucoes[idx], ...upd }, ...execucoes.slice(idx + 1)];
     }
-    for (const { idx, status, mensagem, qtdE, qtdR, qtdC } of rowUpdates) {
-      executionRows = [...executionRows.slice(0, idx), { ...executionRows[idx], status, mensagem, qtd_emitidas: qtdE, qtd_recebidas: qtdR, qtd_canceladas: qtdC }, ...executionRows.slice(idx + 1)];
+    for (const {
+      idx,
+      status,
+      mensagem,
+      qtdE,
+      qtdR,
+      qtdC,
+      etapa,
+      resultadoFinal,
+      motor,
+      competenciaFiscal,
+      patchFiscal,
+      metricas,
+      reconciliacao,
+      tentativa_atual,
+      max_tentativas,
+      motivo_ultima_falha,
+      proxima_tentativa_em,
+    } of rowUpdates) {
+      executionRows = [
+        ...executionRows.slice(0, idx),
+        {
+          ...executionRows[idx],
+          status,
+          mensagem,
+          qtd_emitidas: qtdE,
+          qtd_recebidas: qtdR,
+          qtd_canceladas: qtdC,
+          ...(etapa ? { ultimo_stage: etapa } : {}),
+          ...(resultadoFinal ? { resultado_final: resultadoFinal } : {}),
+          ...(motor !== undefined ? { motor } : {}),
+          ...(competenciaFiscal ? { competencia_fiscal: competenciaFiscal } : {}),
+          ...(patchFiscal ?? {}),
+          ...(metricas !== undefined ? { metricas_operacionais: metricas } : {}),
+          ...(reconciliacao !== undefined ? { reconciliacao } : {}),
+          ...(tentativa_atual != null ? { tentativa_atual } : {}),
+          ...(max_tentativas != null ? { max_tentativas } : {}),
+          ...(motivo_ultima_falha != null ? { motivo_ultima_falha } : {}),
+          ...(proxima_tentativa_em != null ? { proxima_tentativa_em } : {}),
+        },
+        ...executionRows.slice(idx + 1),
+      ];
     }
     this.execucoes = execucoes;
     this.executionRows = executionRows;
@@ -1004,6 +1408,43 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
           dataInicio: status.data_inicio ? new Date(status.data_inicio) : execucao.dataInicio,
           dataFim: status.data_fim ? new Date(status.data_fim) : execucao.dataFim
         });
+
+        // API-02G — motor + competência fiscal do status individual
+        const rowIdxPoll = this.executionRows.findIndex(
+          (r) => String(r.empresa_id) === String(empresaId) || r.cnpj === execucao.cnpj
+        );
+        if (rowIdxPoll >= 0) {
+          const motorStatus =
+            status.motor === 'ADN' ||
+            status.motor === 'PLAYWRIGHT' ||
+            status.motor === 'PORTAL_SEFIN'
+              ? status.motor
+              : (status.etapa_atual || '').toLowerCase().startsWith('adn_')
+                ? ('ADN' as const)
+                : (status.etapa_atual || '').toLowerCase().includes('portal_sefin') ||
+                    (status.etapa_atual || '').toLowerCase().startsWith('sefin_')
+                  ? ('PORTAL_SEFIN' as const)
+                  : undefined;
+          const compStatus = status.competencia_fiscal || undefined;
+          if (motorStatus || compStatus || status.resultado_final || status.metricas_operacionais) {
+            this.executionRows = [
+              ...this.executionRows.slice(0, rowIdxPoll),
+              {
+                ...this.executionRows[rowIdxPoll],
+                ...(motorStatus ? { motor: motorStatus } : {}),
+                ...(compStatus ? { competencia_fiscal: compStatus } : {}),
+                ...(status.resultado_final
+                  ? { resultado_final: status.resultado_final }
+                  : {}),
+                ...(status.metricas_operacionais !== undefined
+                  ? { metricas_operacionais: status.metricas_operacionais }
+                  : {}),
+              },
+              ...this.executionRows.slice(rowIdxPoll + 1),
+            ];
+            this.cdr.markForCheck();
+          }
+        }
         
         // Atualiza lista filtrada se a execução foi finalizada
         if (status.status === 'concluido') {
@@ -1064,6 +1505,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       const statusRow: ExecutionRowStatus = atualizada.status === 'executando' ? 'EM_EXECUCAO' : atualizada.status === 'fila' ? 'FILA' : atualizada.status === 'finalizado' ? 'OK' : atualizada.status === 'falhou' ? 'ERRO' : 'FILA';
       const rowIdx = this.executionRows.findIndex((r) => String(r.empresa_id) === String(atualizada.empresa_id) || r.cnpj === atualizada.cnpj);
       if (rowIdx >= 0) {
+        const etapa = atualizada.etapa_atual ?? '';
+        const motorPoll =
+          etapa.toLowerCase().startsWith('adn_')
+            ? ('ADN' as const)
+            : this.executionRows[rowIdx].motor;
         this.executionRows = [
           ...this.executionRows.slice(0, rowIdx),
           {
@@ -1073,6 +1519,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
             qtd_emitidas: atualizada.qtdNotasEmitidas ?? this.executionRows[rowIdx].qtd_emitidas,
             qtd_recebidas: atualizada.qtdNotasRecebidas ?? this.executionRows[rowIdx].qtd_recebidas,
             qtd_canceladas: atualizada.qtdNotasCanceladas ?? this.executionRows[rowIdx].qtd_canceladas ?? 0,
+            ...(motorPoll ? { motor: motorPoll } : {}),
+            ...(etapa ? { ultimo_stage: etapa } : {}),
           },
           ...this.executionRows.slice(rowIdx + 1),
         ];
@@ -1086,6 +1534,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
   }
 
   private handleStreamEvent(ev: ExecutionStreamEvent): void {
+    if (ev.type === 'execution:fiscal') {
+      this.handleFiscalStreamEvent(ev);
+      return;
+    }
+
     const empresaId = ev.empresa_id;
     const idx = this.executionRows.findIndex((r) => String(r.empresa_id) === String(empresaId));
     if (idx < 0) return;
@@ -1094,20 +1547,57 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     let next: Partial<ExecutionRow> = {};
 
     if (ev.type === 'execution:started') {
-      next = { status: 'EM_EXECUCAO', mensagem: 'Abrindo navegador…', razao_social: ev.razao_social || row.razao_social, metodo: ev.metodo };
+      const motorStarted =
+        ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' || ev.motor === 'PORTAL_SEFIN'
+          ? ev.motor
+          : row.motor;
+      next = {
+        status: 'EM_EXECUCAO',
+        mensagem:
+          motorStarted === 'ADN'
+            ? 'Distribuição ADN complementar (sem navegador)…'
+            : motorStarted === 'PORTAL_SEFIN'
+              ? 'Portal + SEFIN: abrindo listagem…'
+              : 'Abrindo navegador…',
+        razao_social: ev.razao_social || row.razao_social,
+        metodo: ev.metodo,
+        ...(motorStarted ? { motor: motorStarted } : {}),
+        ...(ev.competencia_fiscal
+          ? { competencia_fiscal: ev.competencia_fiscal }
+          : {}),
+      };
     } else if (ev.type === 'execution:stage') {
       const isAguardandoCaptcha =
         ev.stage === 'captcha_aguardando_central' ||
         ev.stage === 'captcha_aguardando' ||
         ev.stage === 'captcha_fallback_manual' ||
         (ev.message || '').toLowerCase().includes('aguardando resolução manual');
+      const stageLower = (ev.stage || '').toLowerCase();
+      const motorStage = stageLower.startsWith('adn_')
+        ? ('ADN' as const)
+        : stageLower.includes('portal_sefin') || stageLower.startsWith('sefin_')
+          ? ('PORTAL_SEFIN' as const)
+          : undefined;
       next = {
         status: isAguardandoCaptcha ? 'AGUARDANDO_CAPTCHA' : 'EM_EXECUCAO',
         mensagem: isAguardandoCaptcha
           ? (ev.message || 'Aguardando resolução manual do hCaptcha')
           : ev.message,
+        ultimo_stage: ev.stage,
+        ...(motorStage ? { motor: motorStage } : {}),
+      };
+    } else if (ev.type === 'execution:retry') {
+      next = {
+        status: 'AGUARDANDO_RETRY',
+        mensagem: ev.message || `Nova tentativa ${ev.proxima_tentativa}/${ev.max_tentativas} agendada`,
+        tentativa_atual: ev.tentativa_atual,
+        max_tentativas: ev.max_tentativas,
+        motivo_ultima_falha: ev.motivo,
+        proxima_tentativa_em: ev.proxima_tentativa_em,
+        ultimo_stage: 'aguardando_retry',
       };
     } else if (ev.type === 'execution:counts') {
+      // Contagens legadas — não misturar com progresso_fiscal estruturado.
       next = {
         qtd_emitidas: ev.qtd_emitidas,
         qtd_recebidas: ev.qtd_recebidas,
@@ -1120,6 +1610,11 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         qtd_emitidas: ev.qtd_emitidas ?? row.qtd_emitidas,
         qtd_recebidas: ev.qtd_recebidas ?? row.qtd_recebidas,
         qtd_canceladas: ev.qtd_canceladas ?? row.qtd_canceladas ?? 0,
+        ...(ev.resultado_final ? { resultado_final: ev.resultado_final } : {}),
+        ...(ev.motor === 'ADN' || ev.motor === 'PLAYWRIGHT' || ev.motor === 'PORTAL_SEFIN'
+          ? { motor: ev.motor }
+          : {}),
+        ...(ev.competencia_fiscal ? { competencia_fiscal: ev.competencia_fiscal } : {}),
       };
       const execIdx = this.execucoes.findIndex((e) => String(e.empresa_id) === String(empresaId) || e.cnpj === row.cnpj);
       if (execIdx >= 0) {
@@ -1151,6 +1646,36 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     this.executionRows = [
       ...this.executionRows.slice(0, idx),
       { ...row, ...next },
+      ...this.executionRows.slice(idx + 1),
+    ];
+    this.cdr.markForCheck();
+  }
+
+  /** UI-01e-C — aplica execution:fiscal com correlação batch/empresa/execução. */
+  private handleFiscalStreamEvent(raw: ExecutionStreamEvent): void {
+    if (!this.batchId) return;
+    const parsed = parseExecutionFiscalStreamEvent(raw);
+    if (!parsed) return;
+
+    const idx = this.executionRows.findIndex(
+      (r) => String(r.empresa_id) === String(parsed.empresa_id)
+    );
+    if (idx < 0) return;
+
+    const dec = decidirAplicacaoFiscalSse(
+      this.executionRows[idx],
+      parsed.batch_id,
+      parsed.empresa_id,
+      parsed.execucao_id,
+      parsed.fiscal,
+      { batchIdAtual: this.batchId, proximoSeq: this.fiscalSeq }
+    );
+    this.fiscalSeq = dec.proximoSeq;
+    if (dec.acao !== 'aplicar') return;
+
+    this.executionRows = [
+      ...this.executionRows.slice(0, idx),
+      dec.row,
       ...this.executionRows.slice(idx + 1),
     ];
     this.cdr.markForCheck();
@@ -1239,6 +1764,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
       this.streamSubscription?.unsubscribe();
       this.streamSubscription = null;
       this.executionStarted = false;
+      this.loteInicioMs = null;
       this.execucoes = [];
       this.executionRows = [];
       this.execucoesFinalizadasFiltradas = [];
@@ -1455,7 +1981,7 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
     XLSX.writeFile(wb, nomeArquivo);
   }
 
-  obterTextoResultadoFinal(resultado?: ResultadoFinal): string {
+  obterTextoResultadoFinal(resultado?: ResultadoFinal | string): string {
     if (!resultado) {
       return 'Sem informação';
     }
@@ -1469,6 +1995,8 @@ export class ExecucaoComponent implements OnInit, OnDestroy {
         return 'Notas Recebidas';
       case 'NFS_ENCONTRADAS':
         return 'Com notas (ambas)';
+      case 'CONCLUIDA_COM_PENDENCIAS':
+        return 'Concluída com pendências';
       default:
         return 'Sem informação';
     }

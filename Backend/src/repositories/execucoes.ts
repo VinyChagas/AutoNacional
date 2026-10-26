@@ -43,6 +43,9 @@ export async function criar(data: {
   periodoInicio?: string;
   periodoFim?: string;
   tipo?: string;
+  /** Status inicial (ex.: homologacao_preparada). Default: pendente. */
+  status?: string;
+  mensagem?: string;
 }): Promise<Execucao> {
   return prisma.execucao.create({
     data: {
@@ -51,9 +54,29 @@ export async function criar(data: {
       periodoInicio: data.periodoInicio,
       periodoFim: data.periodoFim,
       tipo: data.tipo ?? 'ambas',
-      status: 'pendente',
+      status: data.status ?? 'pendente',
+      mensagem: data.mensagem,
     },
   });
+}
+
+/** Atualização condicional por status atual (guarda anti-duplicata). */
+export async function atualizarSeStatus(
+  id: number,
+  statusAtual: string,
+  data: Partial<{
+    status: string;
+    etapaAtual: string;
+    progresso: number;
+    mensagem: string;
+    mensagemErro: string;
+  }>
+): Promise<number> {
+  const result = await prisma.execucao.updateMany({
+    where: { id, status: statusAtual },
+    data,
+  });
+  return result.count;
 }
 
 export async function atualizar(

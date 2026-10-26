@@ -1,14 +1,18 @@
 /**
  * Serviço de eventos SSE para execuções em tempo real.
- * Emite execution:started, execution:stage, execution:counts, execution:finished.
+ * Emite started, stage, counts, finished, login_ready e fiscal (UI-01e-B).
+ * Formato dos eventos legados permanece inalterado.
  */
 import { Response } from 'express';
+import type { ProgressoFiscalNfse } from '../automation/nfse/progresso-fiscal';
 
 export type ExecutionEventType =
   | 'execution:started'
   | 'execution:stage'
   | 'execution:counts'
-  | 'execution:finished';
+  | 'execution:finished'
+  | 'execution:retry'
+  | 'execution:fiscal';
 
 export interface ExecutionEventStarted {
   type: 'execution:started';
@@ -16,6 +20,10 @@ export interface ExecutionEventStarted {
   cnpj: string;
   razao_social?: string;
   metodo: 'CERTIFICADO' | 'CREDENCIAL';
+  /** Motor real após roteamento Iniciar (ADN | PLAYWRIGHT). */
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
+  /** Competência fiscal consultada (YYYY-MM), distinta do mês da pasta de downloads. */
+  competencia_fiscal?: string;
 }
 
 export interface ExecutionEventStage {
@@ -42,6 +50,22 @@ export interface ExecutionEventFinished {
   qtd_recebidas?: number;
   qtd_canceladas?: number;
   resultado_final?: string;
+  motor?: 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
+  competencia_fiscal?: string;
+}
+
+/** API-03G — retry transitório agendado (empresa ainda não finalizada). */
+export interface ExecutionEventRetry {
+  type: 'execution:retry';
+  empresa_id: string;
+  tentativa_atual: number;
+  max_tentativas: number;
+  proxima_tentativa: number;
+  delay_ms: number;
+  proxima_tentativa_em: string;
+  motivo: string;
+  codigo: string;
+  message: string;
 }
 
 export interface ExecutionEventLoginReady {
@@ -50,12 +74,24 @@ export interface ExecutionEventLoginReady {
   message: string;
 }
 
+/** Progresso fiscal estruturado — mesmo canal SSE; só com batchId real. */
+export interface ExecutionEventFiscal {
+  type: 'execution:fiscal';
+  batch_id: string;
+  empresa_id: string;
+  execucao_id: string;
+  cnpj: string;
+  fiscal: ProgressoFiscalNfse;
+}
+
 export type ExecutionEvent =
   | ExecutionEventStarted
   | ExecutionEventStage
   | ExecutionEventCounts
   | ExecutionEventFinished
-  | ExecutionEventLoginReady;
+  | ExecutionEventRetry
+  | ExecutionEventLoginReady
+  | ExecutionEventFiscal;
 
 interface BatchClients {
   clients: Set<Response>;
@@ -113,10 +149,45 @@ export function emitirEventoExecucao(batchId: string | undefined, evento: Execut
   const batch = batchClients.get(batchId);
   if (!batch) return;
 
-  const eventType = evento.type.replace('execution:', '') as 'started' | 'stage' | 'counts' | 'finished' | 'login_ready';
+  const eventType = evento.type.replace('execution:', '') as
+    | 'started'
+    | 'stage'
+    | 'counts'
+    | 'finished'
+    | 'login_ready'
+    | 'fiscal';
   for (const res of batch.clients) {
     if (!res.writableEnded) {
       emitEvent(res, eventType, evento);
     }
   }
+}
+
+/**
+ * Emite `execution:fiscal` somente com batchId real e associação lote/empresa/execução.
+ * Sem batchId (ex.: homologação admin UDS) → não emite SSE artificial.
+ */
+export function emitirProgressoFiscalSeAssociado(params: {
+  batchId: string | undefined | null;
+  empresaId: string;
+  execucaoId: string;
+  cnpj: string;
+  fiscal: ProgressoFiscalNfse;
+}): boolean {
+  const batchId = params.batchId?.trim();
+  if (!batchId) return false;
+  if (!params.empresaId || !params.execucaoId) return false;
+  if (params.fiscal.batch_id !== null && params.fiscal.batch_id !== batchId) return false;
+  if (params.fiscal.empresa_id !== params.empresaId) return false;
+  if (params.fiscal.execucao_id !== params.execucaoId) return false;
+
+  emitirEventoExecucao(batchId, {
+    type: 'execution:fiscal',
+    batch_id: batchId,
+    empresa_id: params.empresaId,
+    execucao_id: params.execucaoId,
+    cnpj: params.cnpj,
+    fiscal: { ...params.fiscal, batch_id: batchId },
+  });
+  return true;
 }

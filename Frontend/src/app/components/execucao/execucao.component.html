@@ -90,7 +90,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
-          Iniciar
+          @if (execucoes.length > 0) {
+            Iniciar ({{ execucoes.length }})
+          } @else {
+            Iniciar
+          }
         </button>
         @if (podeAbrirCentralCaptchas) {
           <button
@@ -169,44 +173,39 @@
             class="input-text"
           />
         </div>
-        <div class="field-group">
-          <label for="tipoNotas">Tipo</label>
-          <select id="tipoNotas" [(ngModel)]="tipoNotas" class="input-select">
-            <option value="ambas">Ambas</option>
-            <option value="emitidas">Emitidas</option>
-            <option value="recebidas">Recebidas</option>
-          </select>
-        </div>
         <div class="field-group field-group-checkbox">
-          <label class="checkbox-wrap" title="Marcado: baixa XML + PDF (DANFS-e). Desmarcado: baixa somente o XML.">
-            <input type="checkbox" id="baixarPdf" [(ngModel)]="baixarPdf" class="checkbox-input" />
-            <span>Baixar PDF (DANFS-e)</span>
-          </label>
-        </div>
-        <div class="field-group field-group-checkbox">
-          <label class="checkbox-wrap">
+          <label
+            class="checkbox-wrap"
+            title="Preferência para empresas com certificado A1. Credenciais sempre abrem o navegador."
+          >
             <input type="checkbox" id="headless" [(ngModel)]="headlessMode" class="checkbox-input" />
             <span>Modo Headless</span>
           </label>
         </div>
-        <div class="field-group field-group-captcha">
-          <label for="captchaMode">Modo de resolução de captcha</label>
-          <select id="captchaMode" [(ngModel)]="captchaMode" class="input-select" [disabled]="temExecucoesEmAndamento">
-            <option value="TWO_CAPTCHA">Automático — 2Captcha</option>
-            <option value="MANUAL">Manual — Central de Captchas</option>
-          </select>
-        </div>
       </div>
     </section>
 
-    <!-- Barra de Progresso Geral -->
+    <!-- Barra de Progresso Geral (API-03B: processadas = OK+ERRO) -->
     @if (executionRows.length > 0) {
       <section class="progress-section">
         <div class="progress-header">
-          <span>Execução geral: {{ empresasFinalizadas }} de {{ totalEmpresas }} empresas finalizadas ({{ percentualFinalizado }}%)</span>
+          <span>
+            Progresso operacional: {{ empresasProcessadas }} de {{ totalEmpresas }} processadas
+            ({{ percentualFinalizado }}%)
+            · Sucessos {{ totalSucessos }}
+            · Erros {{ totalErro }}
+            · Pendentes {{ filaRestante }}
+            · Em execução {{ totalEmExecucao }}
+          </span>
+          <span class="progress-tempo">Tempo: {{ kpiTempoTotalLote }}</span>
         </div>
         <div class="progress-bar">
           <div class="progress-fill" [style.width.%]="percentualFinalizado"></div>
+        </div>
+        <div class="progress-fiscal-hint">
+          Sucesso fiscal: {{ totalReconciliadas }} reconciliadas ·
+          {{ totalSemMovimento }} sem movimento ·
+          {{ totalErro }} com erro
         </div>
       </section>
     }
@@ -225,22 +224,30 @@
         <!-- Cards de resumo (aparecem acima da tabela após Iniciar) -->
         @if (executionStarted) {
           <section class="kpi-section kpi-section-inline">
-            <div class="kpi-grid">
+            <div class="kpi-grid kpi-grid-operacional">
               <div class="kpi-card">
-                <span class="kpi-label">Fila Restante</span>
-                <span class="kpi-value">{{ filaRestante }}</span>
+                <span class="kpi-label">Processadas</span>
+                <span class="kpi-value">{{ empresasProcessadas }}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">Executando (navegadores abertos)</span>
-                <span class="kpi-value">{{ totalEmExecucao }}</span>
+                <span class="kpi-label">Sucessos</span>
+                <span class="kpi-value">{{ totalSucessos }}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">Sucesso</span>
-                <span class="kpi-value">{{ empresasFinalizadas }}</span>
-              </div>
-              <div class="kpi-card">
-                <span class="kpi-label">Erro</span>
+                <span class="kpi-label">Erros</span>
                 <span class="kpi-value">{{ totalErro }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Notas vigentes</span>
+                <span class="kpi-value">{{ kpiNotasVigentes }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">XMLs confirmados</span>
+                <span class="kpi-value">{{ kpiXmlsConfirmados }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">XMLs nos downloads</span>
+                <span class="kpi-value">{{ kpiXmlsDownloads }}</span>
               </div>
             </div>
           </section>
@@ -253,57 +260,139 @@
             </label>
           </div>
           <div class="table-scroll">
-            <table class="data-table execucao-linhas-table">
+            <table class="data-table execucao-linhas-table execucao-fiscal-table">
               <thead>
                 <tr>
-                  <th>CNPJ</th>
-                  <th>Razão Social</th>
-                  <th>Método</th>
-                  <th class="th-num">NF Emitidas</th>
-                  <th class="th-num">NF Recebidas</th>
-                  <th class="th-num">NF Canceladas</th>
+                  <th>Empresa</th>
+                  <th>Emitidas</th>
+                  <th>Recebidas</th>
+                  <th>Vigentes</th>
+                  <th>Canceladas</th>
+                  <th title="XMLs válidos confirmados no store fiscal">XMLs válidos</th>
+                  <th title="Disponíveis nos downloads (novos + já iguais)">Downloads</th>
+                  <th title="Cobertura vigentes vs XMLs confirmados">Conferência</th>
                   <th>Status</th>
-                  <th>Mensagem</th>
+                  <th>Duração</th>
                 </tr>
               </thead>
               <tbody>
                 @for (row of executionRowsExibidas; track row.empresa_id) {
-                  <tr class="execucao-linha" [class.linha-erro]="row.status === 'ERRO'">
-                    <td class="td-mono">{{ formatarCNPJ(row.cnpj) }}</td>
-                    <td class="td-bold">{{ row.razao_social || '-' }}</td>
-                    <td>
-                      <span
-                        class="login-metodo-badge"
-                        [class.badge-certificado]="row.metodo === 'CERTIFICADO'"
-                        [class.badge-credencial]="row.metodo === 'CREDENCIAL'"
-                      >
-                        {{ row.metodo === 'CERTIFICADO' ? 'Certificado' : 'Credencial' }}
-                      </span>
-                    </td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_emitidas === 0 ? '—' : row.qtd_emitidas }}</td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_recebidas === 0 ? '—' : row.qtd_recebidas }}</td>
-                    <td class="td-num">{{ (row.status === 'FILA' || row.status === 'EM_EXECUCAO' || row.status === 'AGUARDANDO_CAPTCHA') && row.qtd_canceladas === 0 ? '—' : row.qtd_canceladas }}</td>
-                    <td>
-                      @if (row.status === 'EM_EXECUCAO') {
-                        <span class="status-badge status-executando">
-                          <span class="spinner-sm"></span>
-                          Executando
-                        </span>
-                      } @else if (row.status === 'AGUARDANDO_CAPTCHA') {
-                        <span class="status-badge status-captcha">
-                          <span class="spinner-sm"></span>
-                          Aguardando captcha
-                        </span>
-                      } @else if (row.status === 'FILA') {
-                        <span class="status-badge status-fila">Fila</span>
-                      } @else if (row.status === 'OK') {
-                        <span class="status-badge status-ok">OK</span>
-                      } @else if (row.status === 'ERRO') {
-                        <span class="status-badge status-erro">ERRO</span>
-                      }
-                    </td>
-                    <td class="td-mensagem">{{ row.status === 'OK' ? '' : (row.mensagem || '—') }}</td>
-                  </tr>
+                  <ng-container *ngIf="reconciliacaoDe(row) as rec">
+                    <tr
+                      class="execucao-linha"
+                      [class.linha-erro]="row.status === 'ERRO'"
+                      [class.linha-captcha]="row.status === 'AGUARDANDO_CAPTCHA'"
+                      [class.linha-pendencia]="rec.statusFiscal === 'concluida_com_pendencias'"
+                      [class.linha-expandivel]="linhaExpandivel(row)"
+                      (click)="linhaExpandivel(row) && toggleErroExpandido(row.empresa_id)"
+                    >
+                      <td class="td-empresa">
+                        <div class="empresa-razao" [title]="row.razao_social || ''">
+                          @if (linhaExpandivel(row)) {
+                            <span class="expand-caret" [class.expand-open]="erroExpandido(row.empresa_id)">▸</span>
+                          }
+                          {{ row.razao_social || '—' }}
+                        </div>
+                        <div class="empresa-cnpj td-mono">{{ formatarCNPJ(row.cnpj) }}</div>
+                        @if (rec.temIndeterminadas || rec.statusFiscal === 'concluida_com_pendencias') {
+                          <div class="alerta-indeterminadas" title="Pendências fiscais: XML pode estar em Pendentes_Validacao_Fiscal">
+                            Pendências: {{ rec.indeterminadas }}
+                          </div>
+                        }
+                      </td>
+                      <td class="td-num" title="Emitidas descobertas">{{ rec.emitidas }}</td>
+                      <td class="td-num" title="Recebidas descobertas">{{ rec.recebidas }}</td>
+                      <td class="td-num" title="Vigentes (canceladas fora da meta)">{{ rec.vigentes }}</td>
+                      <td class="td-num" title="Canceladas (inventário; fora da meta de XMLs)">{{ rec.canceladas }}</td>
+                      <td class="td-num" title="XMLs válidos confirmados">{{ rec.xmlsValidos }}</td>
+                      <td class="td-num" title="XMLs disponíveis nos downloads">{{ rec.downloads }}</td>
+                      <td class="td-conferencia" [title]="'Faltantes: ' + rec.faltantes">
+                        {{ rec.cobertura }}
+                      </td>
+                      <td class="td-status-msg">
+                        @if (row.status === 'EM_EXECUCAO') {
+                          <span class="status-badge status-executando">
+                            <span class="spinner-sm"></span>
+                            Executando
+                          </span>
+                        } @else if (row.status === 'AGUARDANDO_CAPTCHA') {
+                          <span class="status-badge status-captcha">
+                            <span class="spinner-sm"></span>
+                            Aguardando captcha
+                          </span>
+                        } @else if (row.status === 'AGUARDANDO_RETRY') {
+                          <span class="status-badge status-fila" [title]="row.motivo_ultima_falha || row.mensagem">
+                            <span class="spinner-sm"></span>
+                            Retry {{ row.tentativa_atual || '?' }}/{{ row.max_tentativas || '?' }}
+                          </span>
+                        } @else if (row.status === 'FILA') {
+                          <span class="status-badge status-fila">Fila</span>
+                        } @else {
+                          <span
+                            class="status-badge"
+                            [class.status-ok]="rec.statusFiscal === 'reconciliada' || rec.statusFiscal === 'sem_movimento'"
+                            [class.status-erro]="rec.statusFiscal === 'erro'"
+                            [class.status-parcial]="rec.statusFiscal === 'parcial' || rec.statusFiscal === 'indeterminada' || rec.statusFiscal === 'concluida_com_pendencias'"
+                            [class.status-fila]="rec.statusFiscal === 'indisponivel'"
+                          >
+                            {{ rec.rotuloStatusFiscal }}
+                          </span>
+                        }
+                      </td>
+                      <td class="td-num td-duracao">{{ duracaoLinha(row) }}</td>
+                    </tr>
+                    @if (linhaExpandivel(row) && erroExpandido(row.empresa_id)) {
+                      <tr class="execucao-linha-detalhe" (click)="$event.stopPropagation()">
+                        <td colspan="10">
+                          <div class="erro-detalhe">
+                            @if (row.status === 'ERRO') {
+                              <div><strong>Motivo:</strong> {{ rec.motivoErro || row.mensagem || '—' }}</div>
+                              <div><strong>Etapa da falha:</strong> {{ rec.etapaFalha || row.ultimo_stage || '—' }}</div>
+                              <div><strong>Chaves vigentes faltantes:</strong> {{ rec.faltantes }}</div>
+                              @if (rec.chavesVigentesFaltantesLista.length > 0) {
+                                <div class="chaves-faltantes-lista">
+                                  @for (ch of rec.chavesVigentesFaltantesLista; track ch) {
+                                    <div class="td-mono">{{ ch }}</div>
+                                  }
+                                </div>
+                              }
+                              <div><strong>Retomada:</strong> {{ rec.retomavelHint || '—' }}</div>
+                            }
+                            @if (rec.temIndeterminadas || rec.temPendenciasFiscais) {
+                              <div><strong>Indeterminadas:</strong> {{ rec.indeterminadas }}</div>
+                              <div><strong>XMLs com atenção fiscal:</strong> {{ rec.xmlsAtencaoFiscal }}</div>
+                            }
+                            @if (rec.pendenciasFiscais.length > 0) {
+                              <div class="pendencias-fiscais-lista">
+                                <strong>Pendências fiscais</strong>
+                                @for (p of rec.pendenciasFiscais; track p.chaveAcesso) {
+                                  <div class="pendencia-fiscal-item">
+                                    <span class="pendencia-codigo">{{ p.rotuloCodigo }}</span>
+                                    <span class="td-mono pendencia-chave">{{ p.chaveAcesso }}</span>
+                                    <span>XML: {{ p.xmlRecuperado ? 'recuperado' : 'não recuperado' }}</span>
+                                    <span>Exportado: {{ p.documentoExportado ? 'sim' : 'não' }}</span>
+                                    <span class="pendencia-motivo">{{ p.motivo }}</span>
+                                  </div>
+                                }
+                              </div>
+                            }
+                            @if (row.status === 'ERRO') {
+                              <div class="erro-detalhe-acoes">
+                                <button
+                                  type="button"
+                                  class="btn-retry-manual"
+                                  [disabled]="retryManualEmAndamento(row.empresa_id)"
+                                  (click)="tentarNovamenteEmpresa(row, $event)"
+                                >
+                                  {{ retryManualEmAndamento(row.empresa_id) ? 'Enfileirando…' : 'Tentar novamente' }}
+                                </button>
+                              </div>
+                            }
+                          </div>
+                        </td>
+                      </tr>
+                    }
+                  </ng-container>
                 }
               </tbody>
             </table>
@@ -384,6 +473,39 @@
             </div>
           } @else {
             <div class="modal-body">
+              <div class="modal-filtro-auth" role="group" aria-label="Filtro de autenticação">
+                <span class="modal-filtro-label">Autenticação:</span>
+                <label class="radio-wrap">
+                  <input
+                    type="radio"
+                    name="filtroAuth"
+                    value="todas"
+                    [(ngModel)]="filtroAutenticacao"
+                    (ngModelChange)="onFiltroAutenticacaoChange()"
+                  />
+                  <span>Todas</span>
+                </label>
+                <label class="radio-wrap">
+                  <input
+                    type="radio"
+                    name="filtroAuth"
+                    value="certificado"
+                    [(ngModel)]="filtroAutenticacao"
+                    (ngModelChange)="onFiltroAutenticacaoChange()"
+                  />
+                  <span>Certificado digital A1</span>
+                </label>
+                <label class="radio-wrap">
+                  <input
+                    type="radio"
+                    name="filtroAuth"
+                    value="credenciais"
+                    [(ngModel)]="filtroAutenticacao"
+                    (ngModelChange)="onFiltroAutenticacaoChange()"
+                  />
+                  <span>Usuário e senha</span>
+                </label>
+              </div>
               <div class="modal-search">
                 <input
                   type="text"
@@ -394,9 +516,10 @@
                   class="input-text"
                 />
               </div>
-              @if (buscaEmpresa && buscaEmpresa.trim() !== '' && empresasUnificadasFiltradas.length !== empresasUnificadas.length) {
-                <p class="modal-hint">Mostrando {{ empresasUnificadasFiltradas.length }} de {{ empresasUnificadas.length }} empresas</p>
-              }
+              <p class="modal-hint">
+                {{ empresasUnificadasFiltradas.length }} exibida(s)
+                · {{ empresasSelecionadas.size }} selecionada(s)
+              </p>
               <div class="modal-select-all">
                 <label class="checkbox-wrap">
                   <input
