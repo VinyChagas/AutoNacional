@@ -372,7 +372,7 @@ describe('infraestrutura fiscal nativa', () => {
     expect(auditoria.estado).toBe('RECONCILIADA');
   });
 
-  it('28 notas indeterminadas bloqueiam auditoria', async () => {
+  it('28 notas indeterminadas geram auditoria PARCIAL (API-03M)', async () => {
     const inv = inventario([
       documento(chave(1)),
       documento(chave(2), { situacao: 'INDETERMINADA' }),
@@ -386,7 +386,7 @@ describe('infraestrutura fiscal nativa', () => {
       execucaoId: 'exec-indet',
     });
     expect(auditoria.indeterminadas).toBe(1);
-    expect(auditoria.estado).toBe('BLOQUEADA');
+    expect(auditoria.estado).toBe('PARCIAL');
   });
 
   it('29 falha transitória aparece na auditoria', async () => {
@@ -499,7 +499,7 @@ describe('infraestrutura fiscal nativa', () => {
     expect(JSON.parse(await readFile(destino, 'utf8')).estado).toBe('PARCIAL');
   });
 
-  it('36 auditoria bloqueada persistida', async () => {
+  it('36 auditoria com indeterminada persistida como PARCIAL (API-03M)', async () => {
     const inv = inventario([documento(chave(1), { situacao: 'INDETERMINADA' })]);
     await repositorio.criarCheckpoint(inv, 'exec-ab');
     const { checkpoint, relatorio } = await repositorio.reconciliar(inv);
@@ -509,9 +509,9 @@ describe('infraestrutura fiscal nativa', () => {
       reconciliacao: relatorio,
       execucaoId: 'exec-ab',
     });
-    expect(auditoria.estado).toBe('BLOQUEADA');
+    expect(auditoria.estado).toBe('PARCIAL');
     const destino = await persistirAuditoriaFiscal(criarResolvedorRaizInjetada(raiz), auditoria);
-    expect(JSON.parse(await readFile(destino, 'utf8')).estado).toBe('BLOQUEADA');
+    expect(JSON.parse(await readFile(destino, 'utf8')).estado).toBe('PARCIAL');
   });
 
   it('37 auditoria reconciliada persistida e idempotente', async () => {

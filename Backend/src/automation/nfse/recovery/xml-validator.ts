@@ -1,7 +1,7 @@
 /**
  * Validação inicial do XML nacional de NFS-e.
- * Confirma chave e CNPJ pelo pai imediato: emit/prest/prestador e toma/tomador.
- * Ignora participante aninhado em outro (intermediário, emitente ou tomador).
+ * Confirma chave e CNPJ pelo papel fiscal: emit/prest, toma/tomador ou interm.
+ * API-03O — intermediário (interm) é vínculo válido distinto de tomador.
  * dCompet é apenas metadado.
  * Namespace oficial (Manual Integrado SNNFS-e): http://www.sped.fazenda.gov.br/nfse
  * Parser próprio: não resolve entidades externas nem acessa rede.
@@ -12,11 +12,21 @@ import type { DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 /** URI oficial do leiaute nacional NFS-e (gov.br / Manual Integrado). */
 export const NAMESPACE_OFICIAL_NFSE = 'http://www.sped.fazenda.gov.br/nfse';
 
+/** Papel fiscal confirmado no XML (não confundir com direção Portal EMITIDA/RECEBIDA). */
+export const PAPEIS_FISCAIS_XML = ['PRESTADOR', 'TOMADOR', 'INTERMEDIARIO'] as const;
+export type PapelFiscalXml = (typeof PAPEIS_FISCAIS_XML)[number];
+
 export interface LeituraXmlNfse {
   validacao: EstadoValidacaoXml;
   chaveXml: string | null;
   cnpjEmitente: string | null;
   cnpjTomador: string | null;
+  /** API-03J — CPF no papel tomador quando não há CNPJ (pessoa física). */
+  cpfTomador: string | null;
+  /** API-03O — CNPJ em interm/intermediario. */
+  cnpjIntermediario: string | null;
+  /** API-03O — papel pelo qual o CNPJ da empresa foi confirmado. */
+  papelConfirmado: PapelFiscalXml | null;
   dCompet: string | null;
   namespace?: string | null;
 }
@@ -78,32 +88,105 @@ export function validarXmlNfse(
 
   const chaveXml = arvore.chave;
   const cnpjEsperado = esperado.cnpj;
-  const cnpjPapel = esperado.direcao === 'EMITIDA' ? arvore.cnpjEmitente : arvore.cnpjTomador;
 
-  if (!chaveXml || !cnpjPapel) {
+  if (!chaveXml) {
     return incompleta(arvore, namespaceRaiz);
   }
   if (chaveXml !== esperado.chave) {
     throw new ErroRecuperacaoSefin('CHAVE_DIVERGENTE', 'PERMANENTE', 'A chave do XML não é a chave consultada.');
   }
-  if (cnpjPapel !== cnpjEsperado) {
-    throw new ErroRecuperacaoSefin(
-      'CNPJ_DIVERGENTE',
-      'PERMANENTE',
-      esperado.direcao === 'EMITIDA'
-        ? 'O CNPJ do emitente não é o da empresa consultada.'
-        : 'O CNPJ do tomador não é o da empresa consultada.'
-    );
+
+  const vinculo = resolverVinculoFiscal(arvore, cnpjEsperado, esperado.direcao);
+  if (vinculo.estado === 'CONFIRMADA') {
+    return {
+      validacao: 'CONFIRMADA',
+      chaveXml,
+      cnpjEmitente: arvore.cnpjEmitente,
+      cnpjTomador: arvore.cnpjTomador,
+      cpfTomador: arvore.cpfTomador,
+      cnpjIntermediario: arvore.cnpjIntermediario,
+      papelConfirmado: vinculo.papel,
+      dCompet: arvore.dCompet,
+      namespace: namespaceRaiz,
+    };
+  }
+  if (vinculo.estado === 'DIVERGENTE') {
+    throw new ErroRecuperacaoSefin('CNPJ_DIVERGENTE', 'PERMANENTE', vinculo.mensagem);
+  }
+  if (vinculo.estado === 'TOMADOR_CPF') {
+    throw new ErroRecuperacaoSefin('TOMADOR_CPF_SEM_CNPJ', 'PERMANENTE', vinculo.mensagem);
+  }
+  return incompleta(arvore, namespaceRaiz);
+}
+
+type VinculoFiscal =
+  | { estado: 'CONFIRMADA'; papel: PapelFiscalXml }
+  | { estado: 'DIVERGENTE'; mensagem: string }
+  | { estado: 'TOMADOR_CPF'; mensagem: string }
+  | { estado: 'INSUFICIENTE' };
+
+/**
+ * API-03O — resolve o papel pelo CNPJ da empresa em prest/toma/interm.
+ * Direção Portal (EMITIDA/RECEBIDA) restringe quais papéis são elegíveis,
+ * mas intermediário não é reclassificado como tomador.
+ */
+function resolverVinculoFiscal(
+  arvore: ArvoreXml,
+  cnpjEsperado: string,
+  direcao: DirecaoDocumentoFiscal
+): VinculoFiscal {
+  if (direcao === 'EMITIDA') {
+    if (!arvore.cnpjEmitente) return { estado: 'INSUFICIENTE' };
+    if (arvore.cnpjEmitente !== cnpjEsperado) {
+      return {
+        estado: 'DIVERGENTE',
+        mensagem: 'O CNPJ do emitente não é o da empresa consultada.',
+      };
+    }
+    return { estado: 'CONFIRMADA', papel: 'PRESTADOR' };
   }
 
-  return {
-    validacao: 'CONFIRMADA',
-    chaveXml,
-    cnpjEmitente: arvore.cnpjEmitente,
-    cnpjTomador: arvore.cnpjTomador,
-    dCompet: arvore.dCompet,
-    namespace: namespaceRaiz,
-  };
+  // RECEBIDA (listagem Portal): tomador OU intermediário.
+  const tomadorOk = Boolean(arvore.cnpjTomador && arvore.cnpjTomador === cnpjEsperado);
+  const intermOk = Boolean(arvore.cnpjIntermediario && arvore.cnpjIntermediario === cnpjEsperado);
+
+  if (tomadorOk) {
+    return { estado: 'CONFIRMADA', papel: 'TOMADOR' };
+  }
+  if (intermOk) {
+    return { estado: 'CONFIRMADA', papel: 'INTERMEDIARIO' };
+  }
+
+  // Tomador PF sem CNPJ e sem vínculo de intermediário da empresa.
+  if (
+    !arvore.cnpjTomador &&
+    arvore.cpfTomador &&
+    /^\d{11}$/.test(arvore.cpfTomador) &&
+    !intermOk
+  ) {
+    return {
+      estado: 'TOMADOR_CPF',
+      mensagem:
+        'O XML traz tomador pessoa física (CPF) sem CNPJ; não é possível confirmar vínculo com a empresa.',
+    };
+  }
+
+  // Há CNPJ de tomador ou intermediário, mas nenhum é a empresa.
+  if (
+    (arvore.cnpjTomador && arvore.cnpjTomador !== cnpjEsperado) ||
+    (arvore.cnpjIntermediario && arvore.cnpjIntermediario !== cnpjEsperado)
+  ) {
+    return {
+      estado: 'DIVERGENTE',
+      mensagem:
+        arvore.cnpjIntermediario && !arvore.cnpjTomador
+          ? 'O CNPJ do intermediário não é o da empresa consultada.'
+          : 'O CNPJ do tomador não é o da empresa consultada.',
+    };
+  }
+
+  // Sem CNPJ de tomador nem de intermediário.
+  return { estado: 'INSUFICIENTE' };
 }
 
 function incompleta(arvore: ArvoreXml, namespace: string | null = null): LeituraXmlNfse {
@@ -112,6 +195,9 @@ function incompleta(arvore: ArvoreXml, namespace: string | null = null): Leitura
     chaveXml: arvore.chave,
     cnpjEmitente: arvore.cnpjEmitente,
     cnpjTomador: arvore.cnpjTomador,
+    cpfTomador: arvore.cpfTomador,
+    cnpjIntermediario: arvore.cnpjIntermediario,
+    papelConfirmado: null,
     dCompet: arvore.dCompet,
     namespace,
   };
@@ -143,6 +229,8 @@ interface ArvoreXml {
   idInfNfseInvalido: boolean;
   cnpjEmitente: string | null;
   cnpjTomador: string | null;
+  cpfTomador: string | null;
+  cnpjIntermediario: string | null;
   dCompet: string | null;
 }
 
@@ -172,6 +260,8 @@ function lerArvore(xml: string): ArvoreXml {
     idInfNfseInvalido: false,
     cnpjEmitente: null,
     cnpjTomador: null,
+    cpfTomador: null,
+    cnpjIntermediario: null,
     dCompet: null,
   };
   const pilha: string[] = [];
@@ -192,6 +282,16 @@ function lerArvore(xml: string): ArvoreXml {
     }
     if (atual === 'CNPJ' && !arvore.cnpjTomador && papelNoContexto(pilha, PAPEIS_TOMADOR)) {
       arvore.cnpjTomador = valor.replace(/\D/g, '');
+    }
+    if (atual === 'CPF' && !arvore.cpfTomador && papelNoContexto(pilha, PAPEIS_TOMADOR)) {
+      arvore.cpfTomador = valor.replace(/\D/g, '');
+    }
+    if (
+      atual === 'CNPJ' &&
+      !arvore.cnpjIntermediario &&
+      papelNoContexto(pilha, PAPEIS_INTERMEDIARIO)
+    ) {
+      arvore.cnpjIntermediario = valor.replace(/\D/g, '');
     }
   };
 
@@ -271,14 +371,18 @@ function fimDaTag(xml: string, inicio: number): number {
 
 const PAPEIS_EMITENTE = new Set(['emit', 'prest', 'prestador']);
 const PAPEIS_TOMADOR = new Set(['toma', 'tomador']);
-const OUTROS_PARTICIPANTES = new Set(['interm', 'intermediario', 'intermediário']);
+const PAPEIS_INTERMEDIARIO = new Set(['interm', 'intermediario', 'intermediário']);
 
 function papelNoContexto(pilha: string[], papeis: Set<string>): boolean {
   const pai = pilha[pilha.length - 2];
   if (!pai || !papeis.has(pai)) return false;
   for (let indice = 0; indice < pilha.length - 2; indice += 1) {
     const ancestral = pilha[indice];
-    if (PAPEIS_EMITENTE.has(ancestral) || PAPEIS_TOMADOR.has(ancestral) || OUTROS_PARTICIPANTES.has(ancestral)) {
+    if (
+      PAPEIS_EMITENTE.has(ancestral) ||
+      PAPEIS_TOMADOR.has(ancestral) ||
+      PAPEIS_INTERMEDIARIO.has(ancestral)
+    ) {
       return false;
     }
   }
@@ -289,4 +393,13 @@ function nomeLocal(tag: string): string {
   const nome = tag.replace(/\/$/, '').trim().split(/\s+/)[0] ?? '';
   const indice = nome.lastIndexOf(':');
   return indice >= 0 ? nome.slice(indice + 1) : nome;
+}
+
+/** True quando falta o CNPJ do papel exigido pela direção (considera intermediário). */
+export function vinculoCnpjAusenteParaDirecao(
+  leitura: Pick<LeituraXmlNfse, 'cnpjEmitente' | 'cnpjTomador' | 'cnpjIntermediario'>,
+  direcao: DirecaoDocumentoFiscal
+): boolean {
+  if (direcao === 'EMITIDA') return !leitura.cnpjEmitente;
+  return !leitura.cnpjTomador && !leitura.cnpjIntermediario;
 }

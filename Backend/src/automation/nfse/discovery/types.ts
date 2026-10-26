@@ -16,7 +16,11 @@ export const STATUS_DESCOBERTA = [
 ] as const;
 export type StatusDescobertaNfse = (typeof STATUS_DESCOBERTA)[number];
 
-export type FonteChaveDescoberta = 'HREF_DOWNLOAD_XML' | 'DATA_CHAVE' | 'NAO_IDENTIFICADA';
+export type FonteChaveDescoberta =
+  | 'HREF_DOWNLOAD_XML'
+  | 'DATA_CHAVE'
+  | 'TEXTO_CELULA'
+  | 'NAO_IDENTIFICADA';
 
 export interface IconeSituacaoBruto {
   src: string | null;
@@ -69,6 +73,8 @@ export interface RegistroDescobertaNfse {
   linha: number;
   fonteChave: FonteChaveDescoberta;
   evidenciaSituacao: EvidenciaSituacaoBruta;
+  /** Textos brutos das células (para número da NFS-e no diagnóstico API-03L). */
+  textosCelulas?: string[];
   problemas: string[];
 }
 
@@ -104,7 +110,11 @@ export interface PortalListagem {
     periodo: PeriodoConsultaPortal,
     direcao: DirecaoDocumentoFiscal
   ): Promise<LeituraFiltroPortal>;
-  capturar(pagina: number, direcao: DirecaoDocumentoFiscal): Promise<PaginaListagem>;
+  capturar(
+    pagina: number,
+    direcao: DirecaoDocumentoFiscal,
+    opcoes?: { acumuladosAntes?: number }
+  ): Promise<PaginaListagem>;
   avancar(direcao: DirecaoDocumentoFiscal): Promise<boolean>;
 }
 

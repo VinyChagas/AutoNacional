@@ -342,16 +342,20 @@ describe('recuperação SEFIN', () => {
     expect(prefixado.resultado.xml).toContain(`<nfse:chNFSe>${chave(1)}</nfse:chNFSe>`);
   });
 
-  it('rejeita CNPJ de intermediário e de emitente aninhado', async () => {
+  it('API-03O: intermediário válido em RECEBIDA; emit aninhado em interm não vira emitente', async () => {
     const xml = corpoSefin(xmlComIntermediario(chave(1)));
     const emitida = await consultar({ body: xml, direcao: 'EMITIDA', cnpj: CNPJ });
     const recebida = await consultar({ body: xml, direcao: 'RECEBIDA', cnpj: CNPJ });
     const emitenteReal = await consultar({ body: xml, direcao: 'EMITIDA', cnpj: OUTRO });
     const tomadorReal = await consultar({ body: xml, direcao: 'RECEBIDA', cnpj: TOMADOR });
+    // CNPJ só em <interm> não confirma EMITIDA.
     expect(emitida.resultado.codigo).toBe('CNPJ_DIVERGENTE');
-    expect(recebida.resultado.codigo).toBe('CNPJ_DIVERGENTE');
+    // RECEBIDA com vínculo de intermediário é válida (não confunde com tomador).
+    expect(recebida.resultado.resultado).toBe('RECUPERADO');
+    expect(recebida.resultado.papelFiscal).toBe('INTERMEDIARIO');
     expect(emitenteReal.resultado.resultado).toBe('RECUPERADO');
     expect(tomadorReal.resultado.resultado).toBe('RECUPERADO');
+    expect(tomadorReal.resultado.papelFiscal).toBe('TOMADOR');
     expect(tomadorReal.resultado.dCompet).toBe('2026-01');
     expect(tomadorReal.resultado.periodoConsulta).toEqual(PERIODO);
   });
@@ -541,7 +545,7 @@ describe('plano de recuperação', () => {
     });
   }
 
-  it('exclui cancelada, bloqueia indeterminada e inventário incompleto', () => {
+  it('exclui cancelada, inclui indeterminada e bloqueia inventário incompleto (API-03M)', () => {
     const misto = montarInventario({
       id: 'misto',
       cnpj: CNPJ,
@@ -561,8 +565,12 @@ describe('plano de recuperação', () => {
       completude: 'COMPLETO',
       documentos: [documento(3, 'VIGENTE'), documento(4, 'INDETERMINADA', 'RECEBIDA')],
     });
-    expect(planejarRecuperacaoSefin(indeterminado).podeIniciar).toBe(false);
-    expect(planejarRecuperacaoSefin(indeterminado).codigo).toBe('SITUACAO_INDETERMINADA');
+    const planoInd = planejarRecuperacaoSefin(indeterminado);
+    expect(planoInd.podeIniciar).toBe(true);
+    expect(planoInd.codigo).toBeNull();
+    expect(planoInd.elegiveis.map((item) => item.chaveNacional).sort()).toEqual(
+      [chave(3), chave(4)].sort()
+    );
 
     const incompleto = montarInventario({
       id: 'parcial',

@@ -223,7 +223,7 @@ describe('inventário', () => {
 });
 
 describe('recuperação', () => {
-  it('deixa vigentes pendentes, omite canceladas e bloqueia indeterminadas', () => {
+  it('deixa vigentes e indeterminadas pendentes; omite canceladas (API-03M)', () => {
     const inv = inventario([
       documento({ final: 1, direcao: 'EMITIDA', situacao: 'VIGENTE' }),
       documento({ final: 2, direcao: 'RECEBIDA', situacao: 'VIGENTE' }),
@@ -232,12 +232,11 @@ describe('recuperação', () => {
     ]);
     const plano = montarPlanoRecuperacao(inv);
 
-    expect(plano.filter((item) => item.resultado === 'PENDENTE')).toHaveLength(2);
+    expect(plano.filter((item) => item.resultado === 'PENDENTE')).toHaveLength(3);
     expect(plano.some((item) => item.chaveNacional === chave(3))).toBe(false);
-    const bloqueada = plano.find((item) => item.chaveNacional === chave(4));
-    expect(bloqueada?.resultado).toBe('BLOQUEADO');
-    expect(bloqueada?.caminhoXml).toBeUndefined();
-    expect(bloqueada?.motivoFalha).toMatch(/indeterminada/i);
+    const indeterminada = plano.find((item) => item.chaveNacional === chave(4));
+    expect(indeterminada?.resultado).toBe('PENDENTE');
+    expect(indeterminada?.caminhoXml).toBeUndefined();
     expect(() =>
       criarRecuperacaoDocumento({
         chaveNacional: chave(1),
@@ -252,13 +251,13 @@ describe('recuperação', () => {
       inventario: inv,
       recuperacoes: plano,
     });
-    expect(resultado.status).toBe('BLOQUEADA');
-    expect(resultado.contagens.pendentes).toBe(2);
-    expect(resultado.contagens.bloqueados).toBe(1);
+    expect(resultado.status).toBe('PENDENTE');
+    expect(resultado.contagens.pendentes).toBe(3);
+    expect(resultado.contagens.bloqueados).toBe(0);
     expect(resultado.auditoria.xmlsAusentes).toBe(2);
-    expect(statusPersistivelEmExecucoes(resultado.status)).toBeNull();
+    expect(statusPersistivelEmExecucoes(resultado.status)).toBe('pendente');
     expect(resultado.pendencias.map((item) => item.codigo)).toEqual(
-      expect.arrayContaining(['SITUACAO_INDETERMINADA', 'RECUPERACAO_PENDENTE'])
+      expect.arrayContaining(['XML_INDETERMINADA_NAO_RECUPERADO', 'RECUPERACAO_PENDENTE'])
     );
   });
 });

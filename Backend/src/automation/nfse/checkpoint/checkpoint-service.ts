@@ -1,8 +1,9 @@
 /**
  * Monta e atualiza o checkpoint ao lado do plano fiscal já existente.
  * Não altera montarPlanoRecuperacao e não consulta a SEFIN.
+ * API-03F: inventário completo com apenas chaves novas ou transições
+ * fiscais permitidas evolui o checkpoint de forma atômica.
  */
-import { createHash } from 'node:crypto';
 import {
   normalizarCnpjEmpresa,
   validarChaveNacional,
@@ -16,6 +17,15 @@ import {
 } from '../contracts/periodo';
 import type { CheckpointStore } from './checkpoint-store';
 import {
+  alinharInventarioAoCheckpoint,
+  compararInventarioComCheckpoint,
+  montarCheckpointEvoluido,
+} from './evolucao-checkpoint';
+import { calcularFingerprintInventario } from './fingerprint-inventario';
+import { getLogger } from '../../../infrastructure/logger';
+
+const loggerPreservacao = getLogger('nfse-preservacao-situacao');
+import {
   CheckpointNfseError,
   VERSAO_FORMATO_CHECKPOINT,
   type CheckpointNfse,
@@ -25,27 +35,14 @@ import {
 } from './types';
 import type { XmlStore } from './xml-store';
 
+export { calcularFingerprintInventario } from './fingerprint-inventario';
+
 const ESTADOS_QUE_RECEBEM_XML: readonly EstadoDocumentoCheckpoint[] = [
   'PENDENTE',
   'EM_PROCESSAMENTO',
   'FALHA_TRANSITORIA',
   'PERSISTIDO',
 ];
-
-/**
- * SHA-256 hex de CNPJ, início, fim e documentos ordenados pela chave.
- * Cada documento entra só com chave, direção e situação.
- * Senha, PFX, chave privada, XML e dCompet ficam de fora.
- */
-export function calcularFingerprintInventario(inventario: InventarioNfse): string {
-  const linhas = [...inventario.documentos]
-    .map((documento) => `${documento.chaveNacional}:${documento.direcao}:${documento.situacao}`)
-    .sort();
-  const canonico = [inventario.cnpj, inventario.periodoConsulta.inicio, inventario.periodoConsulta.fim, ...linhas].join(
-    '\n'
-  );
-  return createHash('sha256').update(canonico, 'utf8').digest('hex');
-}
 
 export function validarInventarioParaCheckpoint(inventario: InventarioNfse): void {
   if (!inventario || typeof inventario !== 'object') {
@@ -129,7 +126,9 @@ export function conferirIdentidadeCheckpoint(checkpoint: CheckpointNfse, inventa
   if (!periodosConsultaIguais(checkpoint.periodoConsulta, inventario.periodoConsulta)) {
     throw new CheckpointNfseError('IDENTIDADE_DIVERGENTE', 'Checkpoint de outro período.');
   }
-  if (checkpoint.fingerprintInventario !== calcularFingerprintInventario(inventario)) {
+  // API-03P — identidade considera situações preservadas (CANCELADA/VIGENTE vs INDETERMINADA fraca).
+  const alinhado = alinharInventarioAoCheckpoint(inventario, checkpoint);
+  if (checkpoint.fingerprintInventario !== calcularFingerprintInventario(alinhado)) {
     throw new CheckpointNfseError('IDENTIDADE_DIVERGENTE', 'Fingerprint do inventário diverge do checkpoint.');
   }
 }
@@ -145,6 +144,8 @@ export class CheckpointService {
    * Cria o checkpoint se o inventário for estruturalmente válido.
    * Indeterminada gera BLOQUEADO e o arquivo pode existir para auditoria.
    * A mesma identidade não é recriada: a execução repetida devolve o checkpoint atual.
+   * Inventário completo com superconjunto ou transição fiscal permitida evolui
+   * o checkpoint (API-03F) sem apagar XMLs nem rebaixar PERSISTIDO íntegro.
    */
   async criarCheckpoint(
     inventario: InventarioNfse,
@@ -155,13 +156,58 @@ export class CheckpointService {
     const id = validarExecucaoId(execucaoId);
     const corpo = async () => {
       const existente = await this.checkpoints.carregar(inventario.cnpj, inventario.periodoConsulta);
-      if (existente) {
-        conferirIdentidadeCheckpoint(existente, inventario);
+      if (!existente) {
+        const novo = this.montar(inventario, id);
+        await this.checkpoints.gravar(novo);
+        return novo;
+      }
+      if (existente.cnpj !== inventario.cnpj) {
+        throw new CheckpointNfseError('IDENTIDADE_DIVERGENTE', 'Checkpoint de outro CNPJ.');
+      }
+      if (!periodosConsultaIguais(existente.periodoConsulta, inventario.periodoConsulta)) {
+        throw new CheckpointNfseError('IDENTIDADE_DIVERGENTE', 'Checkpoint de outro período.');
+      }
+      if (existente.versaoFormato !== VERSAO_FORMATO_CHECKPOINT) {
+        throw new CheckpointNfseError('VERSAO_INCOMPATIVEL', 'Versão do checkpoint incompatível.');
+      }
+      const fingerprintAtual = calcularFingerprintInventario(inventario);
+      if (existente.fingerprintInventario === fingerprintAtual) {
         return existente;
       }
-      const novo = this.montar(inventario, id);
-      await this.checkpoints.gravar(novo);
-      return novo;
+      const comparacao = compararInventarioComCheckpoint(existente, inventario);
+      if (comparacao.tipo === 'IDENTICO') {
+        // Defesa: documentos iguais com FP diferente indica corrupção — não evolui.
+        throw new CheckpointNfseError(
+          'IDENTIDADE_DIVERGENTE',
+          'Fingerprint do inventário diverge do checkpoint.'
+        );
+      }
+      if (comparacao.tipo === 'BLOQUEADO') {
+        throw new CheckpointNfseError(comparacao.codigo, comparacao.mensagem, {
+          chavesAusentes: comparacao.chavesAusentes,
+          chavesDirecaoDivergente: comparacao.chavesDirecaoDivergente,
+          transicoesInvalidas: comparacao.transicoesInvalidas,
+          fingerprintCheckpoint: existente.fingerprintInventario,
+          fingerprintInventario: fingerprintAtual,
+        });
+      }
+      if (comparacao.preservacoesSituacao.length > 0) {
+        loggerPreservacao.warn(
+          {
+            cnpj: inventario.cnpj,
+            competencia: `${inventario.periodoConsulta.inicio}-${inventario.periodoConsulta.fim}`,
+            quantidade: comparacao.preservacoesSituacao.length,
+            chaves: comparacao.preservacoesSituacao.map((p) => p.chaveNacional),
+            detalhes: comparacao.preservacoesSituacao.map(
+              (p) => `${p.chaveNacional}:${p.situacaoMantida}←${p.situacaoDescoberta}`
+            ),
+          },
+          'Situação fiscal confirmada preservada — descoberta posterior com menos evidência (API-03P)'
+        );
+      }
+      const evoluido = montarCheckpointEvoluido(existente, inventario, id, this.agora(), comparacao);
+      await this.checkpoints.gravar(evoluido);
+      return evoluido;
     };
     if (opcoes?.jaComTrava) return corpo();
     return this.checkpoints.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
@@ -169,9 +215,7 @@ export class CheckpointService {
 
   /**
    * Grava o XML e só então marca PERSISTIDO.
-   * Antes da escrita, exige validação fiscal CONFIRMADA (validarXmlNfse).
-   * A chave, o CNPJ e a direção são os do documento deste checkpoint.
-   * Indeterminada recusa a persistência automática do período inteiro.
+   * API-03M — vigentes e indeterminadas podem persistir (XML com atenção fiscal preservado).
    */
   async persistirXml(
     inventario: InventarioNfse,
@@ -180,11 +224,10 @@ export class CheckpointService {
     opcoes?: OpcoesTravaCheckpoint
   ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
-    recusarIndeterminada(inventario);
     const chave = exigirChave(chaveNacional);
     const corpo = async () => {
       const atual = await this.exigirCompativel(inventario);
-      const documento = this.documentoVigente(atual, inventario, chave);
+      const documento = this.documentoElegivelRecuperacao(atual, inventario, chave);
       if (!ESTADOS_QUE_RECEBEM_XML.includes(documento.estado)) {
         throw new CheckpointNfseError('DOCUMENTO_NAO_ELEGIVEL', 'O estado do documento não permite gravar XML.');
       }
@@ -203,13 +246,16 @@ export class CheckpointService {
       ) {
         return atual;
       }
+      const atencaoFiscal = documento.situacao === 'INDETERMINADA';
       const proximo = substituirDocumento(atual, chave, {
         estado: 'PERSISTIDO',
         hashSha256: gravado.hashSha256,
         caminhoRelativo: gravado.caminhoRelativo,
         tamanhoBytes: gravado.tamanhoBytes,
-        diagnostico: null,
-        codigo: null,
+        diagnostico: atencaoFiscal
+          ? 'XML documentalmente válido; situação fiscal do Portal não confirmada.'
+          : null,
+        codigo: atencaoFiscal ? 'ATENCAO_SITUACAO_NAO_CONFIRMADA' : null,
         updatedAt: this.agora(),
       }, this.agora());
       await this.checkpoints.gravar(proximo);
@@ -225,18 +271,17 @@ export class CheckpointService {
     opcoes?: OpcoesTravaCheckpoint
   ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
-    recusarIndeterminada(inventario);
     const chave = exigirChave(chaveNacional);
     const corpo = async () => {
       const atual = await this.exigirCompativel(inventario);
-      const documento = this.documentoVigente(atual, inventario, chave);
+      const documento = this.documentoElegivelRecuperacao(atual, inventario, chave);
       if (documento.estado !== 'PENDENTE' && documento.estado !== 'FALHA_TRANSITORIA') {
         throw new CheckpointNfseError('DOCUMENTO_NAO_ELEGIVEL', 'O documento não está retomável para processamento.');
       }
       const proximo = substituirDocumento(atual, chave, {
         estado: 'EM_PROCESSAMENTO',
         diagnostico: null,
-        codigo: null,
+        codigo: documento.situacao === 'INDETERMINADA' ? 'ATENCAO_SITUACAO_NAO_CONFIRMADA' : null,
         updatedAt: this.agora(),
       }, this.agora());
       await this.checkpoints.gravar(proximo);
@@ -258,7 +303,6 @@ export class CheckpointService {
     opcoes?: OpcoesTravaCheckpoint
   ): Promise<CheckpointNfse> {
     validarInventarioParaCheckpoint(inventario);
-    recusarIndeterminada(inventario);
     const chave = exigirChave(chaveNacional);
     const texto = diagnostico.trim();
     if (!texto) {
@@ -269,7 +313,7 @@ export class CheckpointService {
     }
     const corpo = async () => {
       const atual = await this.exigirCompativel(inventario);
-      const documento = this.documentoVigente(atual, inventario, chave);
+      const documento = this.documentoElegivelRecuperacao(atual, inventario, chave);
       if (documento.estado !== 'PENDENTE' && documento.estado !== 'EM_PROCESSAMENTO' && documento.estado !== 'FALHA_TRANSITORIA') {
         throw new CheckpointNfseError('DOCUMENTO_NAO_ELEGIVEL', 'O estado do documento não recebe esta falha.');
       }
@@ -295,7 +339,12 @@ export class CheckpointService {
     return atual;
   }
 
-  private documentoVigente(checkpoint: CheckpointNfse, inventario: InventarioNfse, chave: string): DocumentoCheckpointNfse {
+  /** API-03M — vigente ou indeterminada recebe XML / falha de recuperação. */
+  private documentoElegivelRecuperacao(
+    checkpoint: CheckpointNfse,
+    inventario: InventarioNfse,
+    chave: string
+  ): DocumentoCheckpointNfse {
     const noInventario = inventario.documentos.find((documento) => documento.chaveNacional === chave);
     const noCheckpoint = checkpoint.documentos.find((documento) => documento.chaveNacional === chave);
     if (!noInventario || !noCheckpoint) {
@@ -304,8 +353,14 @@ export class CheckpointService {
     if (noInventario.cnpj !== checkpoint.cnpj || noInventario.direcao !== noCheckpoint.direcao) {
       throw new CheckpointNfseError('IDENTIDADE_DIVERGENTE', 'CNPJ ou direção do documento diverge do checkpoint.');
     }
-    if (noInventario.situacao !== 'VIGENTE' || noCheckpoint.situacao !== 'VIGENTE') {
-      throw new CheckpointNfseError('DOCUMENTO_NAO_ELEGIVEL', 'Só documento vigente recebe XML ou falha de recuperação.');
+    const elegivel =
+      (noInventario.situacao === 'VIGENTE' || noInventario.situacao === 'INDETERMINADA') &&
+      (noCheckpoint.situacao === 'VIGENTE' || noCheckpoint.situacao === 'INDETERMINADA');
+    if (!elegivel) {
+      throw new CheckpointNfseError(
+        'DOCUMENTO_NAO_ELEGIVEL',
+        'Só documento vigente ou indeterminado recebe XML ou falha de recuperação.'
+      );
     }
     return noCheckpoint;
   }
@@ -352,13 +407,25 @@ function estadoInicial(
       instante
     );
   }
+  // API-03M — indeterminada entra na meta SEFIN como PENDENTE (não BLOQUEADO).
+  if (situacao === 'INDETERMINADA') {
+    return base(
+      chaveNacional,
+      direcao,
+      situacao,
+      'PENDENTE',
+      'Situação fiscal indeterminada no Portal; XML será consultado na SEFIN.',
+      'ATENCAO_SITUACAO_NAO_CONFIRMADA',
+      instante
+    );
+  }
   return base(
     chaveNacional,
     direcao,
     situacao,
-    'BLOQUEADO',
-    'Situação indeterminada bloqueia o processamento automático até revisão.',
-    'SITUACAO_INDETERMINADA',
+    'PENDENTE',
+    null,
+    null,
     instante
   );
 }
@@ -399,15 +466,6 @@ function substituirDocumento(
       documento.chaveNacional === chave ? { ...documento, ...parcial } : documento
     ),
   };
-}
-
-function recusarIndeterminada(inventario: InventarioNfse): void {
-  if (inventario.documentos.some((documento) => documento.situacao === 'INDETERMINADA')) {
-    throw new CheckpointNfseError(
-      'SITUACAO_INDETERMINADA',
-      'Nota indeterminada bloqueia a recuperação e a persistência automáticas.'
-    );
-  }
 }
 
 function exigirChave(chave: string): string {

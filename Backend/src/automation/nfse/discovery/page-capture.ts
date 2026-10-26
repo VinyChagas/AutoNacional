@@ -28,8 +28,10 @@ import {
   proximaDesabilitada,
   textoIndicaSemRegistros,
 } from './pagination';
+import { paginaRequerRecaptura } from './page-capture-recovery';
 import {
   aguardarConteudoListagemPortal,
+  aguardarIdentificadoresNasLinhas,
   aguardarListagemEstavel,
   aguardarListagemPortalPronta,
   pesquisaPortalConfirmadaNaUrl,
@@ -100,27 +102,80 @@ async function lerLinha(row: Locator, pagina: number, linha: number): Promise<Li
         !tokens.includes('menu')
       );
     });
-    const icones = celula
-      ? Array.from(celula.querySelectorAll('img')).map((img) => ({
-          src: img.getAttribute('src'),
-          title: img.getAttribute('title'),
-          dataOriginalTitle: img.getAttribute('data-original-title'),
-          alt: img.getAttribute('alt'),
-          ariaLabel: img.getAttribute('aria-label'),
-        }))
+    const mapearIcone = (img: NoDom) => {
+      const dataOriginalTitle =
+        img.getAttribute('data-original-title') ||
+        img.getAttribute('data-bs-original-title') ||
+        null;
+      return {
+        src: img.getAttribute('src'),
+        title: img.getAttribute('title'),
+        dataOriginalTitle,
+        alt: img.getAttribute('alt'),
+        ariaLabel: img.getAttribute('aria-label'),
+      };
+    };
+    const iconeFiscal = (icone: {
+      src: string | null;
+      title: string | null;
+      dataOriginalTitle: string | null;
+      alt: string | null;
+      ariaLabel: string | null;
+    }) => {
+      const blob = [icone.src, icone.alt, icone.title, icone.dataOriginalTitle, icone.ariaLabel]
+        .filter(Boolean)
+        .join(' ');
+      return /tb[-_]?(nota[-_]?bypass|gerada|cancelada|substitu)/i.test(blob) ||
+        /decis[aã]o\s*(administrativa|judicial)/i.test(blob);
+    };
+    // Coluna Situação + SEMPRE mescla ícones fiscais da linha (API-03K).
+    // Evita perder tb-nota-bypass quando a TD situacao já tem outro <img> genérico.
+    const daCelula = celula
+      ? Array.from(celula.querySelectorAll('img')).map(mapearIcone)
       : [];
+    const daLinha = Array.from(raiz.querySelectorAll('img')).map(mapearIcone).filter(iconeFiscal);
+    const icones = [...daCelula];
+    for (const fiscal of daLinha) {
+      if (
+        !icones.some(
+          (item) =>
+            item.src === fiscal.src &&
+            item.alt === fiscal.alt &&
+            item.dataOriginalTitle === fiscal.dataOriginalTitle
+        )
+      ) {
+        icones.push(fiscal);
+      }
+    }
+    const textoBypass = icones
+      .map((i) => i.alt || i.dataOriginalTitle || i.title || '')
+      .find((t) => /decis[aã]o\s*(administrativa|judicial)/i.test(t));
+    // API-03L — data-situacao pode estar no TR, na TD Situação ou em descendente.
+    const dataSituacao =
+      raiz.getAttribute('data-situacao') ||
+      (celula ? celula.getAttribute('data-situacao') : null) ||
+      (() => {
+        const comAttr = Array.from(raiz.querySelectorAll('[data-situacao]'));
+        for (let i = 0; i < comAttr.length; i += 1) {
+          const v = comAttr[i].getAttribute('data-situacao');
+          if (v && v.trim()) return v;
+        }
+        return null;
+      })();
     return {
       hrefs,
       dataChave: raiz.getAttribute('data-chave'),
-      dataSituacao: raiz.getAttribute('data-situacao'),
+      dataSituacao,
       textos: celulas.map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim()),
       situacao: celula
         ? {
-            texto: (celula.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            texto: (celula.textContent ?? '').replace(/\s+/g, ' ').trim() || textoBypass || '',
             classe: celula.getAttribute('class') ?? '',
             icones,
           }
-        : null,
+        : icones.length > 0
+          ? { texto: textoBypass || '', classe: '', icones }
+          : null,
     };
   });
 
@@ -160,19 +215,22 @@ async function inspecionarProxima(page: Page): Promise<PaginaListagem['proxima']
   return { presente: false, desabilitado: true };
 }
 
-export async function capturarPaginaListagem(page: Page, pagina: number): Promise<PaginaListagem> {
-  // API-02W — listagem já deve estar pronta após aplicarPeriodo; sem networkidle.
-  // API-02Z — CAUSA RAIZ do ~120s/direção: innerText() sobre elementos ausentes
-  // (.dataTables_info / ul.pagination li.active) herdava o setDefaultTimeout (60s)
-  // e travava 60s cada antes do .catch(). O Portal Nacional não usa DataTables,
-  // então esses seletores NUNCA existem. Guardamos com count() (retorno imediato)
-  // e só lemos innerText quando o elemento de fato existe.
-  const inicioCaptura = agoraMonotonicoMs();
-
+async function lerPaginaListagemBruta(
+  page: Page,
+  pagina: number,
+  opcoes: { minimoLinhas?: number } = {}
+): Promise<{
+  pagina: PaginaListagem;
+  estabilMs: number;
+  estavel: boolean;
+  infoPresente: boolean;
+  indicadorPresente: boolean;
+}> {
   // API-02Z — estabiliza a listagem (contagem de linhas) antes de ler, evitando
   // captura parcial durante a transição do filtro. Teto curto, sem hang.
   const estabil = await aguardarListagemEstavel(page, {
     timeoutMs: Math.min(15000, PLAYWRIGHT_TIMEOUT),
+    minimoLinhas: opcoes.minimoLinhas,
   });
 
   const bodyText = await page.locator('body').innerText().catch(() => '');
@@ -198,28 +256,67 @@ export async function capturarPaginaListagem(page: Page, pagina: number): Promis
     : '';
   const numero = textoIndicador.match(/\d+/)?.[0];
 
-  const pagResultado = comFingerprint({
-    url: page.url(),
-    paginaIndicador: numero ? Number(numero) : pagina,
-    totalizador: parseTotalizador(infoTexto),
-    semRegistros: textoIndicaSemRegistros(bodyText) && quantidade === 0,
-    linhas: capturadas,
-    proxima: await inspecionarProxima(page),
-  });
+  return {
+    pagina: comFingerprint({
+      url: page.url(),
+      paginaIndicador: numero ? Number(numero) : pagina,
+      totalizador: parseTotalizador(infoTexto),
+      semRegistros: textoIndicaSemRegistros(bodyText) && quantidade === 0,
+      linhas: capturadas,
+      proxima: await inspecionarProxima(page),
+    }),
+    estabilMs: estabil.ms,
+    estavel: estabil.estavel,
+    infoPresente,
+    indicadorPresente,
+  };
+}
+
+/**
+ * API-02W/Z + API-03H — captura com recuperação localizada transitória:
+ * re-estabiliza e relê uma vez se houver linha sem chave ou contagem aquém do totalizador.
+ * Não inventa chave; inventário incompleto permanece se a divergência continuar.
+ */
+export async function capturarPaginaListagem(
+  page: Page,
+  pagina: number,
+  opcoes: { acumuladosAntes?: number } = {}
+): Promise<PaginaListagem> {
+  const inicioCaptura = agoraMonotonicoMs();
+  const acumuladosAntes = opcoes.acumuladosAntes ?? 0;
+
+  let lida = await lerPaginaListagemBruta(page, pagina);
+  let recapturas = 0;
+
+  if (paginaRequerRecaptura(lida.pagina, { acumuladosAntes })) {
+    const faltam =
+      lida.pagina.totalizador != null
+        ? Math.max(0, lida.pagina.totalizador - acumuladosAntes)
+        : undefined;
+    await aguardarIdentificadoresNasLinhas(page, {
+      timeoutMs: Math.min(8000, PLAYWRIGHT_TIMEOUT),
+    });
+    lida = await lerPaginaListagemBruta(page, pagina, {
+      minimoLinhas: faltam != null && faltam > 0 ? faltam : undefined,
+    });
+    recapturas = 1;
+  }
+
   loggerTempos.info(
     {
       op: 'capturar_pagina',
       pagina,
       ms: deltaMonotonicoMs(inicioCaptura, agoraMonotonicoMs()),
-      estabilizacaoMs: estabil.ms,
-      estavel: estabil.estavel,
-      linhas: quantidade,
-      infoPresente,
-      indicadorPresente,
+      estabilizacaoMs: lida.estabilMs,
+      estavel: lida.estavel,
+      linhas: lida.pagina.linhas.length,
+      recapturas,
+      infoPresente: lida.infoPresente,
+      indicadorPresente: lida.indicadorPresente,
     },
     'Tempo: captura da página da listagem'
   );
-  return pagResultado;
+  return lida.pagina;
 }
 
 export async function lerFiltroDaPagina(page: Page): Promise<LeituraFiltroPortal> {
@@ -398,8 +495,12 @@ export function criarPortalDaPage(page: Page): PortalListagem {
       );
       return lerFiltroDaPagina(page);
     },
-    capturar(pagina: number): Promise<PaginaListagem> {
-      return capturarPaginaListagem(page, pagina);
+    capturar(
+      pagina: number,
+      _direcao: DirecaoDocumentoFiscal,
+      opcoes?: { acumuladosAntes?: number }
+    ): Promise<PaginaListagem> {
+      return capturarPaginaListagem(page, pagina, opcoes);
     },
     async avancar(): Promise<boolean> {
       for (const seletor of PROXIMA) {

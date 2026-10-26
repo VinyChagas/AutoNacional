@@ -156,7 +156,9 @@ async function percorrerDirecao(
     let pagina;
     try {
       exigirControleDescoberta(controle, 'antes_pagina');
-      pagina = pendente ?? (await portal.capturar(ordinal, direcao));
+      pagina =
+        pendente ??
+        (await portal.capturar(ordinal, direcao, { acumuladosAntes: registros.length }));
       pendente = null;
     } catch (erro) {
       if (erro instanceof ContratoNfseError && /interrompida/i.test(erro.message)) {
@@ -321,7 +323,9 @@ async function percorrerDirecao(
     let seguinte;
     try {
       exigirControleDescoberta(controle, 'antes_pagina');
-      seguinte = await portal.capturar(ordinal + 1, direcao);
+      seguinte = await portal.capturar(ordinal + 1, direcao, {
+        acumuladosAntes: registros.length,
+      });
     } catch (erro) {
       if (erro instanceof ContratoNfseError && /interrompida/i.test(erro.message)) {
         diagnosticos.push({

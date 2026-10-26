@@ -13,6 +13,8 @@ import {
   obterStatusBatch,
   configurarConcorrenciaParaBatch,
   obterDelayEnfileiramento,
+  reintentarEmpresaManual,
+  RetryManualEmpresaError,
 } from '../services/execution-service';
 import { sleep } from '../utils/sleep';
 import { registrarClienteSSE } from '../services/execution-events.service';
@@ -25,6 +27,12 @@ import {
 } from '../services/execution-summary.service';
 import { type CaptchaMode } from '../automation/captcha/types';
 import { resolverOpcoesAuthPorEmpresa } from '../services/execution-auth-options';
+import {
+  normalizarFiltroAutenticacao,
+  pertenceAContabilidade,
+  respeitaFiltroAutenticacao,
+  tipoAuthDaSelecao,
+} from '../services/selecao-execucao';
 import { z } from 'zod';
 
 const logger = getLogger('execucao');
@@ -95,6 +103,8 @@ router.post('/multiplas', async (req: Request, res: Response) => {
       baixarPdf?: boolean;
       contabilidade_id?: number | null;
       captchaMode?: string;
+      /** API-03B — filtro de autenticação da UI: todas | certificado | credenciais */
+      filtro_autenticacao?: string;
     };
     const empresas = body.empresas || [];
     const dataInicio = body.dataInicio;
@@ -103,6 +113,7 @@ router.post('/multiplas', async (req: Request, res: Response) => {
     const headless = body.headless ?? false;
     const baixarPdf = body.baixarPdf ?? true;
     const contabilidadeId = body.contabilidade_id != null && body.contabilidade_id > 0 ? body.contabilidade_id : null;
+    const filtroAuth = normalizarFiltroAutenticacao(body.filtro_autenticacao);
 
     let captchaMode: CaptchaMode = 'TWO_CAPTCHA';
     if (body.captchaMode != null && body.captchaMode !== '') {
@@ -129,6 +140,13 @@ router.post('/multiplas', async (req: Request, res: Response) => {
 
     const erros: Array<{ empresa_id: string; cnpj: string; erro: string }> = [];
     const validos: Array<{ empresaId: number; cnpj: string; tipoAuth: 'certificado' | 'credenciais' }> = [];
+
+    /** API-03B — conjunto de aptas da contabilidade (quando há contabilidade no lote). */
+    let idsAptas: Set<number> | null = null;
+    if (contabilidadeId != null) {
+      const aptas = await listarEmpresasAptas(contabilidadeId);
+      idsAptas = new Set(aptas.map((a) => a.empresa_id).filter((id) => id > 0));
+    }
 
     for (const emp of empresas) {
       const cnpjLimpo = limparCnpj(emp.cnpj);
@@ -171,7 +189,40 @@ router.post('/multiplas', async (req: Request, res: Response) => {
             continue;
           }
         }
-        const tipoAuth = emp.tipo_autenticacao === 'credenciais' ? 'credenciais' : 'certificado';
+        const empresaDb = await empresasRepo.obterEmpresaPorId(empresaId);
+        if (
+          !pertenceAContabilidade(
+            contabilidadeId,
+            empresaDb?.contabilidadeId ?? null
+          )
+        ) {
+          erros.push({
+            empresa_id: emp.empresa_id,
+            cnpj: emp.cnpj,
+            erro: 'Empresa não pertence à contabilidade selecionada',
+          });
+          continue;
+        }
+        const tipoAuth = tipoAuthDaSelecao(emp.tipo_autenticacao);
+        if (!respeitaFiltroAutenticacao(filtroAuth, tipoAuth)) {
+          erros.push({
+            empresa_id: emp.empresa_id,
+            cnpj: emp.cnpj,
+            erro:
+              filtroAuth === 'certificado'
+                ? 'Empresa fora do filtro Certificado digital A1'
+                : 'Empresa fora do filtro Usuário e senha',
+          });
+          continue;
+        }
+        if (idsAptas != null && !idsAptas.has(empresaId)) {
+          erros.push({
+            empresa_id: emp.empresa_id,
+            cnpj: emp.cnpj,
+            erro: 'Empresa não está apta para execução nesta contabilidade',
+          });
+          continue;
+        }
         validos.push({ empresaId, cnpj: cnpjLimpo, tipoAuth });
       } catch (e) {
         erros.push({ empresa_id: emp.empresa_id, cnpj: emp.cnpj, erro: (e as Error).message });
@@ -329,6 +380,115 @@ router.get('/batch/:batch_id/status', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error({ err: error }, 'Erro ao obter status do batch');
     res.status(500).json({ detail: 'Erro ao obter status do batch' });
+  }
+});
+
+/**
+ * API-03I — POST /api/execucao/:empresa_id/retry
+ * Retry manual de empresa com erro definitivo (lote ativo ou concluído).
+ * Reinicia orçamento de tentativas só desta empresa; preserva período/checkpoint.
+ */
+router.post('/:empresa_id/retry', async (req: Request, res: Response) => {
+  try {
+    const empresaIdParam = String(req.params.empresa_id ?? '');
+    const body = (req.body ?? {}) as {
+      dataInicio?: string;
+      dataFim?: string;
+      tipo?: string;
+      headless?: boolean;
+      baixarPdf?: boolean;
+      captchaMode?: string;
+      batch_id?: string;
+      tipo_autenticacao?: string;
+    };
+
+    let empresa: Awaited<ReturnType<typeof empresasRepo.obterEmpresaPorId>> = null;
+    const idNum = parseInt(empresaIdParam, 10);
+    if (!isNaN(idNum)) {
+      empresa = await empresasRepo.obterEmpresaPorId(idNum);
+    }
+    if (!empresa) {
+      const cnpjLimpo = limparCnpj(empresaIdParam);
+      if (cnpjLimpo.length === 14 && /^\d+$/.test(cnpjLimpo)) {
+        empresa = await empresasRepo.obterEmpresaPorCnpj(cnpjLimpo);
+      }
+    }
+    if (!empresa) {
+      res.status(404).json({ detail: `Empresa com ID/CNPJ ${empresaIdParam} não encontrada` });
+      return;
+    }
+
+    const cnpj = empresa.cnpj || limparCnpj(empresaIdParam);
+    if (!cnpj || cnpj.length !== 14) {
+      res.status(400).json({ detail: 'Empresa não possui CNPJ cadastrado' });
+      return;
+    }
+
+    let dataInicio = String(body.dataInicio ?? '').trim();
+    let dataFim = String(body.dataFim ?? '').trim();
+    if (!dataInicio || !dataFim) {
+      const ultima = await execucoesRepo.obterUltimaPorEmpresa(empresa.id);
+      dataInicio = dataInicio || ultima?.periodoInicio || '';
+      dataFim = dataFim || ultima?.periodoFim || '';
+    }
+    if (!dataInicio || !dataFim || !DATA_REGEX.test(dataInicio) || !DATA_REGEX.test(dataFim)) {
+      res.status(400).json({
+        detail: 'dataInicio e dataFim são obrigatórios (formato DD/MM/YYYY) ou devem existir na última execução.',
+      });
+      return;
+    }
+
+    let captchaMode: CaptchaMode = 'TWO_CAPTCHA';
+    if (body.captchaMode != null && body.captchaMode !== '') {
+      const parsed = captchaModeSchema.safeParse(body.captchaMode);
+      if (!parsed.success) {
+        res.status(400).json({ detail: 'captchaMode inválido' });
+        return;
+      }
+      captchaMode = parsed.data;
+    }
+
+    const tipoAuth =
+      body.tipo_autenticacao === 'credenciais' ? 'credenciais' : 'certificado';
+
+    const resultado = await reintentarEmpresaManual({
+      empresaId: empresa.id,
+      cnpj,
+      dataInicio,
+      dataFim,
+      tipo: body.tipo || 'ambas',
+      headless: body.headless,
+      baixarPdf: body.baixarPdf ?? true,
+      captchaMode,
+      batchId: body.batch_id,
+      tipoAutenticacao: tipoAuth,
+    });
+
+    const status = obterStatus(String(empresa.id));
+    res.status(202).json({
+      id: resultado.execucaoId,
+      empresa_id: String(empresa.id),
+      cnpj,
+      batch_id: resultado.batch_id ?? null,
+      status: status?.status || 'pendente',
+      etapa_atual: status?.etapa_atual || 'inicio',
+      progresso: status?.progresso ?? 0,
+      mensagem: status?.mensagem || 'Retry manual enfileirado.',
+      tentativa_atual: resultado.tentativa_atual,
+      max_tentativas: resultado.max_tentativas,
+      retry_manual: true,
+    });
+  } catch (error) {
+    if (error instanceof RetryManualEmpresaError) {
+      const http =
+        error.codigo === 'EMPRESA_EM_EXECUCAO' || error.codigo === 'RETRY_EM_ANDAMENTO'
+          ? 409
+          : 400;
+      res.status(http).json({ detail: error.message, codigo: error.codigo });
+      return;
+    }
+    logger.error({ err: error }, 'Erro no retry manual');
+    res.status(500).json({ detail: 'Erro ao enfileirar retry manual' });
   }
 });
 

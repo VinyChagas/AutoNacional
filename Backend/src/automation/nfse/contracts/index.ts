@@ -16,6 +16,7 @@ export {
   bloqueiaProcessamentoAutomatico,
   criarDocumentoFiscal,
   documentoPermaneceNoInventario,
+  entraNaExportacaoXmlPendentesFiscais,
   entraNaExportacaoXmlVigentes,
   entraNaRecuperacaoSefin,
   normalizarCnpjEmpresa,
@@ -47,6 +48,12 @@ export {
   montarPlanoRecuperacao,
   xmlRecuperadoUtilizavel,
 } from './recuperacao';
+export {
+  CODIGOS_PENDENCIA_FISCAL,
+  rotuloCodigoPendenciaFiscal,
+  serializarPendenciaFiscalParaApi,
+} from './pendencia-fiscal';
+export type { CodigoPendenciaFiscal, PendenciaFiscalNfse } from './pendencia-fiscal';
 export type {
   NovaRecuperacaoInput,
   RecuperacaoDocumento,

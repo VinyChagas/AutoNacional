@@ -332,20 +332,28 @@ describe('orquestrador nativo offline', () => {
     ).rejects.toMatchObject({ codigo: 'DESCOBERTA_INCOMPLETA' });
   });
 
-  it('16 indeterminada bloqueia', async () => {
+  it('16 indeterminada segue SEFIN e exporta pendente fiscal (API-03M)', async () => {
     const inv = inventario([documento(chave(1), { situacao: 'INDETERMINADA' })]);
-    await expect(
-      executarFluxoFiscalNativo({
-        page: PAGE,
-        cnpj: CNPJ,
-        periodoConsulta: PERIODO,
-        execucaoId: 'exec-indet',
-        tipo: 'emitidas',
-        baixarPdf: false,
-        raizFiscal: raiz,
-        dependencias: depsSimuladas(inv),
-      })
-    ).rejects.toMatchObject({ codigo: 'SITUACAO_INDETERMINADA' });
+    const resultado = await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      execucaoId: 'exec-indet',
+      tipo: 'emitidas',
+      baixarPdf: false,
+      raizFiscal: raiz,
+      dependencias: depsSimuladas(inv),
+    });
+    expect(resultado.indeterminadas).toBe(1);
+    expect(resultado.vigentes).toBe(0);
+    expect(resultado.persistidos).toBe(0);
+    expect(resultado.xmlsComAtencaoFiscal).toBe(1);
+    expect(resultado.documentosAptos).toHaveLength(0);
+    expect(resultado.documentosPendentesFiscais).toHaveLength(1);
+    expect(resultado.loteLiberado).toBe(false);
+    expect(resultado.conclusaoReconciliacao).toBe('NAO_RECONCILIADA');
+    expect(resultado.pendenciasFiscais?.[0]?.codigo).toBe('ATENCAO_SITUACAO_NAO_CONFIRMADA');
+    expect(resultado.pendenciasFiscais?.[0]?.xml_recuperado).toBe(true);
   });
 
   it('API-02Q — descoberta completa vazia encerra SEM_MOVIMENTO sem SEFIN', async () => {
@@ -1081,8 +1089,9 @@ describe('retomada 22.7.1', () => {
     expect(deps.recuperar).not.toHaveBeenCalled();
   });
 
-  it('26 fingerprint incompatível bloqueado', async () => {
+  it('26 API-03F superconjunto evolui e recupera só a chave nova', async () => {
     const invA = inventario([documento(chave(1))]);
+    const depsA = depsSimuladas(invA);
     await executarFluxoFiscalNativo({
       page: PAGE,
       cnpj: CNPJ,
@@ -1091,21 +1100,55 @@ describe('retomada 22.7.1', () => {
       tipo: 'emitidas',
       baixarPdf: false,
       raizFiscal: raiz,
+      dependencias: depsA,
+    });
+    expect(depsA.recuperar).toHaveBeenCalledTimes(1);
+
+    const invB = inventario([documento(chave(1)), documento(chave(2))]);
+    const depsB = depsSimuladas(invB);
+    const resultado = await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      execucaoId: 'exec-fp-2',
+      tipo: 'emitidas',
+      baixarPdf: false,
+      raizFiscal: raiz,
+      dependencias: depsB,
+    });
+    expect(resultado.descobertos).toBe(2);
+    expect(resultado.persistidos).toBe(2);
+    expect(depsB.recuperar).toHaveBeenCalledTimes(1);
+    expect(depsB.recuperar).toHaveBeenCalledWith(
+      expect.objectContaining({ chave: chave(2) })
+    );
+  });
+
+  it('26b chaves ausentes no inventário bloqueiam sem apagar checkpoint', async () => {
+    const invA = inventario([documento(chave(1)), documento(chave(2))]);
+    await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: PERIODO,
+      execucaoId: 'exec-aus-1',
+      tipo: 'emitidas',
+      baixarPdf: false,
+      raizFiscal: raiz,
       dependencias: depsSimuladas(invA),
     });
-    const invB = inventario([documento(chave(1)), documento(chave(2))]);
+    const invB = inventario([documento(chave(1))]);
     await expect(
       executarFluxoFiscalNativo({
         page: PAGE,
         cnpj: CNPJ,
         periodoConsulta: PERIODO,
-        execucaoId: 'exec-fp-2',
+        execucaoId: 'exec-aus-2',
         tipo: 'emitidas',
         baixarPdf: false,
         raizFiscal: raiz,
         dependencias: depsSimuladas(invB),
       })
-    ).rejects.toMatchObject({ codigo: 'IDENTIDADE_DIVERGENTE' });
+    ).rejects.toMatchObject({ codigo: 'CHAVES_AUSENTES' });
   });
 
   it('27 falha parcial preserva checkpoint', async () => {

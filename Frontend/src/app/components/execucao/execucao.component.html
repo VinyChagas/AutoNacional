@@ -90,7 +90,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
-          Iniciar
+          @if (execucoes.length > 0) {
+            Iniciar ({{ execucoes.length }})
+          } @else {
+            Iniciar
+          }
         </button>
         @if (podeAbrirCentralCaptchas) {
           <button
@@ -181,14 +185,27 @@
       </div>
     </section>
 
-    <!-- Barra de Progresso Geral -->
+    <!-- Barra de Progresso Geral (API-03B: processadas = OK+ERRO) -->
     @if (executionRows.length > 0) {
       <section class="progress-section">
         <div class="progress-header">
-          <span>Execução geral: {{ empresasFinalizadas }} de {{ totalEmpresas }} empresas finalizadas ({{ percentualFinalizado }}%)</span>
+          <span>
+            Progresso operacional: {{ empresasProcessadas }} de {{ totalEmpresas }} processadas
+            ({{ percentualFinalizado }}%)
+            · Sucessos {{ totalSucessos }}
+            · Erros {{ totalErro }}
+            · Pendentes {{ filaRestante }}
+            · Em execução {{ totalEmExecucao }}
+          </span>
+          <span class="progress-tempo">Tempo: {{ kpiTempoTotalLote }}</span>
         </div>
         <div class="progress-bar">
           <div class="progress-fill" [style.width.%]="percentualFinalizado"></div>
+        </div>
+        <div class="progress-fiscal-hint">
+          Sucesso fiscal: {{ totalReconciliadas }} reconciliadas ·
+          {{ totalSemMovimento }} sem movimento ·
+          {{ totalErro }} com erro
         </div>
       </section>
     }
@@ -209,24 +226,28 @@
           <section class="kpi-section kpi-section-inline">
             <div class="kpi-grid kpi-grid-operacional">
               <div class="kpi-card">
-                <span class="kpi-label">Empresas concluídas</span>
-                <span class="kpi-value">{{ empresasFinalizadas }}</span>
+                <span class="kpi-label">Processadas</span>
+                <span class="kpi-value">{{ empresasProcessadas }}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">Notas encontradas</span>
-                <span class="kpi-value">{{ kpiNotasEncontradas }}</span>
+                <span class="kpi-label">Sucessos</span>
+                <span class="kpi-value">{{ totalSucessos }}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">XMLs recuperados</span>
-                <span class="kpi-value">{{ kpiXmlsRecuperados }}</span>
+                <span class="kpi-label">Erros</span>
+                <span class="kpi-value">{{ totalErro }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Notas vigentes</span>
+                <span class="kpi-value">{{ kpiNotasVigentes }}</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">XMLs confirmados</span>
+                <span class="kpi-value">{{ kpiXmlsConfirmados }}</span>
               </div>
               <div class="kpi-card">
                 <span class="kpi-label">XMLs nos downloads</span>
                 <span class="kpi-value">{{ kpiXmlsDownloads }}</span>
-              </div>
-              <div class="kpi-card">
-                <span class="kpi-label">Tempo total do lote</span>
-                <span class="kpi-value">{{ kpiTempoTotalLote }}</span>
               </div>
             </div>
           </section>
@@ -243,63 +264,51 @@
               <thead>
                 <tr>
                   <th>Empresa</th>
-                  <th>Motor</th>
-                  <th>Competência</th>
                   <th>Emitidas</th>
                   <th>Recebidas</th>
-                  <th>Total</th>
-                  <th title="XMLs confirmados/persistidos via SEFIN (≠ notas descobertas no Portal)">XMLs SEFIN</th>
-                  <th title="XMLs copiados para downloads nesta execução">Exportados</th>
+                  <th>Vigentes</th>
+                  <th>Canceladas</th>
+                  <th title="XMLs válidos confirmados no store fiscal">XMLs válidos</th>
+                  <th title="Disponíveis nos downloads (novos + já iguais)">Downloads</th>
+                  <th title="Cobertura vigentes vs XMLs confirmados">Conferência</th>
                   <th>Status</th>
                   <th>Duração</th>
                 </tr>
               </thead>
               <tbody>
                 @for (row of executionRowsExibidas; track row.empresa_id) {
-                  <ng-container *ngIf="row | fiscalView as v">
+                  <ng-container *ngIf="reconciliacaoDe(row) as rec">
                     <tr
                       class="execucao-linha"
                       [class.linha-erro]="row.status === 'ERRO'"
                       [class.linha-captcha]="row.status === 'AGUARDANDO_CAPTCHA'"
+                      [class.linha-pendencia]="rec.statusFiscal === 'concluida_com_pendencias'"
+                      [class.linha-expandivel]="linhaExpandivel(row)"
+                      (click)="linhaExpandivel(row) && toggleErroExpandido(row.empresa_id)"
                     >
                       <td class="td-empresa">
-                        <div class="empresa-razao" [title]="row.razao_social || ''">{{ row.razao_social || '—' }}</div>
+                        <div class="empresa-razao" [title]="row.razao_social || ''">
+                          @if (linhaExpandivel(row)) {
+                            <span class="expand-caret" [class.expand-open]="erroExpandido(row.empresa_id)">▸</span>
+                          }
+                          {{ row.razao_social || '—' }}
+                        </div>
                         <div class="empresa-cnpj td-mono">{{ formatarCNPJ(row.cnpj) }}</div>
-                      </td>
-                      <td class="td-motor">
-                        @if (v.motor.rotulo) {
-                          <span
-                            class="motor-badge"
-                            [class.badge-adn]="v.motor.motor === 'ADN'"
-                            [class.badge-playwright]="v.motor.motor === 'PLAYWRIGHT'"
-                            [class.badge-portal-sefin]="v.motor.motor === 'PORTAL_SEFIN'"
-                            [attr.title]="v.motor.motor === 'PORTAL_SEFIN'
-                              ? 'Portal + SEFIN — listagem por competência e XML via API (sem CAPTCHA no download)'
-                              : v.motor.motor === 'ADN'
-                                ? 'Motor ADN complementar — sem Chromium/hCaptcha'
-                                : 'Motor Playwright — navegador'"
-                          >
-                            {{ v.motor.rotulo }}
-                          </span>
-                        } @else {
-                          <span class="motor-badge badge-motor-pendente" title="Aguardando roteamento do Backend">—</span>
+                        @if (rec.temIndeterminadas || rec.statusFiscal === 'concluida_com_pendencias') {
+                          <div class="alerta-indeterminadas" title="Pendências fiscais: XML pode estar em Pendentes_Validacao_Fiscal">
+                            Pendências: {{ rec.indeterminadas }}
+                          </div>
                         }
                       </td>
-                      <td class="td-competencia">
-                        @if (v.competenciaFiscal.rotulo) {
-                          <span
-                            class="competencia-fiscal"
-                            title="Competência fiscal consultada (não é o mês da pasta de downloads)"
-                          >{{ v.competenciaFiscal.rotulo }}</span>
-                        } @else {
-                          <span class="competencia-fiscal competencia-pendente">—</span>
-                        }
+                      <td class="td-num" title="Emitidas descobertas">{{ rec.emitidas }}</td>
+                      <td class="td-num" title="Recebidas descobertas">{{ rec.recebidas }}</td>
+                      <td class="td-num" title="Vigentes (canceladas fora da meta)">{{ rec.vigentes }}</td>
+                      <td class="td-num" title="Canceladas (inventário; fora da meta de XMLs)">{{ rec.canceladas }}</td>
+                      <td class="td-num" title="XMLs válidos confirmados">{{ rec.xmlsValidos }}</td>
+                      <td class="td-num" title="XMLs disponíveis nos downloads">{{ rec.downloads }}</td>
+                      <td class="td-conferencia" [title]="'Faltantes: ' + rec.faltantes">
+                        {{ rec.cobertura }}
                       </td>
-                      <td class="td-num" title="Notas emitidas descobertas no Portal">{{ v.operacionais.emitidas }}</td>
-                      <td class="td-num" title="Notas recebidas descobertas no Portal">{{ v.operacionais.recebidas }}</td>
-                      <td class="td-num td-num-total" title="Total de notas descobertas no Portal">{{ v.operacionais.total }}</td>
-                      <td class="td-num" title="XMLs SEFIN persistidos (não confundir com notas descobertas)">{{ v.operacionais.xmlsSefin }}</td>
-                      <td class="td-num" title="XMLs exportados para downloads">{{ v.operacionais.exportados }}</td>
                       <td class="td-status-msg">
                         @if (row.status === 'EM_EXECUCAO') {
                           <span class="status-badge status-executando">
@@ -311,19 +320,78 @@
                             <span class="spinner-sm"></span>
                             Aguardando captcha
                           </span>
+                        } @else if (row.status === 'AGUARDANDO_RETRY') {
+                          <span class="status-badge status-fila" [title]="row.motivo_ultima_falha || row.mensagem">
+                            <span class="spinner-sm"></span>
+                            Retry {{ row.tentativa_atual || '?' }}/{{ row.max_tentativas || '?' }}
+                          </span>
                         } @else if (row.status === 'FILA') {
                           <span class="status-badge status-fila">Fila</span>
-                        } @else if (row.status === 'OK') {
-                          <span class="status-badge status-ok">OK</span>
-                        } @else if (row.status === 'ERRO') {
-                          <span class="status-badge status-erro">ERRO</span>
-                        }
-                        @if (v.status.mensagem) {
-                          <div class="td-mensagem" [title]="v.status.mensagem">{{ v.status.mensagem }}</div>
+                        } @else {
+                          <span
+                            class="status-badge"
+                            [class.status-ok]="rec.statusFiscal === 'reconciliada' || rec.statusFiscal === 'sem_movimento'"
+                            [class.status-erro]="rec.statusFiscal === 'erro'"
+                            [class.status-parcial]="rec.statusFiscal === 'parcial' || rec.statusFiscal === 'indeterminada' || rec.statusFiscal === 'concluida_com_pendencias'"
+                            [class.status-fila]="rec.statusFiscal === 'indisponivel'"
+                          >
+                            {{ rec.rotuloStatusFiscal }}
+                          </span>
                         }
                       </td>
-                      <td class="td-num td-duracao">{{ v.operacionais.duracao }}</td>
+                      <td class="td-num td-duracao">{{ duracaoLinha(row) }}</td>
                     </tr>
+                    @if (linhaExpandivel(row) && erroExpandido(row.empresa_id)) {
+                      <tr class="execucao-linha-detalhe" (click)="$event.stopPropagation()">
+                        <td colspan="10">
+                          <div class="erro-detalhe">
+                            @if (row.status === 'ERRO') {
+                              <div><strong>Motivo:</strong> {{ rec.motivoErro || row.mensagem || '—' }}</div>
+                              <div><strong>Etapa da falha:</strong> {{ rec.etapaFalha || row.ultimo_stage || '—' }}</div>
+                              <div><strong>Chaves vigentes faltantes:</strong> {{ rec.faltantes }}</div>
+                              @if (rec.chavesVigentesFaltantesLista.length > 0) {
+                                <div class="chaves-faltantes-lista">
+                                  @for (ch of rec.chavesVigentesFaltantesLista; track ch) {
+                                    <div class="td-mono">{{ ch }}</div>
+                                  }
+                                </div>
+                              }
+                              <div><strong>Retomada:</strong> {{ rec.retomavelHint || '—' }}</div>
+                            }
+                            @if (rec.temIndeterminadas || rec.temPendenciasFiscais) {
+                              <div><strong>Indeterminadas:</strong> {{ rec.indeterminadas }}</div>
+                              <div><strong>XMLs com atenção fiscal:</strong> {{ rec.xmlsAtencaoFiscal }}</div>
+                            }
+                            @if (rec.pendenciasFiscais.length > 0) {
+                              <div class="pendencias-fiscais-lista">
+                                <strong>Pendências fiscais</strong>
+                                @for (p of rec.pendenciasFiscais; track p.chaveAcesso) {
+                                  <div class="pendencia-fiscal-item">
+                                    <span class="pendencia-codigo">{{ p.rotuloCodigo }}</span>
+                                    <span class="td-mono pendencia-chave">{{ p.chaveAcesso }}</span>
+                                    <span>XML: {{ p.xmlRecuperado ? 'recuperado' : 'não recuperado' }}</span>
+                                    <span>Exportado: {{ p.documentoExportado ? 'sim' : 'não' }}</span>
+                                    <span class="pendencia-motivo">{{ p.motivo }}</span>
+                                  </div>
+                                }
+                              </div>
+                            }
+                            @if (row.status === 'ERRO') {
+                              <div class="erro-detalhe-acoes">
+                                <button
+                                  type="button"
+                                  class="btn-retry-manual"
+                                  [disabled]="retryManualEmAndamento(row.empresa_id)"
+                                  (click)="tentarNovamenteEmpresa(row, $event)"
+                                >
+                                  {{ retryManualEmAndamento(row.empresa_id) ? 'Enfileirando…' : 'Tentar novamente' }}
+                                </button>
+                              </div>
+                            }
+                          </div>
+                        </td>
+                      </tr>
+                    }
                   </ng-container>
                 }
               </tbody>
@@ -405,6 +473,39 @@
             </div>
           } @else {
             <div class="modal-body">
+              <div class="modal-filtro-auth" role="group" aria-label="Filtro de autenticação">
+                <span class="modal-filtro-label">Autenticação:</span>
+                <label class="radio-wrap">
+                  <input
+                    type="radio"
+                    name="filtroAuth"
+                    value="todas"
+                    [(ngModel)]="filtroAutenticacao"
+                    (ngModelChange)="onFiltroAutenticacaoChange()"
+                  />
+                  <span>Todas</span>
+                </label>
+                <label class="radio-wrap">
+                  <input
+                    type="radio"
+                    name="filtroAuth"
+                    value="certificado"
+                    [(ngModel)]="filtroAutenticacao"
+                    (ngModelChange)="onFiltroAutenticacaoChange()"
+                  />
+                  <span>Certificado digital A1</span>
+                </label>
+                <label class="radio-wrap">
+                  <input
+                    type="radio"
+                    name="filtroAuth"
+                    value="credenciais"
+                    [(ngModel)]="filtroAutenticacao"
+                    (ngModelChange)="onFiltroAutenticacaoChange()"
+                  />
+                  <span>Usuário e senha</span>
+                </label>
+              </div>
               <div class="modal-search">
                 <input
                   type="text"
@@ -415,9 +516,10 @@
                   class="input-text"
                 />
               </div>
-              @if (buscaEmpresa && buscaEmpresa.trim() !== '' && empresasUnificadasFiltradas.length !== empresasUnificadas.length) {
-                <p class="modal-hint">Mostrando {{ empresasUnificadasFiltradas.length }} de {{ empresasUnificadas.length }} empresas</p>
-              }
+              <p class="modal-hint">
+                {{ empresasUnificadasFiltradas.length }} exibida(s)
+                · {{ empresasSelecionadas.size }} selecionada(s)
+              </p>
               <div class="modal-select-all">
                 <label class="checkbox-wrap">
                   <input

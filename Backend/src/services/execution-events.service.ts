@@ -11,6 +11,7 @@ export type ExecutionEventType =
   | 'execution:stage'
   | 'execution:counts'
   | 'execution:finished'
+  | 'execution:retry'
   | 'execution:fiscal';
 
 export interface ExecutionEventStarted {
@@ -53,6 +54,20 @@ export interface ExecutionEventFinished {
   competencia_fiscal?: string;
 }
 
+/** API-03G — retry transitório agendado (empresa ainda não finalizada). */
+export interface ExecutionEventRetry {
+  type: 'execution:retry';
+  empresa_id: string;
+  tentativa_atual: number;
+  max_tentativas: number;
+  proxima_tentativa: number;
+  delay_ms: number;
+  proxima_tentativa_em: string;
+  motivo: string;
+  codigo: string;
+  message: string;
+}
+
 export interface ExecutionEventLoginReady {
   type: 'execution:login_ready';
   empresa_id: string;
@@ -74,6 +89,7 @@ export type ExecutionEvent =
   | ExecutionEventStage
   | ExecutionEventCounts
   | ExecutionEventFinished
+  | ExecutionEventRetry
   | ExecutionEventLoginReady
   | ExecutionEventFiscal;
 

@@ -92,6 +92,11 @@ export interface DocumentoExportavelNfse {
   caminhoRelativo: string;
   hashSha256: string;
   tamanhoBytes: number;
+  /**
+   * API-03O — papel fiscal confirmado no XML.
+   * INTERMEDIARIO exporta para pasta Intermediadas (não mistura com Recebidas/Emitidas).
+   */
+  papelFiscal?: 'PRESTADOR' | 'TOMADOR' | 'INTERMEDIARIO' | null;
 }
 
 /**
@@ -105,7 +110,10 @@ export interface AvaliacaoLoteExportacaoNfse {
 }
 
 export interface ResultadoListagemExportacaoNfse {
+  /** Vigentes documentamente válidos → Emitidas/Recebidas. */
   aptos: DocumentoExportavelNfse[];
+  /** API-03M — indeterminadas com XML válido → Pendentes_Validacao_Fiscal. */
+  aptosPendentesFiscais: DocumentoExportavelNfse[];
   lote: AvaliacaoLoteExportacaoNfse;
 }
 

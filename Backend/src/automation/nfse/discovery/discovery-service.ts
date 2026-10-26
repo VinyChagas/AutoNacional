@@ -48,13 +48,28 @@ export async function discoverNfse(input: DiscoverNfseInput): Promise<ResultadoD
     // Mensagem truncada — sem credenciais/tokens
     motivo: String(d.mensagem ?? '').slice(0, 180),
   }));
+  const indeterminadas = resultado.inventario.totais.indeterminadas;
+  const indeterminadasDiag = resultado.diagnosticos
+    .filter((d) => d.codigo === 'SITUACAO_INDETERMINADA')
+    .slice(0, 5)
+    .map((d) => ({
+      chaveNacional: d.chaveNacional,
+      direcao: d.direcao,
+      pagina: d.pagina,
+      linha: d.linha,
+      motivo: String(d.mensagem ?? '').slice(0, 180),
+    }));
   logger.info(
     {
       status: resultado.status,
       descobertos: resultado.inventario.totais.descobertos,
+      vigentes: resultado.inventario.totais.vigentes,
+      canceladas: resultado.inventario.totais.canceladas,
+      indeterminadas,
       paginas: resultado.paginasPercorridas,
       diagnosticos: resultado.diagnosticos.length,
       ...(diagnosticosResumo.length > 0 ? { diagnosticosResumo } : {}),
+      ...(indeterminadasDiag.length > 0 ? { indeterminadasDiag } : {}),
     },
     'Descoberta de NFS-e encerrada'
   );

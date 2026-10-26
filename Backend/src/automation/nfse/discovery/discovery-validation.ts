@@ -3,6 +3,12 @@
  * Documento sem chave válida não entra no inventário fiscal.
  */
 import {
+  CODIGO_DIAGNOSTICO_INDETERMINADA,
+  inferirNumeroNotaDosTextos,
+  montarDiagnosticoNotaIndeterminada,
+  resumoDiagnosticoIndeterminadaParaLog,
+} from '../classification/diagnostico-indeterminada';
+import {
   CODIGO_SITUACAO_DESCONHECIDO,
   CONFLITO_SITUACAO,
   classificarSituacao,
@@ -11,6 +17,7 @@ import {
 import { criarDocumentoFiscal, type DirecaoDocumentoFiscal } from '../contracts/documento-fiscal';
 import { montarInventario, type EstadoCompletudeInventario } from '../contracts/inventario';
 import { criarPeriodoConsultaPortal, type PeriodoConsultaPortal } from '../contracts/periodo';
+import { getLogger } from '../../../infrastructure/logger';
 import type {
   DiagnosticoDescoberta,
   LeituraFiltroPortal,
@@ -19,6 +26,8 @@ import type {
   StatusDescobertaNfse,
   TipoConsultaDescoberta,
 } from './types';
+
+const loggerIndeterminada = getLogger('nfse-situacao-indeterminada');
 
 const CAMINHO_LISTAGEM: Record<DirecaoDocumentoFiscal, string> = {
   EMITIDA: '/Notas/Emitidas',
@@ -248,6 +257,32 @@ export function fecharDescoberta(input: {
         linha: registro.linha,
         chaveNacional: registro.chaveNacional,
       });
+    }
+    // API-03L — toda INDETERMINADA gera diagnóstico estruturado (mesmo sem código desconhecido).
+    if (classificacao.situacao === 'INDETERMINADA') {
+      const diag = montarDiagnosticoNotaIndeterminada({
+        cnpj: input.cnpj,
+        periodoConsulta: input.periodoConsulta,
+        chaveNacional: registro.chaveNacional,
+        numeroNota: inferirNumeroNotaDosTextos(registro.textosCelulas ?? null),
+        direcao: registro.direcao,
+        pagina: registro.pagina,
+        linha: registro.linha,
+        evidencia: registro.evidenciaSituacao,
+        classificacao,
+      });
+      diagnosticos.push({
+        codigo: CODIGO_DIAGNOSTICO_INDETERMINADA,
+        mensagem: `${diag.motivoBloqueio} chave=${diag.chaveNacional} regra=${diag.regraAplicada}`,
+        direcao: registro.direcao,
+        pagina: registro.pagina,
+        linha: registro.linha,
+        chaveNacional: registro.chaveNacional,
+      });
+      loggerIndeterminada.warn(
+        resumoDiagnosticoIndeterminadaParaLog(diag),
+        'NFS-e indeterminada — bloqueio fiscal estruturado'
+      );
     }
     documentos.push(
       criarDocumentoFiscal({

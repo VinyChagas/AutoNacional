@@ -154,17 +154,31 @@ export function documentoPermaneceNoInventario(
   return periodosConsultaIguais(documento.periodoConsulta, periodo);
 }
 
-/** Cancelada e indeterminada ficam de fora da recuperação SEFIN. */
+/**
+ * API-03M — elegíveis à consulta SEFIN: vigentes e indeterminadas.
+ * Canceladas / substituídas (fora da meta) não entram.
+ */
 export function entraNaRecuperacaoSefin(documento: DocumentoFiscalNfse): boolean {
-  return documento.situacao === 'VIGENTE';
+  return documento.situacao === 'VIGENTE' || documento.situacao === 'INDETERMINADA';
 }
 
-/** Só o XML vigente entra na exportação contábil. */
+/** Só o XML vigente entra na exportação contábil (Emitidas/Recebidas). */
 export function entraNaExportacaoXmlVigentes(documento: DocumentoFiscalNfse): boolean {
   return documento.situacao === 'VIGENTE';
 }
 
-/** Indeterminada permanece no inventário e trava o processamento automático. */
-export function bloqueiaProcessamentoAutomatico(documento: DocumentoFiscalNfse): boolean {
+/**
+ * API-03M — indeterminada com XML documentalmente válido vai para
+ * Pendentes_Validacao_Fiscal (não conta como vigente confirmado).
+ */
+export function entraNaExportacaoXmlPendentesFiscais(documento: DocumentoFiscalNfse): boolean {
   return documento.situacao === 'INDETERMINADA';
+}
+
+/**
+ * API-03M — indeterminada não interrompe mais a empresa.
+ * Pendência fiscal vira indicador (CONCLUIDA_COM_PENDENCIAS), não hard-stop.
+ */
+export function bloqueiaProcessamentoAutomatico(_documento: DocumentoFiscalNfse): boolean {
+  return false;
 }

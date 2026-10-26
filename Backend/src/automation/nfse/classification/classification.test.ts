@@ -88,6 +88,18 @@ describe('classificação da coluna Situação', () => {
     expect(resultado.codigoSituacaoDesconhecido).toBe('P999_NAO_OBSERVADO');
   });
 
+  it('API-03D — P101* (Substituição Gerada / TStat 101) é vigente', () => {
+    const resultado = classificar({ dataSituacao: 'P101_SUBSTITUICAO_GERADA' });
+    expect(resultado.situacao).toBe('VIGENTE');
+    expect(resultado.codigoSituacaoDesconhecido).toBeNull();
+  });
+
+  it('API-03D — P105_NFSE_SUBSTITUIDA (Portal AMIL) é cancelada', () => {
+    const resultado = classificar({ dataSituacao: 'P105_NFSE_SUBSTITUIDA' });
+    expect(resultado.situacao).toBe('CANCELADA');
+    expect(resultado.codigoSituacaoDesconhecido).toBeNull();
+  });
+
   it('classifica o ícone tb-cancelada.svg como cancelada', () => {
     const resultado = classificar({
       icones: [icone({ src: '/EmissorNacional/img/tb-cancelada.svg' })],
@@ -235,7 +247,7 @@ describe('classificação da coluna Situação', () => {
       });
       expect(documento.situacao).toBe('INDETERMINADA');
       expect(documento.direcao).toBe(direcao);
-      expect(bloqueiaProcessamentoAutomatico(documento)).toBe(true);
+      expect(bloqueiaProcessamentoAutomatico(documento)).toBe(false);
     }
   });
 
@@ -256,7 +268,7 @@ describe('classificação da coluna Situação', () => {
     expect(entraNaRecuperacaoSefin(documento)).toBe(true);
   });
 
-  it('bloqueia a recuperação da indeterminada e deixa a cancelada fora da fila', () => {
+  it('inclui indeterminada na SEFIN e deixa a cancelada fora da fila (API-03M)', () => {
     const inventario = montarInventario({
       id: 'plano-classificacao',
       cnpj: CNPJ,
@@ -288,7 +300,8 @@ describe('classificação da coluna Situação', () => {
     });
     const plano = montarPlanoRecuperacao(inventario);
     expect(plano.map((item) => item.chaveNacional)).toEqual([chave(27), chave(29)]);
-    expect(plano.find((item) => item.chaveNacional === chave(27))?.resultado).toBe('BLOQUEADO');
+    // API-03M — indeterminada entra na SEFIN como PENDENTE (não BLOQUEADO).
+    expect(plano.find((item) => item.chaveNacional === chave(27))?.resultado).toBe('PENDENTE');
     expect(plano.find((item) => item.chaveNacional === chave(28))).toBeUndefined();
     expect(plano.find((item) => item.chaveNacional === chave(29))?.resultado).toBe('PENDENTE');
     expect(inventario.totais).toMatchObject({
@@ -442,7 +455,7 @@ describe('descoberta classificada', () => {
     expect(resultado.status).toBe('DISCOVERY_COMPLETE');
     const indeterminada = resultado.inventario.documentos.find((item) => item.situacao === 'INDETERMINADA');
     expect(indeterminada?.chaveNacional).toBe(chave(10));
-    expect(bloqueiaProcessamentoAutomatico(indeterminada!)).toBe(true);
+    expect(bloqueiaProcessamentoAutomatico(indeterminada!)).toBe(false);
   });
 
   it('não classifica o botão Cancelar da página como nota cancelada', async () => {

@@ -278,11 +278,12 @@ function derivarEstado(
   inventario: InventarioNfse,
   reconciliacao: RelatorioReconciliacaoNfse
 ): EstadoAuditoriaFiscal {
-  if (inventario.documentos.some((documento) => documento.situacao === 'INDETERMINADA')) {
-    return 'BLOQUEADA';
-  }
+  // API-03M — indeterminada vira PARCIAL (pendência), não BLOQUEADA da empresa.
   if (reconciliacao.conclusao === 'RECONCILIADA') {
     return 'RECONCILIADA';
+  }
+  if (inventario.documentos.some((documento) => documento.situacao === 'INDETERMINADA')) {
+    return 'PARCIAL';
   }
   return 'PARCIAL';
 }

@@ -107,11 +107,14 @@ export async function aguardarListagemEstavel(
     timeoutMs?: number;
     intervaloMs?: number;
     repeticoesEstaveis?: number;
+    /** Se informado, só estabiliza quando a contagem atingir ao menos este valor. */
+    minimoLinhas?: number;
   } = {}
 ): Promise<ResultadoListagemEstavel> {
   const timeoutMs = opcoes.timeoutMs ?? 15000;
   const intervaloMs = opcoes.intervaloMs ?? 250;
   const repeticoesEstaveis = opcoes.repeticoesEstaveis ?? 3;
+  const minimoLinhas = opcoes.minimoLinhas;
   const linhas = page.locator(SELETOR_LINHAS_LISTAGEM_PORTAL);
   const inicio = agoraMonotonicoMs();
 
@@ -125,7 +128,8 @@ export async function aguardarListagemEstavel(
         return { estavel: true, linhas: 0, vazio: true, ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()) };
       }
     }
-    if (n > 0 && n === anterior) {
+    const atingeMinimo = minimoLinhas == null || n >= minimoLinhas;
+    if (n > 0 && n === anterior && atingeMinimo) {
       repeticoes += 1;
       if (repeticoes >= repeticoesEstaveis) {
         return { estavel: true, linhas: n, vazio: false, ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()) };
@@ -136,6 +140,69 @@ export async function aguardarListagemEstavel(
     }
     if (deltaMonotonicoMs(inicio, agoraMonotonicoMs()) >= timeoutMs) {
       return { estavel: false, linhas: n, vazio: n === 0, ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()) };
+    }
+    await page.waitForTimeout(intervaloMs);
+  }
+}
+
+export interface ResultadoIdentificadoresLinhas {
+  total: number;
+  comIdentificador: number;
+  prontas: boolean;
+  ms: number;
+}
+
+/**
+ * API-03H — aguarda href de download, data-chave com 50 dígitos ou texto com chave
+ * em cada linha visível. Não inventa chave; só espera renderização.
+ */
+export async function aguardarIdentificadoresNasLinhas(
+  page: Page,
+  opcoes: { timeoutMs?: number; intervaloMs?: number } = {}
+): Promise<ResultadoIdentificadoresLinhas> {
+  const timeoutMs = opcoes.timeoutMs ?? 8000;
+  const intervaloMs = opcoes.intervaloMs ?? 250;
+  const inicio = agoraMonotonicoMs();
+
+  for (;;) {
+    // Callback roda no browser; tipagem Node sem DOM — usa shape mínima (padrão page-capture).
+    const amostra = await page
+      .evaluate((seletor: string) => {
+        type NoDom = {
+          querySelectorAll: (s: string) => ArrayLike<NoDom>;
+          querySelector: (s: string) => NoDom | null;
+          getAttribute: (n: string) => string | null;
+          textContent: string | null;
+        };
+        const doc = (globalThis as unknown as { document: NoDom }).document;
+        const rows = Array.from(doc.querySelectorAll(seletor));
+        let comIdentificador = 0;
+        for (const el of rows) {
+          const href = el.querySelector('a[href*="/Notas/Download/NFSe/"]');
+          const dataChave = el.getAttribute('data-chave') ?? '';
+          const texto = el.textContent ?? '';
+          if (href || /\d{50}/.test(dataChave) || /\d{50}/.test(texto)) {
+            comIdentificador += 1;
+          }
+        }
+        return { total: rows.length, comIdentificador };
+      }, SELETOR_LINHAS_LISTAGEM_PORTAL)
+      .catch(() => ({ total: 0, comIdentificador: 0 }));
+
+    const prontas = amostra.total > 0 && amostra.comIdentificador === amostra.total;
+    if (prontas || amostra.total === 0) {
+      return {
+        ...amostra,
+        prontas,
+        ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()),
+      };
+    }
+    if (deltaMonotonicoMs(inicio, agoraMonotonicoMs()) >= timeoutMs) {
+      return {
+        ...amostra,
+        prontas: false,
+        ms: deltaMonotonicoMs(inicio, agoraMonotonicoMs()),
+      };
     }
     await page.waitForTimeout(intervaloMs);
   }

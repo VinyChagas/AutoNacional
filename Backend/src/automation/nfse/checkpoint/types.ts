@@ -25,11 +25,14 @@ export type ConclusaoReconciliacaoNfse = 'RECONCILIADA' | 'NAO_RECONCILIADA';
 
 export class CheckpointNfseError extends Error {
   readonly codigo: string;
+  /** Detalhes estruturados (ex.: chaves ausentes na evolução). */
+  readonly detalhes?: Readonly<Record<string, unknown>>;
 
-  constructor(codigo: string, mensagem: string) {
+  constructor(codigo: string, mensagem: string, detalhes?: Readonly<Record<string, unknown>>) {
     super(mensagem);
     this.name = 'CheckpointNfseError';
     this.codigo = codigo;
+    if (detalhes) this.detalhes = detalhes;
   }
 }
 
@@ -70,7 +73,16 @@ export interface RelatorioReconciliacaoNfse {
   vigentes: number;
   canceladas: number;
   indeterminadas: number;
+  /** Somente vigentes com XML íntegro (não inclui indeterminadas). */
   persistidosIntegros: number;
+  /** API-03M — indeterminadas PERSISTIDAS com atenção fiscal (não são vigentes). */
+  xmlsComAtencaoFiscal?: number;
+  /**
+   * API-03N — chaves VIGENTES sem XML íntegro confirmado
+   * (pendente, falha, hash divergente ou arquivo ausente).
+   * Não inclui indeterminadas.
+   */
+  chavesVigentesSemXml?: string[];
   pendentes: number;
   falhaTransitoria: number;
   falhaPermanente: number;
@@ -78,7 +90,7 @@ export interface RelatorioReconciliacaoNfse {
   /**
    * Persistidos íntegros divididos pelos vigentes.
    * Com zero vigentes e nenhuma inconsistência bloqueante, o valor é 1.
-   * Indeterminada não zera esta fração; ela impede a conclusão à parte.
+   * Indeterminada não entra no denominador; impede só a conclusão RECONCILIADA.
    */
   cobertura: number;
   chavesFaltantes: string[];

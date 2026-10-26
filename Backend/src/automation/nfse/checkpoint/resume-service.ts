@@ -6,6 +6,10 @@
  * EM_PROCESSAMENTO volta a PENDENTE e, se houver XML no caminho da chave,
  * segue a mesma regra do pendente.
  *
+ * API-03H — FALHA_PERMANENTE com VALIDACAO_INSUFICIENTE em VIGENTE sem XML
+ * reabre PENDENTE (recuperação controlada só dessa chave). Outros códigos
+ * permanentes (ex.: HTTP_404) permanecem bloqueados.
+ *
  * XML órfão (arquivo presente, metadado sem hash): só promove a PERSISTIDO
  * depois da validação fiscal em memória do Commit 04, com chave, CNPJ do
  * papel, direção, situação VIGENTE e identidade já conferida. Não grava o
@@ -51,14 +55,7 @@ export async function retomarExecucaoNfse(entrada: {
     }
     conferirIdentidadeCheckpoint(checkpoint, inventario);
 
-    if (inventario.documentos.some((documento) => documento.situacao === 'INDETERMINADA')) {
-      return {
-        checkpoint,
-        podeRetomarAutomaticamente: false,
-        codigoBloqueio: 'SITUACAO_INDETERMINADA',
-        alteracoes: [],
-      };
-    }
+    // API-03M — indeterminada não impede retomada automática (entra na meta SEFIN).
 
     const alteracoes: AlteracaoRetomadaNfse[] = [];
     const documentos: DocumentoCheckpointNfse[] = [];
@@ -86,14 +83,17 @@ export async function retomarExecucaoNfse(entrada: {
   return entrada.checkpointStore.comTrava(inventario.cnpj, inventario.periodoConsulta, corpo);
 }
 
+/** Códigos em que a falha permanente pode ser reaberta se o XML vigente ainda falta. */
+const CODIGOS_REABERTURA_VALIDACAO = new Set(['VALIDACAO_INSUFICIENTE']);
+
 async function revisarDocumento(
   documento: DocumentoCheckpointNfse,
   checkpoint: CheckpointNfse,
   xmlStore: XmlStore,
   instante: string
 ): Promise<{ documento: DocumentoCheckpointNfse; alteracao: AlteracaoRetomadaNfse | null }> {
-  if (documento.estado === 'FALHA_PERMANENTE' || documento.estado === 'FALHA_TRANSITORIA') {
-    return { documento, alteracao: null };
+  if (documento.estado === 'FALHA_TRANSITORIA' || documento.estado === 'FALHA_PERMANENTE') {
+    return reabrirFalhaValidacaoSeXmlAusente(documento, checkpoint, xmlStore, instante);
   }
   if (documento.estado === 'EXCLUIDA_DA_RECUPERACAO' || documento.estado === 'BLOQUEADO') {
     return { documento, alteracao: null };
@@ -118,6 +118,57 @@ async function revisarDocumento(
       de: documento.estado,
       para: comArquivo.estado,
       motivo: comArquivo.diagnostico ?? 'Estado revisto na retomada.',
+    },
+  };
+}
+
+/**
+ * API-03H/03I — FALHA_PERMANENTE ou FALHA_TRANSITORIA por VALIDACAO_INSUFICIENTE
+ * em VIGENTE sem XML: reabre PENDENTE para recuperação controlada só dessa chave.
+ * Não toca PERSISTIDO íntegro nem falhas de outro código (ex.: HTTP_404, TIMEOUT genérico).
+ */
+async function reabrirFalhaValidacaoSeXmlAusente(
+  documento: DocumentoCheckpointNfse,
+  checkpoint: CheckpointNfse,
+  xmlStore: XmlStore,
+  instante: string
+): Promise<{ documento: DocumentoCheckpointNfse; alteracao: AlteracaoRetomadaNfse | null }> {
+  if (documento.situacao !== 'VIGENTE') {
+    return { documento, alteracao: null };
+  }
+  if (!documento.codigo || !CODIGOS_REABERTURA_VALIDACAO.has(documento.codigo)) {
+    return { documento, alteracao: null };
+  }
+
+  const arquivo = await xmlStore.verificar(
+    checkpoint.cnpj,
+    checkpoint.periodoConsulta,
+    documento.chaveNacional
+  );
+  if (arquivo.existe && arquivo.tamanhoBytes > 0) {
+    // Arquivo presente: não reabre — evita sobrescrever; deixa inconsistência para conferência.
+    return { documento, alteracao: null };
+  }
+
+  const de = documento.estado;
+  const revisto: DocumentoCheckpointNfse = {
+    ...documento,
+    estado: 'PENDENTE',
+    hashSha256: null,
+    caminhoRelativo: null,
+    tamanhoBytes: null,
+    diagnostico:
+      'Reabertura controlada: XML vigente ausente após VALIDACAO_INSUFICIENTE. Nova tentativa SEFIN só desta chave.',
+    codigo: 'REABERTURA_VALIDACAO',
+    updatedAt: instante,
+  };
+  return {
+    documento: revisto,
+    alteracao: {
+      chaveNacional: documento.chaveNacional,
+      de,
+      para: 'PENDENTE',
+      motivo: revisto.diagnostico ?? '',
     },
   };
 }

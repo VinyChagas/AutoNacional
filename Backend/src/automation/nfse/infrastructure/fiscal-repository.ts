@@ -113,10 +113,9 @@ export class RepositorioFiscalNfse {
   }
 
   /**
-   * Listagem técnica de documentos individualmente aptos + avaliação do lote.
-   * Aptos: VIGENTE, PERSISTIDO, arquivo íntegro e validação fiscal CONFIRMADA.
-   * Lote liberado: inventário completo, sem indeterminada, reconciliação RECONCILIADA
-   * e todos os vigentes na lista de aptos. Não gera ZIP.
+   * API-03M — aptos (vigentes) + aptosPendentesFiscais (indeterminadas com XML).
+   * Exportação individual NÃO depende de reconciliação 100% / lote.liberado.
+   * lote.liberado = lote contábil limpo (sem indeterminadas + RECONCILIADA).
    */
   async listarDocumentosExportaveis(inventario: InventarioNfse): Promise<ResultadoListagemExportacaoNfse> {
     const bloqueadoPorIndeterminada = inventario.documentos.some(
@@ -126,6 +125,7 @@ export class RepositorioFiscalNfse {
     if (!checkpoint) {
       return {
         aptos: [],
+        aptosPendentesFiscais: [],
         lote: {
           liberado: false,
           bloqueadoPorIndeterminada,
@@ -135,17 +135,19 @@ export class RepositorioFiscalNfse {
     }
 
     const aptos: DocumentoExportavelNfse[] = [];
+    const aptosPendentesFiscais: DocumentoExportavelNfse[] = [];
     for (const documento of checkpoint.documentos) {
-      if (documento.situacao === 'CANCELADA' || documento.situacao === 'INDETERMINADA') continue;
-      if (documento.situacao !== 'VIGENTE' || documento.estado !== 'PERSISTIDO') continue;
+      if (documento.situacao === 'CANCELADA') continue;
+      if (documento.estado !== 'PERSISTIDO') continue;
       if (!documento.hashSha256 || !documento.caminhoRelativo || !documento.tamanhoBytes) continue;
+      if (documento.situacao !== 'VIGENTE' && documento.situacao !== 'INDETERMINADA') continue;
 
       const noInventario = inventario.documentos.find(
         (item) => item.chaveNacional === documento.chaveNacional
       );
       if (!noInventario || noInventario.cnpj !== inventario.cnpj) continue;
       if (noInventario.direcao !== documento.direcao) continue;
-      if (noInventario.situacao !== 'VIGENTE') continue;
+      if (noInventario.situacao !== documento.situacao) continue;
 
       const leitura = await this.xmls.lerLimitado(
         inventario.cnpj,
@@ -177,19 +179,22 @@ export class RepositorioFiscalNfse {
         continue;
       }
 
-      aptos.push({
+      const exportavel: DocumentoExportavelNfse = {
         chaveNacional: documento.chaveNacional,
         direcao: documento.direcao,
         situacao: documento.situacao,
         caminhoRelativo: documento.caminhoRelativo,
         hashSha256: documento.hashSha256,
         tamanhoBytes: documento.tamanhoBytes,
-      });
+        papelFiscal: confirmado.papelConfirmado,
+      };
+      if (documento.situacao === 'VIGENTE') aptos.push(exportavel);
+      else aptosPendentesFiscais.push(exportavel);
     }
 
     const { relatorio } = await this.reconciliar(inventario, checkpoint);
     const lote = avaliarLoteExportacao(inventario, relatorio, aptos, bloqueadoPorIndeterminada);
-    return { aptos, lote };
+    return { aptos, aptosPendentesFiscais, lote };
   }
 
   caminhoXml(cnpj: string, periodo: PeriodoConsultaPortal, chaveNacional: string): string {
@@ -211,11 +216,12 @@ export function avaliarLoteExportacao(
   if (inventario.completude !== 'COMPLETO') {
     motivos.push('Inventário sem completude COMPLETO.');
   }
+  // API-03M — indeterminada impede só o lote contábil “limpo”, não a exportação dos vigentes.
   if (bloqueadoPorIndeterminada) {
-    motivos.push('Situação indeterminada bloqueia o lote contábil.');
+    motivos.push('Lote contábil completo pendente: há situações fiscais não confirmadas.');
   }
   if (reconciliacao.conclusao !== 'RECONCILIADA') {
-    motivos.push('Reconciliação não concluída.');
+    motivos.push('Reconciliação fiscal ainda não RECONCILIADA.');
   }
   if (reconciliacao.inconsistencias > 0 || reconciliacao.divergenciasHash.length > 0) {
     motivos.push('Há inconsistência bloqueante.');

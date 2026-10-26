@@ -3,11 +3,12 @@
  * Recebe Page já autenticada e dependências injetadas. Não cria navegador nem CAPTCHA.
  * A trava do Commit 05 cobre a sequência crítica (checkpoint até auditoria).
  */
+import { ajustarInventarioComXmlsSubstituicao } from '../classification/substituicao';
 import { normalizarCnpjEmpresa } from '../contracts/documento-fiscal';
 import { ContratoNfseError } from '../contracts/erros';
 import { montarInventario, type InventarioNfse } from '../contracts/inventario';
 import { criarPeriodoConsultaPortal, type PeriodoConsultaPortal } from '../contracts/periodo';
-import { CheckpointNfseError } from '../checkpoint';
+import { alinharInventarioAoCheckpoint, CheckpointNfseError } from '../checkpoint';
 import { planejarRecuperacaoSefin } from '../recovery/recovery-service';
 import {
   montarAuditoriaFiscal,
@@ -15,6 +16,7 @@ import {
   criarResolvedorRaizInjetada,
   raizFiscalDistintaDeDownloads,
 } from '../infrastructure';
+import { getLogger } from '../../../infrastructure/logger';
 import { mascararChaveNacional } from '../infrastructure/types';
 import { agoraMonotonicoMs, deltaMonotonicoMs } from './metricas-operacionais';
 import {
@@ -23,6 +25,9 @@ import {
   type EntradaFluxoFiscalNativo,
   type ResultadoFluxoFiscalNativo,
 } from './types';
+
+const loggerIndeterminada = getLogger('nfse-situacao-indeterminada');
+const loggerPreservacao = getLogger('nfse-preservacao-situacao');
 
 const JA_COM_TRAVA = { jaComTrava: true } as const;
 
@@ -89,10 +94,17 @@ export async function executarFluxoFiscalNativo(
         : ' Inventário incompleto bloqueia a recuperação nativa.';
     throw new OrquestracaoNfseError('DESCOBERTA_INCOMPLETA', detalhe.trim());
   }
+  // API-03M — indeterminadas NÃO interrompem a empresa; seguem para SEFIN com atenção fiscal.
   if (inventario.totais.indeterminadas > 0) {
-    throw new OrquestracaoNfseError(
-      'SITUACAO_INDETERMINADA',
-      'Nota indeterminada bloqueia a recuperação automática.'
+    const indeterminadas = inventario.documentos.filter((d) => d.situacao === 'INDETERMINADA');
+    loggerIndeterminada.warn(
+      {
+        cnpj,
+        competencia: `${periodo.inicio}-${periodo.fim}`,
+        quantidade: indeterminadas.length,
+        chaves: indeterminadas.map((d) => d.chaveNacional),
+      },
+      'NFS-e indeterminada — recuperação SEFIN continua (API-03M)'
     );
   }
 
@@ -184,7 +196,11 @@ function resultadoSemMovimento(
     estadoAuditoria: null,
     caminhoAuditoria: null,
     documentosAptos: [],
+    documentosPendentesFiscais: [],
     loteLiberado: true,
+    xmlsComAtencaoFiscal: 0,
+    chavesVigentesFaltantes: [],
+    pendenciasFiscais: [],
     compatibilidadePdf: 'NAO_APLICAVEL',
     diagnosticos: [
       {
@@ -201,11 +217,46 @@ async function executarSequenciaCritica(
   deps: DependenciasFluxoFiscalNativo,
   cnpj: string,
   periodo: PeriodoConsultaPortal,
-  inventario: InventarioNfse,
+  inventarioEntrada: InventarioNfse,
   credencial: Awaited<ReturnType<DependenciasFluxoFiscalNativo['provedorA1']['obter']>>
 ): Promise<ResultadoFluxoFiscalNativo> {
   const diagnosticos: ResultadoFluxoFiscalNativo['diagnosticos'] = [];
   const recuperacoes: ResultadoFluxoFiscalNativo['recuperacoes'] = [];
+  const xmlsRecuperados: string[] = [];
+  let inventario = inventarioEntrada;
+
+  // API-03P — evolui/preserva situações confirmadas antes do plano SEFIN.
+  const checkpointEvoluido = await deps.repositorio.criarCheckpoint(
+    inventario,
+    entrada.execucaoId,
+    JA_COM_TRAVA
+  );
+  const inventarioAlinhado = alinharInventarioAoCheckpoint(inventario, checkpointEvoluido);
+  if (inventarioAlinhado !== inventario) {
+    const porChaveAntes = new Map(inventario.documentos.map((d) => [d.chaveNacional, d]));
+    const chavesPreservadas = inventarioAlinhado.documentos
+      .filter((d) => {
+        const antes = porChaveAntes.get(d.chaveNacional);
+        return antes && antes.situacao !== d.situacao;
+      })
+      .map((d) => d.chaveNacional);
+    if (chavesPreservadas.length > 0) {
+      loggerPreservacao.warn(
+        {
+          cnpj,
+          competencia: `${periodo.inicio}-${periodo.fim}`,
+          quantidade: chavesPreservadas.length,
+          chaves: chavesPreservadas,
+        },
+        'Inventário alinhado ao checkpoint — situações confirmadas preservadas (API-03P)'
+      );
+      diagnosticos.push({
+        codigo: 'PRESERVACAO_SITUACAO',
+        mensagem: `Situações fiscais confirmadas preservadas diante de descoberta mais fraca: ${chavesPreservadas.length} chave(s).`,
+      });
+    }
+    inventario = inventarioAlinhado;
+  }
 
   const plano = planejarRecuperacaoSefin(inventario);
   if (!plano.podeIniciar) {
@@ -215,7 +266,6 @@ async function executarSequenciaCritica(
     );
   }
 
-  await deps.repositorio.criarCheckpoint(inventario, entrada.execucaoId, JA_COM_TRAVA);
   const retomada = await deps.repositorio.retomar(inventario, JA_COM_TRAVA);
   if (!retomada.podeRetomarAutomaticamente) {
     throw new OrquestracaoNfseError(
@@ -232,6 +282,8 @@ async function executarSequenciaCritica(
       (item) => item.chaveNacional === documento.chaveNacional
     );
     if (noCheckpoint?.estado === 'PERSISTIDO') continue;
+    // API-03P — cancelada preservada permanece fora da recuperação/exportação.
+    if (noCheckpoint?.estado === 'EXCLUIDA_DA_RECUPERACAO') continue;
     if (noCheckpoint?.estado === 'FALHA_PERMANENTE' || noCheckpoint?.estado === 'INCONSISTENTE') {
       recuperacoes.push({
         chaveMascarada: mascararChaveNacional(documento.chaveNacional),
@@ -264,6 +316,7 @@ async function executarSequenciaCritica(
       });
 
       if (resultado.resultado === 'RECUPERADO' && resultado.xml && resultado.validacaoXml === 'CONFIRMADA') {
+        xmlsRecuperados.push(resultado.xml);
         try {
           checkpointAtual = await deps.repositorio.persistirXml(
             inventario,
@@ -317,6 +370,13 @@ async function executarSequenciaCritica(
     }
   }
 
+  // API-03D — originais com chSubstda comprovado saem da meta de vigentes antes da reconciliação.
+  // API-03F — evolui o checkpoint para o inventário ajustado (transição VIGENTE→CANCELADA) antes de reconciliar.
+  if (xmlsRecuperados.length > 0) {
+    inventario = ajustarInventarioComXmlsSubstituicao(inventario, xmlsRecuperados);
+    checkpointAtual = await deps.repositorio.criarCheckpoint(inventario, entrada.execucaoId, JA_COM_TRAVA);
+  }
+
   const { checkpoint, relatorio } = await deps.repositorio.reconciliar(inventario, checkpointAtual);
   const auditoria = montarAuditoriaFiscal({
     inventario,
@@ -337,6 +397,11 @@ async function executarSequenciaCritica(
   }
 
   const exportacao = await deps.repositorio.listarDocumentosExportaveis(inventario);
+  const pendenciasFiscais = montarPendenciasFiscaisDoCheckpoint(
+    inventario,
+    checkpoint,
+    exportacao.aptosPendentesFiscais
+  );
 
   return {
     modo: 'NATIVO_CONTROLADO',
@@ -355,11 +420,65 @@ async function executarSequenciaCritica(
     estadoAuditoria: auditoria.estado,
     caminhoAuditoria,
     documentosAptos: exportacao.aptos,
+    documentosPendentesFiscais: exportacao.aptosPendentesFiscais,
     loteLiberado: exportacao.lote.liberado,
+    xmlsComAtencaoFiscal: relatorio.xmlsComAtencaoFiscal ?? 0,
+    chavesVigentesFaltantes: relatorio.chavesVigentesSemXml ?? [],
+    pendenciasFiscais,
     compatibilidadePdf: 'NAO_APLICAVEL',
     diagnosticos,
     recuperacoes,
   };
+}
+
+/** API-03M — distingue XML recuperado com atenção / não recuperado / falha documental. */
+function montarPendenciasFiscaisDoCheckpoint(
+  inventario: InventarioNfse,
+  checkpoint: { documentos: Array<{ chaveNacional: string; estado: string; diagnostico: string | null }> },
+  aptosPendentes: ReadonlyArray<{ chaveNacional: string }>
+): NonNullable<ResultadoFluxoFiscalNativo['pendenciasFiscais']> {
+  const exportaveis = new Set(aptosPendentes.map((d) => d.chaveNacional));
+  const porChave = new Map(checkpoint.documentos.map((d) => [d.chaveNacional, d]));
+  return inventario.documentos
+    .filter((d) => d.situacao === 'INDETERMINADA')
+    .map((d) => {
+      const ck = porChave.get(d.chaveNacional);
+      const xmlRecuperado = exportaveis.has(d.chaveNacional) || ck?.estado === 'PERSISTIDO';
+      if (xmlRecuperado) {
+        return {
+          chave_acesso: d.chaveNacional,
+          numero_nota: null,
+          codigo: 'ATENCAO_SITUACAO_NAO_CONFIRMADA',
+          motivo:
+            'XML documentalmente válido recuperado; situação fiscal do Portal ainda não confirmada.',
+          xml_recuperado: true,
+          documento_exportado: false,
+        };
+      }
+      if (
+        ck?.estado === 'FALHA_PERMANENTE' ||
+        ck?.estado === 'INCONSISTENTE' ||
+        (ck?.diagnostico ?? '').toLowerCase().includes('validacao') ||
+        (ck?.diagnostico ?? '').toLowerCase().includes('cnpj')
+      ) {
+        return {
+          chave_acesso: d.chaveNacional,
+          numero_nota: null,
+          codigo: 'BLOQUEIO_VALIDACAO_DOCUMENTAL',
+          motivo: ck?.diagnostico || 'Validação documental do XML falhou.',
+          xml_recuperado: false,
+          documento_exportado: false,
+        };
+      }
+      return {
+        chave_acesso: d.chaveNacional,
+        numero_nota: null,
+        codigo: 'XML_INDETERMINADA_NAO_RECUPERADO',
+        motivo: 'Situação indeterminada no Portal; XML ainda não recuperado na SEFIN.',
+        xml_recuperado: false,
+        documento_exportado: false,
+      };
+    });
 }
 
 async function descobrirInventario(

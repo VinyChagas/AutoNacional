@@ -83,8 +83,9 @@ export function prepararDiscoveryOnly(entrada: {
 }
 
 /**
- * Prepara modo SEFIN_RECOVERY: exige auth específica, inventário completo,
- * ausência de indeterminada e disponibilidade declarada de A1 (booleano injetado).
+ * Prepara modo SEFIN_RECOVERY: exige auth específica, inventário completo
+ * e disponibilidade declarada de A1 (booleano injetado).
+ * API-03M — indeterminadas são elegíveis (atenção fiscal); não bloqueiam o modo.
  * Não chama SEFIN nem carrega certificado.
  */
 export function prepararSefinRecovery(entrada: {
@@ -125,12 +126,7 @@ export function prepararSefinRecovery(entrada: {
   if (entrada.inventario.completude !== 'COMPLETO') {
     throw new HomologacaoNfseError('INVENTARIO_INCOMPLETO', 'Inventário incompleto bloqueia SEFIN_RECOVERY.');
   }
-  if (entrada.inventario.totais.indeterminadas > 0) {
-    throw new HomologacaoNfseError(
-      'SITUACAO_INDETERMINADA',
-      'Indeterminada bloqueia SEFIN_RECOVERY.'
-    );
-  }
+  // API-03M — indeterminada não bloqueia SEFIN_RECOVERY (entra na meta com atenção).
   if (entrada.inventario.cnpj !== auth.cnpj) {
     throw new HomologacaoNfseError('CNPJ_DIVERGENTE', 'Inventário de outro CNPJ.');
   }
@@ -141,7 +137,9 @@ export function prepararSefinRecovery(entrada: {
     );
   }
 
-  const elegiveis = entrada.inventario.documentos.filter((d) => d.situacao === 'VIGENTE').length;
+  const elegiveis = entrada.inventario.documentos.filter(
+    (d) => d.situacao === 'VIGENTE' || d.situacao === 'INDETERMINADA'
+  ).length;
   const canceladas = entrada.inventario.totais.canceladas;
   const limites = new ControladorLimitesHomologacao(auth.limites);
   limites.exigirDocumentos(entrada.inventario.totais.descobertos);

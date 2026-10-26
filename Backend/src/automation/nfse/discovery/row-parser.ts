@@ -35,12 +35,24 @@ export function iconesDoFragmento(fragmento: string): IconeSituacaoBruto[] {
     icones.push({
       src: atributos.src ?? null,
       title: atributos.title ?? null,
-      dataOriginalTitle: atributos['data-original-title'] ?? null,
+      dataOriginalTitle:
+        atributos['data-original-title'] ?? atributos['data-bs-original-title'] ?? null,
       alt: atributos.alt ?? null,
       ariaLabel: atributos['aria-label'] ?? null,
     });
   }
   return icones;
+}
+
+/** Ícone fiscal conhecido (bypass / gerada / cancelada / substituição) ou descrição de decisão. */
+export function iconeFiscalSituacao(icone: IconeSituacaoBruto): boolean {
+  const blob = [icone.src, icone.alt, icone.title, icone.dataOriginalTitle, icone.ariaLabel]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    /tb[-_]?(nota[-_]?bypass|gerada|cancelada|substitu)/i.test(blob) ||
+    /decis[aã]o\s*(administrativa|judicial)/i.test(blob)
+  );
 }
 
 function textoSemTags(html: string): string {
@@ -73,17 +85,57 @@ export function interpretarHtmlTabela(html: string, pagina = 1): LinhaListagem[]
       dataSituacao: abertura['data-situacao']?.trim() || null,
     };
 
+    let iconesSituacao: ReturnType<typeof iconesDoFragmento> = [];
     for (const td of corpo.matchAll(TD)) {
       const atributos = atributosDaTag(td[1]);
       const classe = atributos.class ?? '';
       textos.push(textoSemTags(td[2]));
+      // API-03L — data-situacao na TD (ou em descendente) quando ausente no TR.
+      if (!evidencia.dataSituacao) {
+        const noTd = atributos['data-situacao']?.trim();
+        if (noTd) {
+          evidencia = { ...evidencia, dataSituacao: noTd };
+        } else {
+          const nested = [...td[2].matchAll(/data-situacao\s*=\s*("([^"]*)"|'([^']*)')/gi)];
+          const valor = nested[0]?.[2] ?? nested[0]?.[3];
+          if (valor?.trim()) {
+            evidencia = { ...evidencia, dataSituacao: valor.trim() };
+          }
+        }
+      }
       if (!celulaDeSituacao(classe)) continue;
-      const icones = iconesDoFragmento(td[2]);
+      iconesSituacao = iconesDoFragmento(td[2]);
       evidencia = {
         dataSituacao: evidencia.dataSituacao,
         textoColuna: textoSemTags(td[2]) || null,
         classeColuna: classe || null,
-        icones,
+        icones: iconesSituacao,
+      };
+    }
+
+    // API-03K — mescla ícones fiscais da linha mesmo se a TD situacao já tiver outro <img>.
+    const iconesLinha = iconesDoFragmento(corpo).filter(iconeFiscalSituacao);
+    if (iconesLinha.length > 0) {
+      const mesclados = [...iconesSituacao];
+      for (const fiscal of iconesLinha) {
+        if (
+          !mesclados.some(
+            (item) =>
+              item.src === fiscal.src &&
+              item.alt === fiscal.alt &&
+              item.dataOriginalTitle === fiscal.dataOriginalTitle
+          )
+        ) {
+          mesclados.push(fiscal);
+        }
+      }
+      const textoBypass = mesclados
+        .map((i) => i.alt || i.dataOriginalTitle || i.title || '')
+        .find((t) => /decis[aã]o\s*(administrativa|judicial)/i.test(t));
+      evidencia = {
+        ...evidencia,
+        textoColuna: evidencia.textoColuna || textoBypass || null,
+        icones: mesclados,
       };
     }
 
@@ -125,7 +177,11 @@ export function registroDaLinha(
   linha: LinhaListagem,
   direcao: DirecaoDocumentoFiscal
 ): RegistroDescobertaNfse {
-  const chave = extrairChaveDaLinha({ hrefs: linha.hrefs, dataChave: linha.dataChave });
+  const chave = extrairChaveDaLinha({
+    hrefs: linha.hrefs,
+    dataChave: linha.dataChave,
+    textos: linha.textos,
+  });
   return {
     chaveNacional: chave.chave,
     direcao,
@@ -133,6 +189,7 @@ export function registroDaLinha(
     linha: linha.linha,
     fonteChave: chave.fonte,
     evidenciaSituacao: linha.evidenciaSituacao,
+    textosCelulas: [...linha.textos],
     problemas: [...new Set(chave.problemas)],
   };
 }

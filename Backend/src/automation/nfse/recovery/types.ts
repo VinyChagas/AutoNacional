@@ -77,6 +77,8 @@ export interface ResultadoRecuperacaoSefin {
   dCompet: string | null;
   hashSha256: string | null;
   xml: string | null;
+  /** API-03O — papel fiscal confirmado no XML (PRESTADOR|TOMADOR|INTERMEDIARIO). */
+  papelFiscal?: 'PRESTADOR' | 'TOMADOR' | 'INTERMEDIARIO' | null;
 }
 
 export interface EntradaRecuperacaoSefin {

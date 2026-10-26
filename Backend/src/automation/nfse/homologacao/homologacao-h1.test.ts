@@ -228,7 +228,7 @@ describe('homologação H1 — autorização e gates', () => {
     expect(prep.evidencia.detalhes.canceladas).toBe(1);
   });
 
-  it('17 indeterminadas bloqueadas', () => {
+  it('17 indeterminadas elegíveis à SEFIN (API-03M)', () => {
     const inv = montarInventario({
       id: 'inv-indet',
       cnpj: CNPJ,
@@ -236,14 +236,13 @@ describe('homologação H1 — autorização e gates', () => {
       documentos: [documento(1, 'INDETERMINADA')],
       completude: 'COMPLETO',
     });
-    expect(() =>
-      prepararSefinRecovery({
-        autorizacao: authSefin(),
-        contexto: ctx('SEFIN_RECOVERY'),
-        inventario: inv,
-        certificadoDisponivel: true,
-      })
-    ).toThrow(expect.objectContaining({ codigo: 'SITUACAO_INDETERMINADA' }));
+    const prep = prepararSefinRecovery({
+      autorizacao: authSefin(),
+      contexto: ctx('SEFIN_RECOVERY'),
+      inventario: inv,
+      certificadoDisponivel: true,
+    });
+    expect(prep.elegiveis).toBe(1);
   });
 
   it('18 interrupção segura', () => {

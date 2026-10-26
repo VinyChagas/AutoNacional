@@ -58,8 +58,8 @@ describe('checkpoint nativo de NFS-e', () => {
 
     expect(estadoDe(checkpoint, chave(1)).estado).toBe('PENDENTE');
     expect(estadoDe(checkpoint, chave(2)).estado).toBe('EXCLUIDA_DA_RECUPERACAO');
-    expect(estadoDe(checkpoint, chave(3)).estado).toBe('BLOQUEADO');
-    expect(estadoDe(checkpoint, chave(3)).codigo).toBe('SITUACAO_INDETERMINADA');
+    expect(estadoDe(checkpoint, chave(3)).estado).toBe('PENDENTE');
+    expect(estadoDe(checkpoint, chave(3)).codigo).toBe('ATENCAO_SITUACAO_NAO_CONFIRMADA');
     expect(existsSync(checkpoints.caminhoArquivo(CNPJ, PERIODO))).toBe(true);
 
     const parcial = montarInventario({
@@ -452,6 +452,78 @@ describe('checkpoint nativo de NFS-e', () => {
     );
   });
 
+  it('API-03H — VALIDACAO_INSUFICIENTE sem XML reabre PENDENTE; íntegros ficam', async () => {
+    const inv = inventario([documento(chave(1)), documento(chave(2)), documento(chave(3))]);
+    await servico.criarCheckpoint(inv, 'exec-cts-reabertura');
+    await servico.persistirXml(inv, chave(1), xmlDe(chave(1)));
+    await servico.registrarFalha(
+      inv,
+      chave(2),
+      'PERMANENTE',
+      'O XML não permite confirmar a chave e o vínculo com o CNPJ.',
+      'VALIDACAO_INSUFICIENTE'
+    );
+    await servico.registrarFalha(
+      inv,
+      chave(3),
+      'PERMANENTE',
+      'O XML não permite confirmar a chave e o vínculo com o CNPJ.',
+      'VALIDACAO_INSUFICIENTE'
+    );
+
+    const retomado = await retomarExecucaoNfse({ inventario: inv, checkpointStore: checkpoints, xmlStore: xmls });
+    expect(estadoDe(retomado.checkpoint, chave(1)).estado).toBe('PERSISTIDO');
+    expect(estadoDe(retomado.checkpoint, chave(2)).estado).toBe('PENDENTE');
+    expect(estadoDe(retomado.checkpoint, chave(2)).codigo).toBe('REABERTURA_VALIDACAO');
+    expect(estadoDe(retomado.checkpoint, chave(3)).estado).toBe('PENDENTE');
+    expect(retomado.alteracoes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ chaveNacional: chave(2), de: 'FALHA_PERMANENTE', para: 'PENDENTE' }),
+        expect.objectContaining({ chaveNacional: chave(3), de: 'FALHA_PERMANENTE', para: 'PENDENTE' }),
+      ])
+    );
+    // XML íntegro pré-existente não foi tocado.
+    expect(await xmls.verificar(CNPJ, PERIODO, chave(1))).toMatchObject({
+      existe: true,
+      tamanhoBytes: expect.any(Number),
+    });
+    expect(await contarXml()).toBe(1);
+  });
+
+  it('API-03I — FALHA_TRANSITORIA VALIDACAO_INSUFICIENTE também reabre (CTS 178/180)', async () => {
+    const inv = inventario([documento(chave(1)), documento(chave(2))]);
+    await servico.criarCheckpoint(inv, 'exec-cts-transitoria');
+    await servico.persistirXml(inv, chave(1), xmlDe(chave(1)));
+    await servico.registrarFalha(
+      inv,
+      chave(2),
+      'TRANSITORIA',
+      'O XML não permite confirmar a chave e o vínculo com o CNPJ.',
+      'VALIDACAO_INSUFICIENTE'
+    );
+
+    const retomado = await retomarExecucaoNfse({ inventario: inv, checkpointStore: checkpoints, xmlStore: xmls });
+    expect(estadoDe(retomado.checkpoint, chave(1)).estado).toBe('PERSISTIDO');
+    expect(estadoDe(retomado.checkpoint, chave(2))).toMatchObject({
+      estado: 'PENDENTE',
+      codigo: 'REABERTURA_VALIDACAO',
+    });
+    expect(retomado.alteracoes).toEqual([
+      expect.objectContaining({ chaveNacional: chave(2), de: 'FALHA_TRANSITORIA', para: 'PENDENTE' }),
+    ]);
+  });
+
+  it('API-03H — checkpoint inconsistente PERSISTIDO sem arquivo volta a PENDENTE', async () => {
+    const inv = inventario([documento(chave(1))]);
+    await servico.criarCheckpoint(inv, 'exec-inconsistente-ausente');
+    await servico.persistirXml(inv, chave(1), xmlDe(chave(1)));
+    await rm(xmls.caminhoArquivo(CNPJ, PERIODO, chave(1)), { force: true });
+
+    const retomado = await retomarExecucaoNfse({ inventario: inv, checkpointStore: checkpoints, xmlStore: xmls });
+    expect(estadoDe(retomado.checkpoint, chave(1)).estado).toBe('PENDENTE');
+    expect(estadoDe(retomado.checkpoint, chave(1)).codigo).toBe('XML_AUSENTE');
+  });
+
   it('25 cancelada fica fora da recuperação e do denominador da cobertura', async () => {
     const inv = inventario([documento(chave(1)), documento(chave(2), { situacao: 'CANCELADA' })]);
     await servico.criarCheckpoint(inv, 'exec-cancelada');
@@ -469,20 +541,31 @@ describe('checkpoint nativo de NFS-e', () => {
     expect(relatorio.conclusao).toBe('RECONCILIADA');
   });
 
-  it('26 indeterminada bloqueia retomada e persistência automáticas', async () => {
+  it('26 indeterminada permite retomada e persiste XML com atenção (API-03M)', async () => {
     const inv = inventario([documento(chave(1)), documento(chave(2), { situacao: 'INDETERMINADA' })]);
-    const criado = await servico.criarCheckpoint(inv, 'exec-bloqueio');
-    expect(estadoDe(criado, chave(2)).estado).toBe('BLOQUEADO');
+    const criado = await servico.criarCheckpoint(inv, 'exec-atencao');
+    expect(estadoDe(criado, chave(2)).estado).toBe('PENDENTE');
+    expect(estadoDe(criado, chave(2)).codigo).toBe('ATENCAO_SITUACAO_NAO_CONFIRMADA');
 
-    await expect(servico.persistirXml(inv, chave(1), xmlDe(chave(1)))).rejects.toMatchObject({
-      codigo: 'SITUACAO_INDETERMINADA',
-    });
+    const vigente = await servico.persistirXml(inv, chave(1), xmlDe(chave(1)));
+    expect(estadoDe(vigente, chave(1)).estado).toBe('PERSISTIDO');
+    const indeterminada = await servico.persistirXml(inv, chave(2), xmlDe(chave(2)));
+    expect(estadoDe(indeterminada, chave(2)).estado).toBe('PERSISTIDO');
+    expect(estadoDe(indeterminada, chave(2)).codigo).toBe('ATENCAO_SITUACAO_NAO_CONFIRMADA');
+
     const retomado = await retomarExecucaoNfse({ inventario: inv, checkpointStore: checkpoints, xmlStore: xmls });
-    expect(retomado.podeRetomarAutomaticamente).toBe(false);
-    expect(retomado.codigoBloqueio).toBe('SITUACAO_INDETERMINADA');
-    expect(retomado.alteracoes).toEqual([]);
-    expect(estadoDe(retomado.checkpoint, chave(1)).estado).toBe('PENDENTE');
-    expect(await contarXml()).toBe(0);
+    expect(retomado.podeRetomarAutomaticamente).toBe(true);
+    expect(retomado.codigoBloqueio).toBeNull();
+    expect(await contarXml()).toBe(2);
+
+    const arquivos = [
+      await xmls.verificar(CNPJ, PERIODO, chave(1)),
+      await xmls.verificar(CNPJ, PERIODO, chave(2)),
+    ];
+    const relatorio = reconciliarNfse(inv, indeterminada, arquivos);
+    expect(relatorio.persistidosIntegros).toBe(1);
+    expect(relatorio.xmlsComAtencaoFiscal).toBe(1);
+    expect(relatorio.conclusao).toBe('NAO_RECONCILIADA');
   });
 
   it('27 reconciliação completa ignora dCompet e não usa sucesso HTTP', async () => {

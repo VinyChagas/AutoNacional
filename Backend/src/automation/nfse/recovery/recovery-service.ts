@@ -19,7 +19,7 @@ import {
   type RegistroLogRecuperacao,
   type ResultadoRecuperacaoSefin,
 } from './types';
-import { validarXmlNfse } from './xml-validator';
+import { validarXmlNfse, vinculoCnpjAusenteParaDirecao } from './xml-validator';
 
 const loggerPadrao = getLogger('nfse-recovery');
 
@@ -48,16 +48,14 @@ export async function recuperarXmlNfse(entrada: EntradaRecuperacaoSefin): Promis
     periodoConsulta: entrada.periodoConsulta ?? null,
   };
 
-  if (entrada.situacao === 'CANCELADA' || entrada.situacao === 'INDETERMINADA') {
+  // API-03M — só cancelada fica fora da SEFIN; indeterminada consulta normalmente.
+  if (entrada.situacao === 'CANCELADA') {
     return falha(base, {
       resultado: 'BLOQUEADO',
       validacaoXml: 'NAO_APLICADA',
       classeErro: 'BLOQUEANTE',
-      codigo: entrada.situacao === 'CANCELADA' ? 'NOTA_CANCELADA' : 'NOTA_INDETERMINADA',
-      mensagem:
-        entrada.situacao === 'CANCELADA'
-          ? 'Nota cancelada permanece no inventário e não é consultada na SEFIN.'
-          : 'Nota indeterminada bloqueia a consulta automática.',
+      codigo: 'NOTA_CANCELADA',
+      mensagem: 'Nota cancelada permanece no inventário e não é consultada na SEFIN.',
     });
   }
   if (entrada.situacao) validarSituacaoFiscal(entrada.situacao);
@@ -91,26 +89,53 @@ export async function recuperarXmlNfse(entrada: EntradaRecuperacaoSefin): Promis
     const xml = await extrairXmlDaRespostaSefin(resposta.body, limites.maxBytesGzip, limites.maxBytesXml);
     const leitura = validarXmlNfse(xml, { chave, cnpj, direcao });
     if (leitura.validacao !== 'CONFIRMADA') {
+      // API-03H — transitório: permite retentativa controlada só desta chave
+      // (não marca FALHA_PERMANENTE). XML ausente/incompleto na SEFIN pode estabilizar.
+      const detalhe = [
+        leitura.chaveXml ? null : 'chave ausente no XML',
+        vinculoCnpjAusenteParaDirecao(leitura, direcao)
+          ? direcao === 'EMITIDA'
+            ? 'CNPJ emitente ausente'
+            : 'CNPJ tomador/intermediário ausente'
+          : null,
+      ]
+        .filter(Boolean)
+        .join('; ');
       return falha(base, {
         resultado: 'FALHOU',
         validacaoXml: 'PENDENTE',
-        classeErro: 'BLOQUEANTE',
+        classeErro: 'TRANSITORIO',
         codigo: 'VALIDACAO_INSUFICIENTE',
-        mensagem: 'O XML não permite confirmar a chave e o vínculo com o CNPJ.',
+        mensagem: detalhe
+          ? `O XML não permite confirmar a chave e o vínculo com o CNPJ (${detalhe}).`
+          : 'O XML não permite confirmar a chave e o vínculo com o CNPJ.',
         dCompet: leitura.dCompet,
       });
     }
-    registrar(log, 'info', chave, cnpj, 'XML da SEFIN confirmado.');
+    const papel = leitura.papelConfirmado;
+    registrar(
+      log,
+      'info',
+      chave,
+      cnpj,
+      papel === 'INTERMEDIARIO'
+        ? 'XML da SEFIN confirmado (vínculo intermediário).'
+        : 'XML da SEFIN confirmado.'
+    );
     return {
       ...base,
       resultado: 'RECUPERADO',
       validacaoXml: 'CONFIRMADA',
       classeErro: null,
       codigo: null,
-      mensagem: 'XML recuperado e confirmado.',
+      mensagem:
+        papel === 'INTERMEDIARIO'
+          ? 'XML recuperado e confirmado (papel INTERMEDIARIO).'
+          : 'XML recuperado e confirmado.',
       dCompet: leitura.dCompet,
       hashSha256: createHash('sha256').update(xml).digest('hex'),
       xml,
+      papelFiscal: papel,
     };
   } catch (erro) {
     const classificado = erro instanceof ErroRecuperacaoSefin ? erro : classificarFalhaTransporte(erro);
@@ -142,19 +167,16 @@ export function planejarRecuperacaoSefin(inventario: InventarioNfse): PlanoRecup
       'O inventário não autoriza o início da recuperação.'
     );
   }
-  if (inventario.documentos.some((documento) => documento.situacao === 'INDETERMINADA')) {
-    return bloqueio(
-      'SITUACAO_INDETERMINADA',
-      'Nota indeterminada bloqueia a recuperação automática.'
-    );
-  }
-
   return {
     podeIniciar: true,
     codigo: null,
     classe: null,
-    mensagem: 'Plano de recuperação autorizado para as notas vigentes.',
-    elegiveis: inventario.documentos.filter((documento) => documento.situacao === 'VIGENTE'),
+    mensagem:
+      'Plano de recuperação autorizado para vigentes e indeterminadas (API-03M).',
+    elegiveis: inventario.documentos.filter(
+      (documento) =>
+        documento.situacao === 'VIGENTE' || documento.situacao === 'INDETERMINADA'
+    ),
     excluidas: inventario.documentos
       .filter((documento) => documento.situacao === 'CANCELADA')
       .map((documento) => documento.chaveNacional),
@@ -229,3 +251,4 @@ function adaptarLogger(): RegistroLogRecuperacao {
 export function limitesDaConsulta(parcial?: Partial<LimitesRecuperacaoSefin>): LimitesRecuperacaoSefin {
   return { ...LIMITES_RECUPERACAO_PADRAO, ...parcial };
 }
+

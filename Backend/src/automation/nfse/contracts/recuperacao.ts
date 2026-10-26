@@ -92,22 +92,14 @@ export function criarRecuperacaoDocumento(input: NovaRecuperacaoInput): Recupera
 
 /**
  * Plano inicial, antes de qualquer download.
- * Vigente fica pendente. Cancelada sai. Indeterminada bloqueia.
+ * API-03M — vigente e indeterminada ficam PENDENTE (SEFIN).
+ * Cancelada sai do plano (não entra em entraNaRecuperacaoSefin).
  */
 export function montarPlanoRecuperacao(inventario: InventarioNfse): RecuperacaoDocumento[] {
   const plano: RecuperacaoDocumento[] = [];
 
   for (const documento of inventario.documentos) {
     if (!entraNaRecuperacaoSefin(documento)) {
-      if (documento.situacao === 'INDETERMINADA') {
-        plano.push(
-          criarRecuperacaoDocumento({
-            chaveNacional: documento.chaveNacional,
-            resultado: 'BLOQUEADO',
-            motivoFalha: 'Situação indeterminada bloqueia o processamento automático até revisão.',
-          })
-        );
-      }
       continue;
     }
 

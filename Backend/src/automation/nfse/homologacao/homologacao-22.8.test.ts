@@ -133,22 +133,24 @@ describe('homologação 22.8 — evidências offline', () => {
     registrar('05', 'PASS', 'cancelada excluída do plano e presente no inventário');
   });
 
-  it('06 indeterminada bloqueia', async () => {
+  it('06 indeterminada recupera com atenção fiscal (API-03M)', async () => {
     const periodo = portal('01/09/2026', '30/09/2026');
     const inv = inventario([doc(chave(1), { periodo, situacao: 'INDETERMINADA' })], periodo);
-    await expect(
-      executarFluxoFiscalNativo({
-        page: PAGE,
-        cnpj: CNPJ,
-        periodoConsulta: periodo,
-        execucaoId: 'h-06',
-        tipo: 'emitidas',
-        baixarPdf: false,
-        raizFiscal: raiz,
-        dependencias: depsFluxo(inv),
-      })
-    ).rejects.toMatchObject({ codigo: 'SITUACAO_INDETERMINADA' });
-    registrar('06', 'PASS', 'INDETERMINADA bloqueia orquestração');
+    const resultado = await executarFluxoFiscalNativo({
+      page: PAGE,
+      cnpj: CNPJ,
+      periodoConsulta: periodo,
+      execucaoId: 'h-06',
+      tipo: 'emitidas',
+      baixarPdf: false,
+      raizFiscal: raiz,
+      dependencias: depsFluxo(inv),
+    });
+    expect(resultado.indeterminadas).toBe(1);
+    expect(resultado.xmlsComAtencaoFiscal).toBe(1);
+    expect(resultado.documentosPendentesFiscais?.length).toBe(1);
+    expect(resultado.loteLiberado).toBe(false);
+    registrar('06', 'PASS', 'INDETERMINADA segue SEFIN com atenção fiscal');
   });
 
   it('07 paginação múltipla (inventário consolidado)', () => {
@@ -272,22 +274,22 @@ describe('homologação 22.8 — evidências offline', () => {
     }
   });
 
-  it('16 fingerprint divergente', async () => {
+  it('16 API-03F superconjunto evolui checkpoint', async () => {
     const periodo = portal('01/09/2026', '30/09/2026');
     const raizFp = await mkdtemp(path.join(tmpdir(), 'nfse-fp-'));
     try {
       await fluxoSimples(inventario([doc(chave(1), { periodo })], periodo), periodo, 'h-16a', {
         raizOverride: raizFp,
       });
-      await expect(
-        fluxoSimples(
-          inventario([doc(chave(1), { periodo }), doc(chave(2), { periodo })], periodo),
-          periodo,
-          'h-16b',
-          { raizOverride: raizFp }
-        )
-      ).rejects.toMatchObject({ codigo: 'IDENTIDADE_DIVERGENTE' });
-      registrar('16', 'PASS', 'fingerprint divergente bloqueado');
+      const segundo = await fluxoSimples(
+        inventario([doc(chave(1), { periodo }), doc(chave(2), { periodo })], periodo),
+        periodo,
+        'h-16b',
+        { raizOverride: raizFp }
+      );
+      expect(segundo.descobertos).toBe(2);
+      expect(segundo.persistidos).toBe(2);
+      registrar('16', 'PASS', 'superconjunto evolui e completa');
     } finally {
       await rm(raizFp, { recursive: true, force: true });
     }

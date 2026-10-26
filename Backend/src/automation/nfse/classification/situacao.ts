@@ -22,8 +22,31 @@ export const CODIGO_DATA_SITUACAO_CANCELADA = 'P104_NFSE_CANCELADA';
 export const CODIGO_DATA_SITUACAO_GERADA = 'P100_GERADA';
 
 /**
+ * Prefixo Portal alinhado ao TStat 101 do leiaute nacional (XSD):
+ * "101 - NFS-e de Substituição Gerada".
+ * É a nota SUBSTITUTA (gerada), não a original cancelada por substituição.
+ * cStat no XML é status de emissão; cancelamento é evento e não altera cStat.
+ */
+export const PREFIXO_DATA_SITUACAO_SUBSTITUICAO_GERADA = 'P101';
+
+/**
+ * Prefixo Portal alinhado ao TStat 102 do leiaute nacional:
+ * "102 - NFS-e de Decisão Judicial ou Administrativa".
+ * NFS-e gerada/válida (fluxo bypass municipal); permanece VIGENTE até
+ * cancelamento comprovado (P104) ou substituição comprovada (P105 / vínculo XML).
+ * Observado no Portal como P102_NFSE_DECISAO_JUDICIAL_GERADA.
+ */
+export const PREFIXO_DATA_SITUACAO_DECISAO_JUDICIAL = 'P102';
+
+/**
+ * Observado no Portal (AMIL 08/2026): original após substituição.
+ * Fora da meta de XMLs vigentes; não bloqueia recuperação (como cancelada).
+ */
+export const CODIGO_DATA_SITUACAO_SUBSTITUIDA = 'P105_NFSE_SUBSTITUIDA';
+
+/**
  * Códigos data-situacao de vigência observados no Portal.
- * Código fora desta lista (e ≠ cancelada) permanece INDETERMINADA — sem auto-validar.
+ * Código fora desta lista (e ≠ cancelada / ≠ substituída / ≠ P101* / ≠ P102*) permanece INDETERMINADA.
  */
 export const CODIGOS_DATA_SITUACAO_VIGENTE: readonly string[] = [CODIGO_DATA_SITUACAO_GERADA];
 
@@ -72,13 +95,94 @@ interface SinalAtual {
 }
 
 const CANCELADA_FISCAL = /tb[-_]?cancelada\.svg|nfs-?e\s*cancelada|\bcancelada\b/i;
+/** Substituta gerada (TStat 101) — permanece vigente até cancelamento próprio. */
+const SUBSTITUICAO_GERADA =
+  /tb[-_]?substitui[cç][aã]o|nfs-?e\s*de\s*substitui|substitui[cç][aã]o\s*gerada/i;
+/** Original cancelada por substituição (evento 105102) — fora da meta de vigentes. */
+const SUBSTITUIDA_ORIGINAL =
+  /tb[-_]?substitu[ií]da\.svg|nfs-?e\s*substitu[ií]da|\bsubstitu[ií]da\b/i;
+/**
+ * TStat 102 — NFS-e emitida via decisão administrativa/judicial (gerada/válida).
+ * API-03J — inclui ícone oficial do Portal `tb-nota-bypass.svg` (fluxo bypass).
+ */
+const DECISAO_JUDICIAL =
+  /tb[-_]?nota[-_]?bypass\.svg|decis[aã]o\s*(administrativa|judicial)|nfs-?e\s*de\s*decis[aã]o|emitida\s+via\s+decis[aã]o/i;
 const GERADA = /tb[-_]?gerada\.svg|nfs-?e\s*gerada/i;
 const EMITIDA = /nfs-?e\s*emitida/i;
 
+/** Normaliza data-situacao do Portal (case, ZWSP, espaços, hífens → underscore). */
+export function normalizarCodigoDataSituacaoPortal(codigo: string | null | undefined): string {
+  return (codigo ?? '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+export function ehCodigoSubstituicaoGeradaPortal(codigo: string | null | undefined): boolean {
+  const c = normalizarCodigoDataSituacaoPortal(codigo);
+  if (!c) return false;
+  return (
+    c === PREFIXO_DATA_SITUACAO_SUBSTITUICAO_GERADA ||
+    c.startsWith(`${PREFIXO_DATA_SITUACAO_SUBSTITUICAO_GERADA}_`)
+  );
+}
+
+/** NFS-e gerada por decisão adm./judicial (TStat 102) — vigente até evento posterior. */
+export function ehCodigoDecisaoJudicialPortal(codigo: string | null | undefined): boolean {
+  const c = normalizarCodigoDataSituacaoPortal(codigo);
+  if (!c) return false;
+  // P102, P102_*, P102NFSE_* (sem underscore imediato após 102).
+  if (c === PREFIXO_DATA_SITUACAO_DECISAO_JUDICIAL || /^P102(?:_|[A-Z])/.test(c)) return true;
+  // XML/cStat bruto ou data-situacao numérico alinhado ao TStat 102.
+  return c === '102' || c === 'TSTAT_102' || c === 'CSTAT_102';
+}
+
+/** Ícone/texto Portal de bypass (decisão adm./judicial). */
+export function ehEvidenciaBypassDecisaoJudicial(texto: string | null | undefined): boolean {
+  return DECISAO_JUDICIAL.test((texto ?? '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim());
+}
+
+/**
+ * API-03K — evidência explícita de decisão adm./judicial na coluna (código, texto ou ícone).
+ * Não promove situações desconhecidas: exige P102/102, tb-nota-bypass ou texto de decisão.
+ */
+export function evidenciaTemDecisaoAdministrativaJudicial(
+  evidencia: EvidenciaColunaSituacao
+): { presente: boolean; determinante: string | null } {
+  if (ehCodigoDecisaoJudicialPortal(evidencia.dataSituacao)) {
+    return {
+      presente: true,
+      determinante: `data-situacao=${evidencia.dataSituacao?.trim()}`,
+    };
+  }
+  const texto = evidencia.textoColuna?.trim() ?? '';
+  if (ehEvidenciaBypassDecisaoJudicial(texto)) {
+    return { presente: true, determinante: `td-situacao.texto=${texto}` };
+  }
+  for (const icone of evidencia.icones) {
+    const attrs: Array<[string, string | null]> = [
+      ['src', icone.src],
+      ['alt', icone.alt],
+      ['data-original-title', icone.dataOriginalTitle],
+      ['title', icone.title],
+      ['aria-label', icone.ariaLabel],
+    ];
+    for (const [nome, valor] of attrs) {
+      if (ehEvidenciaBypassDecisaoJudicial(valor)) {
+        return { presente: true, determinante: `td-situacao.img.${nome}=${valor?.trim()}` };
+      }
+    }
+  }
+  return { presente: false, determinante: null };
+}
+
 export function classificarSituacao(evidencia: EvidenciaColunaSituacao): ClassificacaoSituacaoNfse {
   const brutas = descreverEvidenciaBruta(evidencia);
-  const codigo = evidencia.dataSituacao?.trim() || null;
+  const codigoBruto = evidencia.dataSituacao?.replace(/[\u200B-\u200D\uFEFF]/g, '').trim() || null;
+  const codigo = codigoBruto;
   const sinais = sinaisDaColuna(evidencia);
+  const decisaoJudicial = evidenciaTemDecisaoAdministrativaJudicial(evidencia);
 
   if (codigo === CODIGO_DATA_SITUACAO_CANCELADA) {
     return fechar({
@@ -86,6 +190,22 @@ export function classificarSituacao(evidencia: EvidenciaColunaSituacao): Classif
       fonte: 'tr.data-situacao',
       evidenciaDeterminante: `data-situacao=${codigo}`,
       evidencias: [`data-situacao=${codigo}`, ...brutas, ...notasDeHistorico(sinais)],
+      conflitos: [],
+      codigoSituacaoDesconhecido: null,
+    });
+  }
+
+  if (codigo === CODIGO_DATA_SITUACAO_SUBSTITUIDA) {
+    return fechar({
+      situacao: 'CANCELADA',
+      fonte: 'tr.data-situacao',
+      evidenciaDeterminante: `data-situacao=${codigo}`,
+      evidencias: [
+        `data-situacao=${codigo}`,
+        'P105_NFSE_SUBSTITUIDA = original substituída (fora da meta de vigentes)',
+        ...brutas,
+        ...notasDeHistorico(sinais),
+      ],
       conflitos: [],
       codigoSituacaoDesconhecido: null,
     });
@@ -102,7 +222,72 @@ export function classificarSituacao(evidencia: EvidenciaColunaSituacao): Classif
     });
   }
 
+  if (ehCodigoSubstituicaoGeradaPortal(codigo)) {
+    return fechar({
+      situacao: 'VIGENTE',
+      fonte: 'tr.data-situacao',
+      evidenciaDeterminante: `data-situacao=${codigo}`,
+      evidencias: [
+        `data-situacao=${codigo}`,
+        'TStat 101 = NFS-e de Substituição Gerada (substituta vigente)',
+        ...brutas,
+      ],
+      conflitos: [],
+      codigoSituacaoDesconhecido: null,
+    });
+  }
+
+  if (ehCodigoDecisaoJudicialPortal(codigo)) {
+    // Cancelamento/substituição comprovados na coluna prevalecem sobre o código de geração.
+    const cancelada = escolher(sinais, 'CANCELADA');
+    if (cancelada) {
+      return fechar({
+        situacao: 'CANCELADA',
+        fonte: cancelada.fonte,
+        evidenciaDeterminante: cancelada.determinante,
+        evidencias: [
+          cancelada.determinante,
+          `data-situacao=${codigo}`,
+          'evento posterior ao TStat 102 prevalece',
+          ...brutas,
+        ],
+        conflitos: [],
+        codigoSituacaoDesconhecido: null,
+      });
+    }
+    return fechar({
+      situacao: 'VIGENTE',
+      fonte: 'tr.data-situacao',
+      evidenciaDeterminante: `data-situacao=${codigo}`,
+      evidencias: [
+        `data-situacao=${codigo}`,
+        'TStat 102 = NFS-e de Decisão Judicial/Administrativa (gerada válida)',
+        ...brutas,
+        ...notasDeHistorico(sinais),
+      ],
+      conflitos: [],
+      codigoSituacaoDesconhecido: null,
+    });
+  }
+
   if (codigo && !CODIGOS_DATA_SITUACAO_VIGENTE.includes(codigo)) {
+    // API-03K — bypass explícito (ícone/texto) prevalece sobre código ainda não catalogado.
+    const canceladaComCodigo = escolher(sinais, 'CANCELADA');
+    if (decisaoJudicial.presente && !canceladaComCodigo) {
+      return fechar({
+        situacao: 'VIGENTE',
+        fonte: 'icone.situacao',
+        evidenciaDeterminante: decisaoJudicial.determinante,
+        evidencias: [
+          decisaoJudicial.determinante!,
+          `data-situacao=${codigo}`,
+          'tb-nota-bypass / decisão adm.-judicial = TStat 102 vigente',
+          ...brutas,
+        ],
+        conflitos: [],
+        codigoSituacaoDesconhecido: null,
+      });
+    }
     const conflitos = sinaisConflitam(sinais) ? [CONFLITO_SITUACAO] : [];
     return fechar({
       situacao: 'INDETERMINADA',
@@ -111,7 +296,7 @@ export function classificarSituacao(evidencia: EvidenciaColunaSituacao): Classif
       evidencias: [
         `data-situacao=${codigo}`,
         `data-situacao.desconhecido=${codigo}`,
-        'código data-situacao não observado; ícone de vigência não substitui o código',
+        'código data-situacao não observado; ícone genérico não substitui o código',
         ...brutas,
       ],
       conflitos,
@@ -137,6 +322,22 @@ export function classificarSituacao(evidencia: EvidenciaColunaSituacao): Classif
       fonte: cancelada.fonte,
       evidenciaDeterminante: cancelada.determinante,
       evidencias: [cancelada.determinante, ...brutas, ...notasDeHistorico(sinais)],
+      conflitos: [],
+      codigoSituacaoDesconhecido: null,
+    });
+  }
+
+  // API-03K — decisão adm./judicial explícita mesmo sem data-situacao / sem sinal genérico.
+  if (decisaoJudicial.presente) {
+    return fechar({
+      situacao: 'VIGENTE',
+      fonte: 'icone.situacao',
+      evidenciaDeterminante: decisaoJudicial.determinante,
+      evidencias: [
+        decisaoJudicial.determinante!,
+        'TStat 102 = NFS-e de Decisão Judicial/Administrativa (gerada válida)',
+        ...brutas,
+      ],
       conflitos: [],
       codigoSituacaoDesconhecido: null,
     });
@@ -237,14 +438,25 @@ function sinalDeTrecho(
   fonte: FonteClassificacaoSituacao,
   determinante: string
 ): SinalAtual | null {
-  if (!texto || ehSomenteAcaoCancelar(texto)) return null;
-  if (CANCELADA_FISCAL.test(texto)) {
-    return { situacao: 'CANCELADA', fonte, determinante, historicoEmissao: false };
-  }
-  if (GERADA.test(texto)) {
+  const limpo = texto.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (!limpo || ehSomenteAcaoCancelar(limpo)) return null;
+  // Ordem: "substituição gerada" (substituta) antes de "substituída" (original).
+  if (SUBSTITUICAO_GERADA.test(limpo)) {
     return { situacao: 'VIGENTE', fonte, determinante, historicoEmissao: true };
   }
-  if (EMITIDA.test(texto)) {
+  if (SUBSTITUIDA_ORIGINAL.test(limpo)) {
+    return { situacao: 'CANCELADA', fonte, determinante, historicoEmissao: false };
+  }
+  if (CANCELADA_FISCAL.test(limpo)) {
+    return { situacao: 'CANCELADA', fonte, determinante, historicoEmissao: false };
+  }
+  if (DECISAO_JUDICIAL.test(limpo)) {
+    return { situacao: 'VIGENTE', fonte, determinante, historicoEmissao: true };
+  }
+  if (GERADA.test(limpo)) {
+    return { situacao: 'VIGENTE', fonte, determinante, historicoEmissao: true };
+  }
+  if (EMITIDA.test(limpo)) {
     return { situacao: 'VIGENTE', fonte, determinante, historicoEmissao: false };
   }
   return null;

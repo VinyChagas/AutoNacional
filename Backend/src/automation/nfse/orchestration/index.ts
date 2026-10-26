@@ -46,3 +46,11 @@ export type {
   DuracoesOperacionaisNfse,
   MetricasOperacionaisNfse,
 } from './metricas-operacionais';
+export {
+  montarReconciliacaoExecucao,
+  serializarReconciliacao,
+} from './reconciliacao-execucao';
+export type {
+  ReconciliacaoExecucao,
+  StatusFiscalReconciliacao,
+} from './reconciliacao-execucao';

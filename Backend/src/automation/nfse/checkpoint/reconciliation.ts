@@ -11,6 +11,7 @@
 import { calcularTotaisInventario, type InventarioNfse } from '../contracts/inventario';
 import { periodosConsultaIguais } from '../contracts/periodo';
 import { calcularFingerprintInventario } from './checkpoint-service';
+import { alinharInventarioAoCheckpoint } from './evolucao-checkpoint';
 import {
   VERSAO_FORMATO_CHECKPOINT,
   type ArquivoVerificadoNfse,
@@ -64,6 +65,7 @@ export function reconciliarNfse(
   let pendentes = 0;
   let falhaTransitoria = 0;
   let falhaPermanente = 0;
+  const chavesVigentesSemXml: string[] = [];
 
   for (const documento of checkpoint.documentos) {
     if (documento.estado === 'FALHA_TRANSITORIA') falhaTransitoria += 1;
@@ -90,6 +92,7 @@ export function reconciliarNfse(
       persistidosIntegros += 1;
       continue;
     }
+    chavesVigentesSemXml.push(documento.chaveNacional);
     if (estado?.estado === 'PERSISTIDO' || (estado?.hashSha256 && arquivo?.hashSha256 && arquivo.hashSha256 !== estado.hashSha256)) {
       divergencias.add(documento.chaveNacional);
       inconsistentes.add(documento.chaveNacional);
@@ -98,6 +101,10 @@ export function reconciliarNfse(
 
   for (const documento of inventario.documentos) {
     if (documento.situacao === 'VIGENTE') continue;
+    // CANCELADA (incl. original substituída) pode manter XML histórico — não é excedente.
+    if (documento.situacao === 'CANCELADA') continue;
+    // API-03M — indeterminada com XML recuperado é pendência fiscal, não excedente.
+    if (documento.situacao === 'INDETERMINADA') continue;
     const arquivos = arquivoPorChave.get(documento.chaveNacional) ?? [];
     if (arquivos.some((arquivo) => arquivo.existe)) {
       excedentesNaoJustificados.push(documento.chaveNacional);
@@ -129,23 +136,53 @@ export function reconciliarNfse(
 
   const cobertura = totais.vigentes === 0 ? (inconsistenciaBloqueante ? 0 : 1) : persistidosIntegros / totais.vigentes;
 
-  const vigentesProntos = totais.vigentes === persistidosIntegros && pendentes === 0 && falhaTransitoria === 0 && falhaPermanente === 0;
+  // Falhas de vigentes (não de indeterminadas) impedem vigentesProntos.
+  const falhaVigente =
+    checkpoint.documentos.filter(
+      (d) =>
+        d.situacao === 'VIGENTE' &&
+        (d.estado === 'FALHA_TRANSITORIA' || d.estado === 'FALHA_PERMANENTE')
+    ).length > 0;
+  const vigentesProntos =
+    totais.vigentes === persistidosIntegros && pendentes === 0 && !falhaVigente;
   const estadosAceitos = checkpoint.documentos.every((documento) => {
     if (documento.situacao === 'VIGENTE') return documento.estado === 'PERSISTIDO';
     if (documento.situacao === 'CANCELADA') return documento.estado === 'EXCLUIDA_DA_RECUPERACAO';
+    // API-03M — indeterminada pode estar PENDENTE, PERSISTIDO (atenção) ou falha documental.
+    if (documento.situacao === 'INDETERMINADA') {
+      return (
+        documento.estado === 'PENDENTE' ||
+        documento.estado === 'PERSISTIDO' ||
+        documento.estado === 'EM_PROCESSAMENTO' ||
+        documento.estado === 'FALHA_TRANSITORIA' ||
+        documento.estado === 'FALHA_PERMANENTE'
+      );
+    }
     return false;
   });
 
-  if (totais.indeterminadas > 0) motivos.push('Nota indeterminada bloqueia a conclusão automática.');
+  const xmlsComAtencaoFiscal = checkpoint.documentos.filter(
+    (d) =>
+      d.situacao === 'INDETERMINADA' &&
+      d.estado === 'PERSISTIDO' &&
+      d.codigo === 'ATENCAO_SITUACAO_NAO_CONFIRMADA'
+  ).length;
+
+  if (totais.indeterminadas > 0) {
+    motivos.push(
+      `Há ${totais.indeterminadas} nota(s) com situação fiscal pendente (não conta como vigente confirmado).`
+    );
+  }
   if (!vigentesProntos) motivos.push('Nem todo documento vigente está persistido com hash verificado.');
   if (chavesFaltantes.length > 0) motivos.push('Há chave do inventário ausente no checkpoint.');
   if (chavesExcedentes.length > 0) motivos.push('Há chave excedente não justificada.');
   if (chavesDuplicadas.length > 0) motivos.push('Há chave duplicada.');
   if (divergenciasHash.length > 0 || inconsistentes.size > 0) motivos.push('Há inconsistência bloqueante.');
-  if (inventario.documentos.length > 0 && !estadosAceitos && totais.indeterminadas === 0) {
+  if (inventario.documentos.length > 0 && !estadosAceitos) {
     motivos.push('Estado de documento incompatível com a conclusão.');
   }
 
+  // RECONCILIADA fiscal ainda exige zero indeterminadas (rigor).
   const reconciliada =
     inventario.completude === 'COMPLETO' &&
     identidadeConsistente &&
@@ -165,6 +202,8 @@ export function reconciliarNfse(
     canceladas: totais.canceladas,
     indeterminadas: totais.indeterminadas,
     persistidosIntegros,
+    xmlsComAtencaoFiscal,
+    chavesVigentesSemXml: unicasOrdenadas(chavesVigentesSemXml),
     pendentes,
     falhaTransitoria,
     falhaPermanente,
@@ -181,7 +220,10 @@ export function reconciliarNfse(
 }
 
 function identidadeConfere(inventario: InventarioNfse, checkpoint: CheckpointNfse, motivos: string[]): boolean {
-  const fingerprint = calcularFingerprintInventario(inventario);
+  // API-03P — fingerprint efetivo após preservação de situação confirmada.
+  const fingerprint = calcularFingerprintInventario(
+    alinharInventarioAoCheckpoint(inventario, checkpoint)
+  );
   const ok =
     checkpoint.versaoFormato === VERSAO_FORMATO_CHECKPOINT &&
     checkpoint.cnpj === inventario.cnpj &&

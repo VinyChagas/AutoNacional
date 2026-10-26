@@ -5,6 +5,20 @@ export {
   conferirIdentidadeCheckpoint,
   validarInventarioParaCheckpoint,
 } from './checkpoint-service';
+export {
+  alinharInventarioAoCheckpoint,
+  cancelamentoComprovadoNoCheckpoint,
+  compararInventarioComCheckpoint,
+  ehEnfraquecimentoEvidencia,
+  montarCheckpointEvoluido,
+  transicaoSituacaoPermitida,
+  vigenciaComprovadaNoCheckpoint,
+} from './evolucao-checkpoint';
+export type {
+  ComparacaoEvolucaoCheckpoint,
+  MudancaSituacaoEvolucao,
+  PreservacaoSituacaoEvolucao,
+} from './evolucao-checkpoint';
 export { reconciliarNfse } from './reconciliation';
 export { retomarExecucaoNfse } from './resume-service';
 export {

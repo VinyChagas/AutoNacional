@@ -48,6 +48,7 @@ import {
   decidirMotorIniciar,
   exportarSefinParaDownloadsOperacionais,
   metricasOperacionaisVazias,
+  montarReconciliacaoExecucao,
   resolverRaizFiscalNativaProduto,
   serializarMetricasOperacionais,
   tentarFluxoNativoControlado,
@@ -76,6 +77,7 @@ import { HomologacaoNfseError } from '../automation/nfse/homologacao/types';
 import {
   listarSnapshotsPorLote,
   progressoFiscalDeDiscoveryOnly,
+  progressoFiscalDeInventarioNativo,
   publicarProgressoFiscal,
   retenirProgressoFiscal,
   type ProgressoFiscalNfse,
@@ -89,11 +91,21 @@ import {
   obterDependenciasAdnIniciar,
   resolverRaizHomologacaoAdn,
 } from '../automation/nfse/adn';
+import {
+  classificarErroEmpresa,
+  intervaloRetryMs,
+  obterPoliticaRetryEmpresa,
+  podeAgendarNovaTentativa,
+  type PoliticaRetryEmpresa,
+} from './retry-empresa';
 
 const logger = getLogger('execution-service');
 
 /** Impede novos jobs e orienta o encerramento das execuções já enfileiradas. */
 let encerrandoFila = false;
+
+/** Timers de retry agendados (empresaId → timeout). Cancelados em pararFila. */
+const retriesAgendados = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** DD/MM/YYYY -> YYYY-MM */
 function competenciaFromDataInicio(dataInicio: string): string {
@@ -123,30 +135,28 @@ function avaliarResultadoPortalSefin(resultado: ResultadoFluxoFiscalNativo): {
       resultadoFinal: 'ERRO',
     };
   }
-  if (resultado.indeterminadas > 0) {
+  // API-03N — só vigentes sem XML íntegro geram ERRO operacional.
+  // Indeterminada com XML (atenção) NÃO entra no denominador de vigentes.
+  const faltantes = resultado.chavesVigentesFaltantes ?? [];
+  const vigentesIncompletos =
+    resultado.vigentes > 0 &&
+    (resultado.pendentes > 0 ||
+      resultado.persistidos < resultado.vigentes ||
+      faltantes.length > 0);
+  if (vigentesIncompletos) {
+    const amostra = faltantes.slice(0, 5).join(',');
     return {
       ok: false,
-      codigo: 'SITUACAO_INDETERMINADA',
-      mensagem: 'Há notas com situação indeterminada — cobertura fiscal não declarada.',
+      codigo: 'COBERTURA_INCOMPLETA',
+      mensagem:
+        `Cobertura fiscal incompleta: vigentes=${resultado.vigentes} persistidos=${resultado.persistidos} ` +
+        `faltantes=${faltantes.length}` +
+        (amostra ? ` chaves=${amostra}` : '') +
+        ` pendentes=${resultado.pendentes} ` +
+        `xmls_atencao=${resultado.xmlsComAtencaoFiscal ?? 0} ` +
+        `reconciliação=${resultado.conclusaoReconciliacao ?? 'n/a'}.`,
       resultadoFinal: 'ERRO',
     };
-  }
-  if (resultado.vigentes > 0) {
-    if (
-      !resultado.loteLiberado ||
-      resultado.pendentes > 0 ||
-      resultado.persistidos < resultado.vigentes ||
-      resultado.conclusaoReconciliacao !== 'RECONCILIADA'
-    ) {
-      return {
-        ok: false,
-        codigo: 'COBERTURA_INCOMPLETA',
-        mensagem:
-          `Cobertura fiscal incompleta: vigentes=${resultado.vigentes} persistidos=${resultado.persistidos} ` +
-          `pendentes=${resultado.pendentes} reconciliação=${resultado.conclusaoReconciliacao ?? 'n/a'}.`,
-        resultadoFinal: 'ERRO',
-      };
-    }
   }
 
   const emitidas = inv.totais.emitidas;
@@ -155,6 +165,18 @@ function avaliarResultadoPortalSefin(resultado: ResultadoFluxoFiscalNativo): {
   if (emitidas > 0 && recebidas > 0) resultadoFinal = 'NFS_ENCONTRADAS';
   else if (emitidas > 0) resultadoFinal = 'NOTAS_EMITIDAS';
   else if (recebidas > 0) resultadoFinal = 'NOTAS_RECEBIDAS';
+
+  // Pendência fiscal (indeterminadas): sucesso operacional com atenção.
+  if (resultado.indeterminadas > 0) {
+    return {
+      ok: true,
+      codigo: 'FALHA_ORQUESTRACAO',
+      mensagem:
+        `Portal+SEFIN concluído com pendências fiscais: indeterminadas=${resultado.indeterminadas} ` +
+        `xmls_atencao=${resultado.xmlsComAtencaoFiscal ?? 0} vigentes_ok=${resultado.persistidos}/${resultado.vigentes}.`,
+      resultadoFinal: 'CONCLUIDA_COM_PENDENCIAS',
+    };
+  }
 
   return {
     ok: true,
@@ -208,6 +230,33 @@ interface ExecucaoInfo {
   progressoFiscal?: ProgressoFiscalNfse;
   /** API-02W — durações e contadores operacionais (Portal+SEFIN). */
   metricasOperacionais?: MetricasOperacionaisNfse;
+  /** API-03M — XMLs indeterminados persistidos (não contam como vigentes). */
+  xmlsComAtencaoFiscal?: number;
+  /** API-03M — detalhe por nota indeterminada. */
+  pendenciasFiscais?: Array<{
+    chave_acesso: string;
+    numero_nota: string | null;
+    codigo: string;
+    motivo: string;
+    xml_recuperado: boolean;
+    documento_exportado: boolean;
+  }>;
+  /** API-03M — chaves exportadas para Pendentes_Validacao_Fiscal. */
+  chavesPendentesExportadas?: string[];
+  /** API-03N — vigentes sem XML íntegro. */
+  chavesVigentesFaltantes?: string[];
+  /** API-03G — tentativa atual (1 = primeira corrida). */
+  tentativaAtual?: number;
+  /** API-03G — máximo total de corridas (1 + novas). */
+  maxTentativas?: number;
+  /** API-03G — motivo da última falha transitória. */
+  motivoUltimaFalha?: string | null;
+  /** API-03G — ISO da próxima tentativa agendada. */
+  proximaTentativaEm?: string | null;
+  /** Certificado injetado na 1ª enfileirada (reusado no retry). */
+  certificadoFornecido?: CertificadoEmMemoria;
+  /** Homologação B2 — não reenfileira automaticamente. */
+  retryDesabilitado?: boolean;
 }
 
 type CertificateLoader = (cnpj: string) => Promise<CertificadoEmMemoria>;
@@ -310,6 +359,140 @@ async function obterNomeEmpresa(cnpj: string): Promise<string> {
  * @param batchId - UUID do lote (para rastreio quando iniciado via POST /multiplas)
  * @param tipoAutenticacao - 'certificado' ou 'credenciais' (define método de login)
  */
+/** API-03I — trava curta anti duplo clique no retry manual. */
+const retriesManuaisTravados = new Set<string>();
+
+export class RetryManualEmpresaError extends Error {
+  readonly codigo: string;
+
+  constructor(codigo: string, mensagem: string) {
+    super(mensagem);
+    this.name = 'RetryManualEmpresaError';
+    this.codigo = codigo;
+  }
+}
+
+const STATUS_OCUPADO_RETRY_MANUAL = new Set([
+  'pendente',
+  'executando',
+  'aguardando_retry',
+  'aguardando_captcha',
+  'aguardando_fila',
+]);
+
+/**
+ * API-03I — retry manual de uma empresa com erro definitivo.
+ * Reutiliza fila/PQueue, reinicia orçamento de tentativas só desta empresa,
+ * preserva período/batch/checkpoint/XMLs. Não reinicia as demais.
+ */
+export async function reintentarEmpresaManual(entrada: {
+  empresaId: number;
+  cnpj: string;
+  dataInicio: string;
+  dataFim: string;
+  tipo?: string;
+  headless?: boolean;
+  baixarPdf?: boolean;
+  captchaMode?: CaptchaMode;
+  batchId?: string;
+  tipoAutenticacao?: TipoAutenticacao;
+}): Promise<{
+  execucaoId: number;
+  tentativa_atual: number;
+  max_tentativas: number;
+  batch_id: string | undefined;
+}> {
+  const key = String(entrada.empresaId);
+  if (encerrandoFila) {
+    throw new RetryManualEmpresaError(
+      'SERVIDOR_ENCERRANDO',
+      'Servidor em encerramento; retry manual não é aceito.'
+    );
+  }
+
+  const ativa = execucoesAtivas.get(key);
+  if (ativa && STATUS_OCUPADO_RETRY_MANUAL.has(ativa.status)) {
+    throw new RetryManualEmpresaError(
+      'EMPRESA_EM_EXECUCAO',
+      'A empresa já está na fila, em execução ou aguardando retry.'
+    );
+  }
+
+  if (retriesManuaisTravados.has(key)) {
+    throw new RetryManualEmpresaError(
+      'RETRY_EM_ANDAMENTO',
+      'Retry manual já solicitado para esta empresa.'
+    );
+  }
+
+  retriesManuaisTravados.add(key);
+  try {
+    const timer = retriesAgendados.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      retriesAgendados.delete(key);
+    }
+    // Remove entrada residual (ex.: falhou ainda em memória em cenários atípicos).
+    execucoesAtivas.delete(key);
+
+    const politica = obterPoliticaRetryEmpresa();
+    const maxTentativas = 1 + politica.maxNovasTentativas;
+    // Garante capacidade na fila mesmo com lote já concluído (batchId reaproveitado).
+    fila.concurrency = Math.max(fila.concurrency, 1, await obterLimiteConcorrencia());
+    const execucaoId = await adicionarExecucao(
+      entrada.empresaId,
+      entrada.cnpj,
+      entrada.dataInicio,
+      entrada.dataFim,
+      entrada.tipo || 'ambas',
+      entrada.headless,
+      undefined,
+      entrada.batchId,
+      entrada.tipoAutenticacao,
+      entrada.baixarPdf ?? true,
+      entrada.captchaMode ?? 'TWO_CAPTCHA'
+    );
+
+    const info = execucoesAtivas.get(key);
+    if (info) {
+      info.tentativaAtual = 1;
+      info.maxTentativas = maxTentativas;
+      info.motivoUltimaFalha = null;
+      info.proximaTentativaEm = null;
+      info.mensagem = `Retry manual — tentativa 1/${maxTentativas}…`;
+    }
+
+    if (entrada.batchId) {
+      emitirEventoExecucao(entrada.batchId, {
+        type: 'execution:retry',
+        empresa_id: key,
+        tentativa_atual: 0,
+        max_tentativas: maxTentativas,
+        proxima_tentativa: 1,
+        delay_ms: 0,
+        proxima_tentativa_em: new Date().toISOString(),
+        motivo: 'Retry manual solicitado pelo operador.',
+        codigo: 'RETRY_MANUAL',
+        message: `Retry manual — tentativa 1/${maxTentativas}…`,
+      });
+    }
+
+    logger.info(
+      { empresaId: entrada.empresaId, cnpj: entrada.cnpj, execucaoId, batchId: entrada.batchId },
+      'Retry manual enfileirado'
+    );
+
+    return {
+      execucaoId,
+      tentativa_atual: 1,
+      max_tentativas: maxTentativas,
+      batch_id: entrada.batchId,
+    };
+  } finally {
+    retriesManuaisTravados.delete(key);
+  }
+}
+
 export async function adicionarExecucao(
   empresaId: number,
   cnpj: string,
@@ -345,6 +528,7 @@ export async function adicionarExecucao(
   const tipoAuth: TipoAutenticacao =
     tipoAutenticacao === 'credenciais' ? 'credenciais' : 'certificado';
 
+  const politica = obterPoliticaRetryEmpresa();
   execucoesAtivas.set(String(empresaId), {
     empresaId,
     cnpj,
@@ -366,32 +550,44 @@ export async function adicionarExecucao(
     qtdNotasCanceladas: 0,
     resultadoFinal: null,
     tipoAutenticacao: tipoAuth,
+    tentativaAtual: 1,
+    maxTentativas: 1 + politica.maxNovasTentativas,
+    motivoUltimaFalha: null,
+    proximaTentativaEm: null,
+    certificadoFornecido: certificado,
   });
 
   if (!batchId) {
     fila.concurrency = Math.max(fila.concurrency, await obterLimiteConcorrencia());
   }
 
+  enfileirarWorkerEmpresa(empresaId);
+
+  return exec.id;
+}
+
+/** Enfileira (ou re-enfileira) o worker da empresa na PQueue. */
+function enfileirarWorkerEmpresa(empresaId: number): void {
+  const info = execucoesAtivas.get(String(empresaId));
+  if (!info) return;
   fila.add(async () => {
     try {
       await executarFluxoCompleto(
-      empresaId,
-      cnpj,
-      dataInicio,
-      dataFim,
-      tipo || 'ambas',
-      headlessFinal,
-      exec.id,
-      certificado,
-      tipoAuth,
-      baixarPdf
-    );
+        info.empresaId,
+        info.cnpj,
+        info.periodoInicio,
+        info.periodoFim,
+        info.tipo,
+        info.headless,
+        info.execucaoDbId,
+        info.certificadoFornecido,
+        info.tipoAutenticacao === 'credenciais' ? 'credenciais' : 'certificado',
+        info.baixarPdf
+      );
     } catch (e) {
       logger.error({ err: e, empresaId }, '[worker] Erro não tratado em executarFluxoCompleto');
     }
   });
-
-  return exec.id;
 }
 
 /**
@@ -435,6 +631,9 @@ async function enfileirarExecucaoHomologacaoPreparada(
     qtdNotasCanceladas: 0,
     resultadoFinal: null,
     tipoAutenticacao: tipoAuth,
+    tentativaAtual: 1,
+    maxTentativas: 1,
+    retryDesabilitado: true,
   });
 
   fila.concurrency = Math.max(fila.concurrency, await obterLimiteConcorrencia());
@@ -596,6 +795,11 @@ export async function obterStatusBatch(
         periodo_inicio: info.periodoInicio,
         periodo_fim: info.periodoFim,
         metricas_operacionais: serializarMetricasOperacionais(info.metricasOperacionais),
+        reconciliacao: reconciliacaoDeInfo(info),
+        tentativa_atual: info.tentativaAtual ?? 1,
+        max_tentativas: info.maxTentativas ?? 1,
+        motivo_ultima_falha: info.motivoUltimaFalha ?? null,
+        proxima_tentativa_em: info.proximaTentativaEm ?? null,
       };
       // Campo opcional: só quando há progresso fiscal associado a este lote/execução.
       if (
@@ -638,6 +842,7 @@ export async function obterStatusBatch(
       periodo_fim: snap.periodo_fim ?? null,
       fiscal: snap.fiscal,
       metricas_operacionais: snap.metricas_operacionais ?? null,
+      reconciliacao: snap.reconciliacao ?? null,
     };
     out.push(row);
   }
@@ -647,7 +852,17 @@ export async function obterStatusBatch(
       if (seenEmpresas.has(empId)) continue;
       const ultima = await execucoesRepo.obterUltimaPorEmpresa(empId);
       if (ultima && (ultima.status === 'concluido' || ultima.status === 'falhou')) {
-        // Sem `fiscal`: DB legado não guarda ProgressoFiscalNfse; não reconstruir por estimativa.
+        // Sem `fiscal`/métricas no DB legado — reconciliação parcial só com contagens conhecidas.
+        const reconciliacaoLegado = montarReconciliacaoExecucao({
+          statusExecucao: ultima.status === 'falhou' ? 'ERRO' : 'OK',
+          mensagemErro: ultima.status === 'falhou' ? (ultima.mensagemErro ?? null) : null,
+          etapaAtual: ultima.etapaAtual,
+          qtdEmitidas: ultima.qtdNotasEmitidas,
+          qtdRecebidas: ultima.qtdNotasRecebidas,
+          qtdCanceladas: 0,
+          fiscal: null,
+          metricas: null,
+        });
         out.push({
           empresa_id: String(empId),
           cnpj: ultima.cnpj ?? '',
@@ -666,6 +881,8 @@ export async function obterStatusBatch(
             : null,
           periodo_inicio: ultima.periodoInicio ?? null,
           periodo_fim: ultima.periodoFim ?? null,
+          metricas_operacionais: null,
+          reconciliacao: reconciliacaoLegado,
         });
       }
     }
@@ -700,6 +917,11 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
     periodo_inicio: info.periodoInicio,
     periodo_fim: info.periodoFim,
     metricas_operacionais: serializarMetricasOperacionais(info.metricasOperacionais),
+    reconciliacao: reconciliacaoDeInfo(info),
+    tentativa_atual: info.tentativaAtual ?? 1,
+    max_tentativas: info.maxTentativas ?? 1,
+    motivo_ultima_falha: info.motivoUltimaFalha ?? null,
+    proxima_tentativa_em: info.proximaTentativaEm ?? null,
   };
   if (
     info.progressoFiscal &&
@@ -713,12 +935,83 @@ export function obterStatus(empresaId: string): Record<string, unknown> | null {
 
 const execucoesAtivas = new Map<string, ExecucaoInfo>();
 
-/** Retém snapshot de polling + fiscal (sobrevive à remoção de execucoesAtivas; não ao restart). */
+/**
+ * Stub mínimo de progresso fiscal quando o fluxo não publicou `progressoFiscal`
+ * (ex.: falha cedo). Permite reter métricas/reconciliação sem inventar completude.
+ */
+function progressoFiscalMinimoParaRetencao(info: ExecucaoInfo): ProgressoFiscalNfse {
+  const emitidas = info.qtdNotasEmitidas ?? 0;
+  const recebidas = info.qtdNotasRecebidas ?? 0;
+  const canceladas = info.qtdNotasCanceladas ?? 0;
+  // API-03N — sem inventário, não inventar vigentes misturando indeterminadas.
+  // Preferir null-safe: vigentes desconhecidos ficam 0 no stub; a UI usa "—" via reconciliacao.
+  const descobertos = emitidas + recebidas;
+  return {
+    versao: 1,
+    batch_id: info.batchId ?? null,
+    empresa_id: String(info.empresaId),
+    execucao_id: String(info.execucaoDbId),
+    cnpj: info.cnpj,
+    revisao: 0,
+    inventario: {
+      estado: 'indisponivel',
+      completude: null,
+      conclusao_confiavel: false,
+      totais: {
+        emitidas,
+        recebidas,
+        canceladas,
+        vigentes: 0,
+        indeterminadas: 0,
+        descobertos,
+        paginas: 0,
+      },
+    },
+    validacao: {
+      estado: 'indisponivel',
+      origem: 'indisponivel',
+      vigentes: 0,
+      canceladas,
+      indeterminadas: 0,
+      conclusao_confiavel: false,
+    },
+    recuperacao: { estado: 'nao_executada', conclusao_confiavel: false },
+    codigo: null,
+    message: null,
+    estado_operacional: null,
+    veredito_discovery: null,
+  };
+}
+
+function reconciliacaoDeInfo(info: ExecucaoInfo) {
+  return montarReconciliacaoExecucao({
+    statusExecucao: info.status,
+    resultadoFinal: info.resultadoFinal,
+    mensagemErro: info.status === 'falhou' || info.status === 'erro' ? info.mensagem : null,
+    etapaAtual: info.etapaAtual,
+    qtdEmitidas: info.qtdNotasEmitidas,
+    qtdRecebidas: info.qtdNotasRecebidas,
+    qtdCanceladas: info.qtdNotasCanceladas,
+    fiscal: info.progressoFiscal,
+    metricas: info.metricasOperacionais,
+    xmlsComAtencaoFiscal: info.xmlsComAtencaoFiscal,
+    pendenciasFiscais: info.pendenciasFiscais,
+    chavesPendentesExportadas: info.chavesPendentesExportadas,
+    chavesVigentesFaltantesLista: info.chavesVigentesFaltantes,
+  });
+}
+
+/** Retém snapshot (métricas + reconciliação). Sobrevive à remoção de execucoesAtivas; não ao restart. */
 function retenirProgressoFiscalDeInfo(
   info: ExecucaoInfo,
   opcoes?: { marcadoFinalizado?: boolean }
 ): void {
-  if (!info.progressoFiscal) return;
+  if (!info.execucaoDbId) return;
+  const fiscalBase = info.progressoFiscal ?? progressoFiscalMinimoParaRetencao(info);
+  const reconciliacao = reconciliacaoDeInfo({
+    ...info,
+    progressoFiscal: fiscalBase,
+  });
   retenirProgressoFiscal(
     {
       empresa_id: String(info.empresaId),
@@ -738,13 +1031,14 @@ function retenirProgressoFiscalDeInfo(
       periodo_inicio: info.periodoInicio,
       periodo_fim: info.periodoFim,
       fiscal: {
-        ...info.progressoFiscal,
-        batch_id: info.batchId ?? info.progressoFiscal.batch_id,
+        ...fiscalBase,
+        batch_id: info.batchId ?? fiscalBase.batch_id,
         empresa_id: String(info.empresaId),
         execucao_id: String(info.execucaoDbId),
         cnpj: info.cnpj,
       },
       metricas_operacionais: serializarMetricasOperacionais(info.metricasOperacionais),
+      reconciliacao: reconciliacao as unknown as Record<string, unknown>,
     },
     { marcadoFinalizado: opcoes?.marcadoFinalizado === true }
   );
@@ -770,15 +1064,21 @@ export function obterEstadoFila(): {
 /**
  * Pausa a fila, descarta jobs ainda não iniciados e fecha browsers em andamento.
  * O fluxo existente de finalização grava a falha das execuções que já tinham começado.
+ * API-03G — cancela retries agendados e marca aguardando_retry como falha definitiva.
  */
 export async function pararFilaExecucao(timeoutMs = 20_000): Promise<void> {
   encerrandoFila = true;
   fila.pause();
   fila.clear();
 
+  for (const [empresaKey, timer] of retriesAgendados) {
+    clearTimeout(timer);
+    retriesAgendados.delete(empresaKey);
+  }
+
   const ativas = [...execucoesAtivas.values()];
   for (const info of ativas) {
-    if (info.status !== 'pendente') continue;
+    if (info.status !== 'pendente' && info.status !== 'aguardando_retry') continue;
     try {
       await execucoesRepo.atualizar(info.execucaoDbId, {
         status: 'falhou',
@@ -846,6 +1146,265 @@ const STATUS_FINAIS_DB = new Set(['concluido', 'falhou']);
 
 /** IDs já finalizados (evita dupla chamada em finally + early return). */
 const finalizadosIds = new Set<number>();
+
+async function liberarRecursosTentativa(info: ExecucaoInfo): Promise<void> {
+  const page = info.page;
+  const browser = info.browser;
+  const slot = info.windowSlot;
+  info.page = undefined;
+  info.browser = undefined;
+  info.windowSlot = undefined;
+  try {
+    if (page) await page.close().catch(() => undefined);
+    if (browser) await browser.close().catch(() => undefined);
+  } catch {
+    /* ignore */
+  } finally {
+    try {
+      slot?.release();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * API-03G — fecha sessão da tentativa e agenda retorno ao fim da fila,
+ * ou finaliza definitivamente. Não apaga checkpoint/XML.
+ */
+async function decidirFinalizacaoOuRetry(params: {
+  info: ExecucaoInfo;
+  execucaoId: number;
+  empresaId: number;
+  cnpj: string;
+  batchId?: string;
+  startedAt?: Date;
+  persistirMetrica: (status: 'OK' | 'ERRO', erroResumo?: string) => void;
+  politica?: PoliticaRetryEmpresa;
+}): Promise<void> {
+  const { info, execucaoId, empresaId, cnpj, batchId, startedAt, persistirMetrica } = params;
+  const politica = params.politica ?? obterPoliticaRetryEmpresa();
+  const maxTotal = 1 + politica.maxNovasTentativas;
+  info.maxTentativas = maxTotal;
+  if (!info.tentativaAtual || info.tentativaAtual < 1) info.tentativaAtual = 1;
+
+  if (info.status === 'concluido') {
+    await finalizarExecucao({
+      execucaoId,
+      empresaId,
+      cnpj,
+      batchId,
+      statusFinal: 'concluido',
+      message: info.mensagem || 'Concluído',
+      contagens: {
+        emitidas: info.qtdNotasEmitidas,
+        recebidas: info.qtdNotasRecebidas,
+        canceladas: info.qtdNotasCanceladas,
+      },
+      resultado_final: info.resultadoFinal ?? 'SEM_MOVIMENTO',
+      page: info.page,
+      browser: info.browser,
+      windowSlot: info.windowSlot,
+      startedAt,
+      persistirMetrica,
+    });
+    return;
+  }
+
+  if (encerrandoFila) {
+    await finalizarExecucao({
+      execucaoId,
+      empresaId,
+      cnpj,
+      batchId,
+      statusFinal: 'falhou',
+      message: info.mensagem || 'Execução interrompida: processo encerrando',
+      contagens: {
+        emitidas: info.qtdNotasEmitidas,
+        recebidas: info.qtdNotasRecebidas,
+        canceladas: info.qtdNotasCanceladas,
+      },
+      resultado_final: 'ERRO',
+      page: info.page,
+      browser: info.browser,
+      windowSlot: info.windowSlot,
+      startedAt,
+      persistirMetrica,
+    });
+    return;
+  }
+
+  const mensagemFalha = info.mensagem || 'Erro desconhecido';
+  const classificacao = info.retryDesabilitado
+    ? {
+        acao: 'FALHA_DEFINITIVA' as const,
+        motivo: 'Retry desabilitado neste contexto (homologação).',
+        codigo: 'RETRY_DESABILITADO',
+      }
+    : classificarErroEmpresa(mensagemFalha);
+
+  if (classificacao.acao === 'SUSPENDER_ACESSO') {
+    info.resultadoFinal = 'SUSPENSO_ACESSO';
+    await finalizarExecucao({
+      execucaoId,
+      empresaId,
+      cnpj,
+      batchId,
+      statusFinal: 'falhou',
+      message: `${mensagemFalha} [${classificacao.codigo}] ${classificacao.motivo}`,
+      contagens: {
+        emitidas: info.qtdNotasEmitidas,
+        recebidas: info.qtdNotasRecebidas,
+        canceladas: info.qtdNotasCanceladas,
+      },
+      resultado_final: 'SUSPENSO_ACESSO',
+      page: info.page,
+      browser: info.browser,
+      windowSlot: info.windowSlot,
+      startedAt,
+      persistirMetrica,
+    });
+    return;
+  }
+
+  const tentativa = info.tentativaAtual;
+  if (
+    classificacao.acao === 'RETRY' &&
+    podeAgendarNovaTentativa(politica, tentativa)
+  ) {
+    const delayMs = intervaloRetryMs(politica, tentativa);
+    const proxima = tentativa + 1;
+    const proximaEm = new Date(Date.now() + delayMs).toISOString();
+
+    await liberarRecursosTentativa(info);
+
+    info.status = 'aguardando_retry';
+    info.etapaAtual = 'aguardando_retry';
+    info.progresso = 0;
+    info.motivoUltimaFalha = mensagemFalha.slice(0, 500);
+    info.proximaTentativaEm = proximaEm;
+    info.mensagem = `Tentativa ${tentativa}/${maxTotal} falhou (transitório). Nova tentativa ${proxima}/${maxTotal} em ${Math.round(delayMs / 1000)}s.`;
+    info.resultadoFinal = null;
+
+    try {
+      await execucoesRepo.atualizar(execucaoId, {
+        status: 'aguardando_retry',
+        etapaAtual: 'aguardando_retry',
+        progresso: 0,
+        mensagem: info.mensagem,
+        mensagemErro: info.motivoUltimaFalha ?? undefined,
+      });
+    } catch (err) {
+      logger.error({ err, execucaoId }, '[retry] Falha ao persistir aguardando_retry');
+    }
+
+    emitirEventoExecucao(batchId, {
+      type: 'execution:retry',
+      empresa_id: String(empresaId),
+      tentativa_atual: tentativa,
+      max_tentativas: maxTotal,
+      proxima_tentativa: proxima,
+      delay_ms: delayMs,
+      proxima_tentativa_em: proximaEm,
+      motivo: info.motivoUltimaFalha ?? mensagemFalha,
+      codigo: classificacao.codigo,
+      message: info.mensagem,
+    });
+
+    logger.warn(
+      {
+        empresaId,
+        cnpj,
+        tentativa,
+        maxTotal,
+        delayMs,
+        codigo: classificacao.codigo,
+      },
+      'Empresa reenfileirada para retry automático'
+    );
+
+    const key = String(empresaId);
+    const existente = retriesAgendados.get(key);
+    if (existente) clearTimeout(existente);
+
+    const timer = setTimeout(() => {
+      retriesAgendados.delete(key);
+      const atual = execucoesAtivas.get(key);
+      if (!atual || atual.execucaoDbId !== execucaoId) return;
+      if (encerrandoFila) {
+        void finalizarExecucao({
+          execucaoId,
+          empresaId,
+          cnpj,
+          batchId: atual.batchId,
+          statusFinal: 'falhou',
+          message: 'Retry cancelado: processo encerrando',
+          contagens: { emitidas: 0, recebidas: 0, canceladas: 0 },
+          resultado_final: 'ERRO',
+          persistirMetrica: () => undefined,
+        });
+        return;
+      }
+      atual.tentativaAtual = proxima;
+      atual.status = 'pendente';
+      atual.etapaAtual = 'inicio';
+      atual.proximaTentativaEm = null;
+      atual.mensagem = `Tentativa ${proxima}/${maxTotal}…`;
+      atual.qtdNotasEmitidas = 0;
+      atual.qtdNotasRecebidas = 0;
+      atual.qtdNotasCanceladas = 0;
+      atual.resultadoFinal = null;
+      atual.metricasOperacionais = undefined;
+      atual.progressoFiscal = undefined;
+      void execucoesRepo
+        .atualizar(execucaoId, {
+          status: 'pendente',
+          etapaAtual: 'inicio',
+          progresso: 0,
+          mensagem: atual.mensagem,
+          qtdNotasEmitidas: 0,
+          qtdNotasRecebidas: 0,
+        })
+        .catch(() => undefined);
+      emitirEventoExecucao(batchId, {
+        type: 'execution:stage',
+        empresa_id: key,
+        stage: 'retry_inicio',
+        message: atual.mensagem,
+      });
+      enfileirarWorkerEmpresa(empresaId);
+    }, delayMs);
+
+    retriesAgendados.set(key, timer);
+    return;
+  }
+
+  const esgotado =
+    classificacao.acao === 'RETRY' && !podeAgendarNovaTentativa(politica, tentativa);
+  const msgFinal = esgotado
+    ? `${mensagemFalha} (retry esgotado: ${tentativa}/${maxTotal})`
+    : mensagemFalha;
+
+  await finalizarExecucao({
+    execucaoId,
+    empresaId,
+    cnpj,
+    batchId,
+    statusFinal: 'falhou',
+    message: msgFinal,
+    contagens: {
+      emitidas: info.qtdNotasEmitidas,
+      recebidas: info.qtdNotasRecebidas,
+      canceladas: info.qtdNotasCanceladas,
+    },
+    resultado_final: info.resultadoFinal ?? 'ERRO',
+    page: info.page,
+    browser: info.browser,
+    windowSlot: info.windowSlot,
+    startedAt,
+    persistirMetrica,
+  });
+}
 
 /**
  * Finalização idempotente: atualiza DB, emite SSE, remove de execucoesAtivas, fecha Playwright.
@@ -933,8 +1492,8 @@ async function finalizarExecucao(params: FinalizarExecucaoParams): Promise<void>
   } catch (e) {
     logger.error({ err: e, execucaoId }, '[finalize] Erro ao atualizar DB/emitir SSE');
   } finally {
-    // UI-01e-B1/B2 — reter progresso fiscal antes de remover da mapa ativa (inicia TTL).
-    if (info?.progressoFiscal) {
+    // API-03B — sempre reter métricas + reconciliação (com ou sem progressoFiscal nativo).
+    if (info) {
       retenirProgressoFiscalDeInfo(
         {
           ...info,
@@ -1209,20 +1768,12 @@ async function executarFluxoCompleto(
       info.resultadoFinal = 'ERRO';
       info.progresso = 100;
     } finally {
-      const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
-      await finalizarExecucao({
+      await decidirFinalizacaoOuRetry({
+        info,
         execucaoId: execucaoDbId,
         empresaId,
         cnpj,
         batchId,
-        statusFinal,
-        message: info.mensagem || (statusFinal === 'falhou' ? 'Erro ADN' : 'Concluído'),
-        contagens: {
-          emitidas: info.qtdNotasEmitidas,
-          recebidas: info.qtdNotasRecebidas,
-          canceladas: info.qtdNotasCanceladas,
-        },
-        resultado_final: info.resultadoFinal ?? 'ERRO',
         startedAt,
         persistirMetrica,
       });
@@ -1553,8 +2104,12 @@ async function executarFluxoCompleto(
         qtd_recebidas: info.qtdNotasRecebidas,
         qtd_canceladas: info.qtdNotasCanceladas,
       });
+      const faltantesLog = resultadoNativo.chavesVigentesFaltantes ?? [];
       adicionarLog(
         `Portal+SEFIN: vigentes=${resultadoNativo.vigentes} persistidos=${resultadoNativo.persistidos} ` +
+          `faltantes=${faltantesLog.length} ` +
+          `indet=${resultadoNativo.indeterminadas} ` +
+          `xmls_atencao=${resultadoNativo.xmlsComAtencaoFiscal ?? 0} ` +
           `cobertura=${resultadoNativo.coberturaPercentual}% ` +
           `reconciliacao=${resultadoNativo.conclusaoReconciliacao ?? 'n/a'} ` +
           `loteLiberado=${resultadoNativo.loteLiberado}`
@@ -1567,19 +2122,46 @@ async function executarFluxoCompleto(
         resultadoNativo.duracoes?.descobertaRecebidasMs ?? null;
       metricas.duracoes.recuperacaoSefinMs =
         resultadoNativo.duracoes?.recuperacaoSefinMs ?? null;
-      // Notas descobertas no Portal ≠ XMLs SEFIN persistidos.
+      // Notas descobertas no Portal ≠ XMLs SEFIN persistidos (só vigentes confirmados).
       metricas.contadores.notasDescobertas = resultadoNativo.descobertos;
       metricas.contadores.xmlsPersistidos = resultadoNativo.persistidos;
 
-      const avaliacao = avaliarResultadoPortalSefin(resultadoNativo);
-      if (!avaliacao.ok) {
-        metricas.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
-        info.metricasOperacionais = metricas;
-        throw new OrquestracaoNfseError(avaliacao.codigo, avaliacao.mensagem);
+      // API-03N — publicar inventário real antes de avaliar/exportar (evita vigentes=descobertos−canceladas).
+      if (resultadoNativo.inventario) {
+        const fiscal = publicarProgressoFiscal(
+          progressoFiscalDeInventarioNativo({
+            identidade: {
+              batchId: batchId ?? null,
+              empresaId: key,
+              execucaoId: String(execucaoDbId),
+              cnpj,
+            },
+            inventario: resultadoNativo.inventario,
+            recuperacaoEstado:
+              (resultadoNativo.chavesVigentesFaltantes?.length ?? 0) > 0
+                ? 'parcial'
+                : resultadoNativo.indeterminadas > 0
+                  ? 'parcial'
+                  : 'completa',
+          })
+        );
+        info.progressoFiscal = fiscal;
+        emitirProgressoFiscalSeAssociado({
+          batchId,
+          empresaId: key,
+          execucaoId: String(execucaoDbId),
+          cnpj,
+          fiscal,
+        });
       }
 
-      // SEM_MOVIMENTO (0 docs) ou só canceladas: sem XML vigente para exportar.
-      if (resultadoNativo.documentosAptos.length > 0) {
+      info.xmlsComAtencaoFiscal = resultadoNativo.xmlsComAtencaoFiscal ?? 0;
+      info.pendenciasFiscais = resultadoNativo.pendenciasFiscais ?? [];
+      info.chavesVigentesFaltantes = resultadoNativo.chavesVigentesFaltantes ?? [];
+
+      // API-03M/03N — exporta XMLs já recuperados mesmo sem cobertura 100% dos vigentes.
+      const pendentesFiscais = resultadoNativo.documentosPendentesFiscais ?? [];
+      if (resultadoNativo.documentosAptos.length > 0 || pendentesFiscais.length > 0) {
         emitirEventoExecucao(batchId, {
           type: 'execution:stage',
           empresa_id: key,
@@ -1593,6 +2175,7 @@ async function executarFluxoCompleto(
         const exportacao = await exportarSefinParaDownloadsOperacionais({
           inventario: resultadoNativo.inventario!,
           documentosAptos: resultadoNativo.documentosAptos,
+          documentosPendentesFiscais: pendentesFiscais,
           repositorio: repositorioExport,
           periodoConsulta: resultadoNativo.periodoConsulta,
           downloadsBasePath: basePath,
@@ -1604,9 +2187,18 @@ async function executarFluxoCompleto(
         metricas.duracoes.persistenciaExportacaoMs = tExport.entre('export_inicio', 'export_fim');
         metricas.contadores.xmlsExportados = exportacao.copiados;
         metricas.contadores.xmlsJaExistentes = exportacao.jaIguais;
+        info.chavesPendentesExportadas = exportacao.chavesPendentesExportadas;
+        if (info.pendenciasFiscais?.length) {
+          const exportadas = new Set(exportacao.chavesPendentesExportadas);
+          info.pendenciasFiscais = info.pendenciasFiscais.map((p) => ({
+            ...p,
+            documento_exportado: p.documento_exportado || exportadas.has(p.chave_acesso),
+          }));
+        }
         if (!exportacao.ok) {
           metricas.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
           info.metricasOperacionais = metricas;
+          retenirProgressoFiscalDeInfo(info);
           throw new OrquestracaoNfseError('FALHA_EXPORTACAO', exportacao.motivo);
         }
         adicionarLog(exportacao.motivo);
@@ -1614,10 +2206,19 @@ async function executarFluxoCompleto(
         metricas.contadores.xmlsExportados = 0;
         metricas.contadores.xmlsJaExistentes = 0;
         metricas.duracoes.persistenciaExportacaoMs = 0;
+        info.chavesPendentesExportadas = [];
       }
 
       metricas.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
       info.metricasOperacionais = metricas;
+
+      const avaliacao = avaliarResultadoPortalSefin(resultadoNativo);
+      if (!avaliacao.ok) {
+        info.resultadoFinal = avaliacao.resultadoFinal;
+        retenirProgressoFiscalDeInfo(info);
+        throw new OrquestracaoNfseError(avaliacao.codigo, avaliacao.mensagem);
+      }
+
       info.resultadoFinal = avaliacao.resultadoFinal;
       adicionarLog(avaliacao.mensagem);
     } else if (decisaoMotor.executarPortalSefin) {
@@ -1840,24 +2441,12 @@ async function executarFluxoCompleto(
     m.duracoes.duracaoTotalMs = cronometro.totalAteAgora();
     info.metricasOperacionais = m;
   } finally {
-    const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
-    const resultadoFinal = info.resultadoFinal ?? 'ERRO';
-    await finalizarExecucao({
+    await decidirFinalizacaoOuRetry({
+      info,
       execucaoId: execucaoDbId,
       empresaId,
       cnpj,
       batchId,
-      statusFinal,
-      message: info.mensagem || (statusFinal === 'falhou' ? 'Erro desconhecido' : 'Concluído'),
-      contagens: {
-        emitidas: info.qtdNotasEmitidas,
-        recebidas: info.qtdNotasRecebidas,
-        canceladas: info.qtdNotasCanceladas,
-      },
-      resultado_final: resultadoFinal,
-      page: info.page,
-      browser: info.browser,
-      windowSlot: info.windowSlot,
       startedAt,
       persistirMetrica,
     });
@@ -1869,24 +2458,16 @@ async function executarFluxoCompleto(
     info.mensagem = err.message || 'Erro inesperado';
     info.resultadoFinal = 'ERRO';
   } finally {
-    const statusFinal = info.status === 'concluido' ? 'concluido' : 'falhou';
-    const resultadoFinal = info.resultadoFinal ?? 'ERRO';
-    await finalizarExecucao({
+    // Se o finally interno já agendou retry (status aguardando_retry) ou finalizou, não repetir.
+    if (info.status === 'aguardando_retry' || finalizadosIds.has(execucaoDbId)) {
+      return;
+    }
+    await decidirFinalizacaoOuRetry({
+      info,
       execucaoId: execucaoDbId,
       empresaId,
       cnpj,
       batchId,
-      statusFinal,
-      message: info.mensagem || (statusFinal === 'falhou' ? 'Erro desconhecido' : 'Concluído'),
-      contagens: {
-        emitidas: info.qtdNotasEmitidas,
-        recebidas: info.qtdNotasRecebidas,
-        canceladas: info.qtdNotasCanceladas,
-      },
-      resultado_final: resultadoFinal,
-      page: info.page,
-      browser: info.browser,
-      windowSlot: info.windowSlot,
       startedAt,
       persistirMetrica,
     });

@@ -39,6 +39,8 @@ export interface SnapshotProgressoFiscalPolling {
   fiscal: ProgressoFiscalNfse;
   /** API-02W — métricas operacionais (durações/contadores); ausente = UI mostra "—". */
   metricas_operacionais?: Record<string, number | null> | null;
+  /** API-03B — reconciliação por chaves/métricas comprováveis. */
+  reconciliacao?: Record<string, unknown> | null;
 }
 
 export interface OpcoesRetencaoProgressoFiscal {

@@ -170,6 +170,27 @@ describe('extração de chave', () => {
     expect(extraida.chave).toBeNull();
     expect(extraida.problemas).toContain('DATA_CHAVE_NAO_VERIFICAVEL');
   });
+
+  it('API-03H — usa texto da célula com exatamente uma chave de 50 dígitos', () => {
+    const extraida = extrairChaveDaLinha({
+      hrefs: [],
+      dataChave: 'MW85eTRUeExBcE1mV09YVjJrMVlZOU1taXRPMlVLSWdJVk5EUWQxaFVhcVNv',
+      textos: [`Chave de acesso ${chave(3)}`],
+    });
+    expect(extraida.chave).toBe(chave(3));
+    expect(extraida.fonte).toBe('TEXTO_CELULA');
+    expect(extraida.problemas).not.toContain('DATA_CHAVE_NAO_VERIFICAVEL');
+  });
+
+  it('API-03H — não inventa chave quando texto não tem 50 dígitos', () => {
+    const extraida = extrairChaveDaLinha({
+      hrefs: [],
+      dataChave: null,
+      textos: ['sem chave aqui', 'apenas texto'],
+    });
+    expect(extraida.chave).toBeNull();
+    expect(extraida.problemas).toContain('CHAVE_NAO_IDENTIFICADA');
+  });
 });
 
 describe('descoberta da listagem', () => {
@@ -201,7 +222,7 @@ describe('descoberta da listagem', () => {
       indeterminadas: 1,
     });
     expect(resultado.inventario.documentos[0].situacao).toBe('INDETERMINADA');
-    expect(bloqueiaProcessamentoAutomatico(resultado.inventario.documentos[0])).toBe(true);
+    expect(bloqueiaProcessamentoAutomatico(resultado.inventario.documentos[0])).toBe(false);
     expect(resultado.inventario.completude).toBe('COMPLETO');
   });
 

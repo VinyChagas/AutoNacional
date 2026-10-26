@@ -4,8 +4,15 @@
  */
 import type { ProgressoFiscalNfse } from './progresso-fiscal.model';
 import type { MetricasOperacionaisApi } from './metricas-operacionais.model';
+import type { ReconciliacaoApi } from './reconciliacao-execucao.model';
 
-export type ExecutionRowStatus = 'FILA' | 'EM_EXECUCAO' | 'AGUARDANDO_CAPTCHA' | 'OK' | 'ERRO';
+export type ExecutionRowStatus =
+  | 'FILA'
+  | 'EM_EXECUCAO'
+  | 'AGUARDANDO_CAPTCHA'
+  | 'AGUARDANDO_RETRY'
+  | 'OK'
+  | 'ERRO';
 export type ExecutionRowMetodo = 'CERTIFICADO' | 'CREDENCIAL';
 /** Motor efetivo após roteamento Iniciar (API-02K: PORTAL_SEFIN padrão A1). */
 export type ExecutionRowMotor = 'ADN' | 'PLAYWRIGHT' | 'PORTAL_SEFIN';
@@ -41,4 +48,11 @@ export interface ExecutionRow {
   fiscal_seq?: number;
   /** API-02W — durações/contadores; ausente = UI mostra "—". */
   metricas_operacionais?: MetricasOperacionaisApi | null;
+  /** API-03B — reconciliação fiscal comprovável. */
+  reconciliacao?: ReconciliacaoApi | null;
+  /** API-03G — tentativa atual / máximo. */
+  tentativa_atual?: number | null;
+  max_tentativas?: number | null;
+  motivo_ultima_falha?: string | null;
+  proxima_tentativa_em?: string | null;
 }

@@ -96,7 +96,22 @@ export interface ResultadoFluxoFiscalNativo {
   estadoAuditoria: RelatorioAuditoriaFiscal['estado'] | null;
   caminhoAuditoria: string | null;
   documentosAptos: DocumentoExportavelNfse[];
+  /** API-03M — indeterminadas com XML válido para Pendentes_Validacao_Fiscal. */
+  documentosPendentesFiscais?: DocumentoExportavelNfse[];
   loteLiberado: boolean;
+  /** API-03M — XMLs indeterminados persistidos (não contam como vigentes). */
+  xmlsComAtencaoFiscal?: number;
+  /** API-03N — vigentes sem XML íntegro (não inclui indeterminadas). */
+  chavesVigentesFaltantes?: string[];
+  /** API-03M — detalhe por nota indeterminada (atenção / não recuperado / documental). */
+  pendenciasFiscais?: Array<{
+    chave_acesso: string;
+    numero_nota: string | null;
+    codigo: string;
+    motivo: string;
+    xml_recuperado: boolean;
+    documento_exportado: boolean;
+  }>;
   compatibilidadePdf: CompatibilidadePdfNativo;
   diagnosticos: DiagnosticoOrquestracaoNfse[];
   recuperacoes: Array<{

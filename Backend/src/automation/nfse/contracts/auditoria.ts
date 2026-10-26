@@ -71,9 +71,8 @@ export function auditarRecuperacao(
     (documento) => !chavesRecuperadas.has(documento.chaveNacional)
   ).length;
   const canceladaIncluida = canceladas.length - canceladasExcluidas;
-  const indeterminadaComXml = inventario.documentos
-    .filter((documento) => documento.situacao === 'INDETERMINADA')
-    .some((documento) => (porChave.get(documento.chaveNacional) ?? []).some(xmlRecuperadoUtilizavel));
+  // API-03M — XML de indeterminada não reprova a cobertura dos vigentes
+  // (fica pendência fiscal / atenção, sem contar como vigente confirmado).
 
   const coberturaVigentes = vigentes.length === 0 ? 1 : vigentesCobertos / vigentes.length;
   const statusAprovacao: StatusAprovacaoAuditoria =
@@ -81,8 +80,7 @@ export function auditarRecuperacao(
     xmlsAusentes === 0 &&
     xmlsInvalidos === 0 &&
     xmlsDuplicados === 0 &&
-    canceladaIncluida === 0 &&
-    !indeterminadaComXml
+    canceladaIncluida === 0
       ? 'APROVADA'
       : 'REPROVADA';
 

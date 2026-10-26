@@ -97,6 +97,9 @@ export interface ArtefatosExecucaoNfse {
 
 export type CodigoPendenciaExecucao =
   | 'SITUACAO_INDETERMINADA'
+  | 'ATENCAO_SITUACAO_NAO_CONFIRMADA'
+  | 'XML_INDETERMINADA_NAO_RECUPERADO'
+  | 'BLOQUEIO_VALIDACAO_DOCUMENTAL'
   | 'RECUPERACAO_PENDENTE'
   | 'XML_AUSENTE'
   | 'XML_INVALIDO'
@@ -104,8 +107,11 @@ export type CodigoPendenciaExecucao =
 
 export interface PendenciaExecucaoNfse {
   chaveNacional?: string;
+  numeroNota?: string | null;
   codigo: CodigoPendenciaExecucao;
   mensagem: string;
+  xmlRecuperado?: boolean;
+  documentoExportado?: boolean;
 }
 
 export interface ErroExecucaoNfse {
@@ -193,7 +199,7 @@ function derivarStatus(
   auditoria: AuditoriaRecuperacao,
   erros: readonly ErroExecucaoNfse[]
 ): StatusExecucaoNfse {
-  if (inventario.totais.indeterminadas > 0) return 'BLOQUEADA';
+  // API-03M — indeterminada não bloqueia a execução; vira PENDENTE/CONCLUIDA com atenção.
   if (auditoria.canceladasExcluidas !== inventario.totais.canceladas) return 'FALHOU';
   if (erros.length > 0 || auditoria.xmlsInvalidos > 0 || auditoria.xmlsDuplicados > 0) {
     return 'FALHOU';
@@ -205,6 +211,7 @@ function derivarStatus(
     return 'PENDENTE';
   }
   if (auditoria.statusAprovacao !== 'APROVADA') return 'FALHOU';
+  if (inventario.totais.indeterminadas > 0) return 'PENDENTE';
   return 'CONCLUIDA';
 }
 
@@ -223,11 +230,41 @@ function montarPendencias(
 
   for (const documento of inventario.documentos) {
     if (documento.situacao !== 'INDETERMINADA') continue;
-    pendencias.push({
-      chaveNacional: documento.chaveNacional,
-      codigo: 'SITUACAO_INDETERMINADA',
-      mensagem: 'Situação indeterminada bloqueia o processamento automático até revisão.',
-    });
+    const itens = porChave.get(documento.chaveNacional) ?? [];
+    const recuperado = itens.some(xmlRecuperadoUtilizavel);
+    const falhaDoc = itens.some(
+      (item) =>
+        item.resultado === 'FALHOU' ||
+        item.resultado === 'BLOQUEADO' ||
+        (item.motivoFalha ?? '').toLowerCase().includes('cnpj') ||
+        (item.motivoFalha ?? '').toLowerCase().includes('validacao')
+    );
+    if (recuperado) {
+      pendencias.push({
+        chaveNacional: documento.chaveNacional,
+        codigo: 'ATENCAO_SITUACAO_NAO_CONFIRMADA',
+        mensagem:
+          'XML documentalmente válido recuperado; situação fiscal do Portal ainda não confirmada.',
+        xmlRecuperado: true,
+        documentoExportado: false,
+      });
+    } else if (falhaDoc && itens.length > 0) {
+      pendencias.push({
+        chaveNacional: documento.chaveNacional,
+        codigo: 'BLOQUEIO_VALIDACAO_DOCUMENTAL',
+        mensagem: itens[0]?.motivoFalha || 'Validação documental do XML falhou.',
+        xmlRecuperado: false,
+        documentoExportado: false,
+      });
+    } else {
+      pendencias.push({
+        chaveNacional: documento.chaveNacional,
+        codigo: 'XML_INDETERMINADA_NAO_RECUPERADO',
+        mensagem: 'Situação indeterminada no Portal; XML ainda não recuperado na SEFIN.',
+        xmlRecuperado: false,
+        documentoExportado: false,
+      });
+    }
   }
 
   for (const item of recuperacoes) {

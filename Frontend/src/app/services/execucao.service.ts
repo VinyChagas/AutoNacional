@@ -47,15 +47,35 @@ export interface ExecutionStreamEventFinished {
   competencia_fiscal?: string;
 }
 
+/** API-03G — retry transitório agendado. */
+export interface ExecutionStreamEventRetry {
+  type: 'execution:retry';
+  empresa_id: string;
+  tentativa_atual: number;
+  max_tentativas: number;
+  proxima_tentativa: number;
+  delay_ms: number;
+  proxima_tentativa_em: string;
+  motivo: string;
+  codigo: string;
+  message: string;
+}
+
 export type ExecutionStreamEvent =
   | ExecutionStreamEventStarted
   | ExecutionStreamEventStage
   | ExecutionStreamEventCounts
   | ExecutionStreamEventFinished
+  | ExecutionStreamEventRetry
   | ExecutionFiscalStreamEvent;
 
 export type StatusExecucao = 'fila' | 'executando' | 'finalizado' | 'falhou';
-export type ResultadoFinal = 'SEM_MOVIMENTO' | 'NOTAS_EMITIDAS' | 'NOTAS_RECEBIDAS' | 'NFS_ENCONTRADAS';
+export type ResultadoFinal =
+  | 'SEM_MOVIMENTO'
+  | 'NOTAS_EMITIDAS'
+  | 'NOTAS_RECEBIDAS'
+  | 'NFS_ENCONTRADAS'
+  | 'CONCLUIDA_COM_PENDENCIAS';
 
 export interface ExecucaoEmpresa {
   id: string;
@@ -122,6 +142,13 @@ export interface ExecucaoStatusResponse {
   batch_id?: string;
   /** API-02W — métricas operacionais (durações/contadores). */
   metricas_operacionais?: import('../models/metricas-operacionais.model').MetricasOperacionaisApi | null;
+  /** API-03B — reconciliação fiscal comprovável. */
+  reconciliacao?: import('../models/reconciliacao-execucao.model').ReconciliacaoApi | null;
+  /** API-03G */
+  tentativa_atual?: number | null;
+  max_tentativas?: number | null;
+  motivo_ultima_falha?: string | null;
+  proxima_tentativa_em?: string | null;
 }
 
 export interface ResumoExecucoesResponse {
@@ -155,6 +182,8 @@ export interface MultiplasExecucoesRequest {
   contabilidade_id?: number | null;
   /** TWO_CAPTCHA (padrão) | MANUAL (Central de Captchas) */
   captchaMode?: 'TWO_CAPTCHA' | 'MANUAL';
+  /** API-03B — filtro de autenticação: todas | certificado | credenciais */
+  filtro_autenticacao?: 'todas' | 'certificado' | 'credenciais';
 }
 
 export interface MultiplasExecucoesResponse {
@@ -249,6 +278,53 @@ export class ExecucaoService {
         return throwError(() => error);
       })
     );
+  }
+
+  /**
+   * API-03I — retry manual de empresa com erro definitivo.
+   * Preserva período/batch; reinicia orçamento só desta empresa.
+   */
+  reintentarEmpresaManual(
+    empresaId: string | number,
+    body: {
+      dataInicio: string;
+      dataFim: string;
+      tipo?: string;
+      headless?: boolean;
+      baixarPdf?: boolean;
+      captchaMode?: 'TWO_CAPTCHA' | 'MANUAL';
+      batch_id?: string | null;
+      tipo_autenticacao?: string;
+    }
+  ): Observable<{
+    id: number;
+    empresa_id: string;
+    cnpj: string;
+    batch_id?: string | null;
+    status: string;
+    mensagem: string;
+    tentativa_atual: number;
+    max_tentativas: number;
+    retry_manual: boolean;
+  }> {
+    return this.http
+      .post<{
+        id: number;
+        empresa_id: string;
+        cnpj: string;
+        batch_id?: string | null;
+        status: string;
+        mensagem: string;
+        tentativa_atual: number;
+        max_tentativas: number;
+        retry_manual: boolean;
+      }>(`${this.baseUrl}/execucao/${empresaId}/retry`, body)
+      .pipe(
+        catchError((error) => {
+          console.error('Erro no retry manual:', error);
+          return throwError(() => error);
+        })
+      );
   }
 
   /** Status de todas as execuções do batch em 1 request (evita N requests e crash da UI) */

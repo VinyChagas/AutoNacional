@@ -34,6 +34,8 @@ export function analisarHrefDownload(href: string): { digitos: string | null } {
 export function extrairChaveDaLinha(input: {
   hrefs: readonly string[];
   dataChave: string | null;
+  /** Textos das células — só aceita chave se houver exatamente um candidato único de 50 dígitos. */
+  textos?: readonly string[];
 }): ChaveDaLinha {
   const candidatos: CandidatoChave[] = [];
   const problemas: string[] = [];
@@ -69,6 +71,25 @@ export function extrairChaveDaLinha(input: {
     }
   }
 
+  // Célula com chave visível (única) — não inventa; só confirma dígitos já renderizados.
+  if (input.textos && input.textos.length > 0) {
+    const noTexto = [
+      ...new Set(
+        input.textos
+          .map((texto) => chaveNacionalNoTexto(texto))
+          .filter((chave): chave is string => chave != null)
+      ),
+    ];
+    if (noTexto.length === 1) {
+      const chave = noTexto[0];
+      if (!candidatos.some((item) => item.chave === chave && item.fonte === 'TEXTO_CELULA')) {
+        candidatos.push({ chave, fonte: 'TEXTO_CELULA' });
+      }
+    } else if (noTexto.length > 1 && candidatos.length === 0) {
+      problemas.push('CONFLITO_IDENTIFICADOR');
+    }
+  }
+
   const unicas = [...new Set(candidatos.map((item) => item.chave))];
   if (unicas.length > 1) {
     return {
@@ -81,7 +102,9 @@ export function extrairChaveDaLinha(input: {
 
   if (unicas.length === 1) {
     const escolhida =
-      candidatos.find((item) => item.fonte === 'HREF_DOWNLOAD_XML') ?? candidatos[0];
+      candidatos.find((item) => item.fonte === 'HREF_DOWNLOAD_XML') ??
+      candidatos.find((item) => item.fonte === 'DATA_CHAVE') ??
+      candidatos[0];
     return {
       chave: escolhida.chave,
       fonte: escolhida.fonte,
