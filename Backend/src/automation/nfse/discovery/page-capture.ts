@@ -8,7 +8,7 @@ import {
   preencherDatasEFiltrar,
   submeterFiltroPortal,
 } from '../../processar-notas-competencia';
-import { aguardarRotaOuSeletor, clicarMenuNotasEAguardar } from '../../playwright-nav';
+import { navegarNotasPorUrl } from '../../playwright-nav';
 import { PLAYWRIGHT_TIMEOUT } from '../../../infrastructure/config';
 import { getLogger } from '../../../infrastructure/logger';
 import {
@@ -38,11 +38,7 @@ import {
   SELETOR_LINHAS_LISTAGEM_PORTAL,
 } from './portal-listagem-ready';
 import { evidenciaSituacaoVazia } from './row-parser';
-import {
-  seletoresMenuNotas,
-  urlDiagnosticoPortal,
-  urlNotasPortal,
-} from './portal-selectors';
+import { urlDiagnosticoPortal, urlNotasPortal } from './portal-selectors';
 import type {
   LeituraFiltroPortal,
   LinhaListagem,
@@ -335,88 +331,24 @@ export async function lerFiltroDaPagina(page: Page): Promise<LeituraFiltroPortal
   };
 }
 
-async function localizarMenuNotas(
-  page: Page,
-  direcao: DirecaoDocumentoFiscal
-): Promise<{ locator: Locator; seletor: string }> {
-  const tentados: string[] = [];
-  for (const seletor of seletoresMenuNotas(direcao)) {
-    tentados.push(seletor);
-    const loc = page.locator(seletor).first();
-    const n = await loc.count().catch(() => 0);
-    if (n === 0) continue;
-    const visivel = await loc.isVisible().catch(() => false);
-    if (!visivel) continue;
-    return { locator: loc, seletor };
-  }
-  throw new PortalDescobertaError(
-    'abrir_menu',
-    `Menu de notas ${DIRECAO_PARA_TIPO_NOTA_UI[direcao]} não encontrado.`,
-    {
-      seletor: tentados.join(' | '),
-      url: urlDiagnosticoPortal(page.url()),
-    }
-  );
-}
-
-/**
- * API-02Z — recupera a rota de Notas quando a sessão foi desviada (ex.: "/").
- * Re-navega à URL da direção reaproveitando a sessão/cert vigente (mTLS do
- * contexto). Não realiza novo login nem toca no fluxo por credenciais.
- * Retorna true se a rota ficou correta e o formulário (#datainicio) presente.
- */
-async function recuperarRotaNotas(
-  page: Page,
-  direcao: DirecaoDocumentoFiscal
-): Promise<boolean> {
-  const tipoUi = DIRECAO_PARA_TIPO_NOTA_UI[direcao];
-  const destino = urlNotasPortal(direcao);
-  try {
-    await page.goto(destino, {
-      waitUntil: 'domcontentloaded',
-      timeout: Math.min(30000, PLAYWRIGHT_TIMEOUT),
-    });
-  } catch {
-    return false;
-  }
-  const r = await aguardarRotaOuSeletor(page, {
-    urlSubstring: `/Notas/${tipoUi}`,
-    readySelector: '#datainicio',
-    urlSubstringsProibidas: [
-      `/Notas/${tipoUi === 'Emitidas' ? 'Recebidas' : 'Emitidas'}`,
-    ],
-    timeout: Math.min(15000, PLAYWRIGHT_TIMEOUT),
-  });
-  return r.rotaOk || r.seletorOk;
-}
-
 export function criarPortalDaPage(page: Page): PortalListagem {
   return {
     async abrir(direcao: DirecaoDocumentoFiscal): Promise<void> {
       const tipoUi = DIRECAO_PARA_TIPO_NOTA_UI[direcao];
-      let seletor: string | undefined;
       try {
-        const alvo = await localizarMenuNotas(page, direcao);
-        seletor = alvo.seletor;
-        await alvo.locator.scrollIntoViewIfNeeded().catch(() => undefined);
-        await clicarMenuNotasEAguardar(page, alvo.locator, tipoUi);
+        // Portal v1.6: navegação direta por URL (sem depender do dropdown).
+        await navegarNotasPorUrl(page, tipoUi);
         return;
       } catch (erro) {
-        // API-02Z — sob concorrência mTLS a sessão pode ser desviada para "/"
-        // (menu ausente). Recuperação: re-navega à rota de Notas reaproveitando
-        // a sessão/cert vigente (sem novo login/credenciais). Só então falha.
-        const recuperou = await recuperarRotaNotas(page, direcao).catch(() => false);
-        if (recuperou) {
-          loggerTempos.info(
-            { op: 'abrir_menu_recuperado', direcao, url: urlDiagnosticoPortal(page.url()) },
-            'Rota de Notas recuperada por re-navegação (sessão desviada)'
-          );
-          return;
-        }
         throw new PortalDescobertaError(
           'abrir_menu',
-          `Falha ao abrir ${tipoUi}: ${erro instanceof Error ? erro.message : String(erro)}`,
-          { seletor, url: urlDiagnosticoPortal(page.url()) }
+          `Falha ao abrir ${tipoUi} via URL ${urlNotasPortal(direcao)}: ${
+            erro instanceof Error ? erro.message : String(erro)
+          }`,
+          {
+            seletor: urlNotasPortal(direcao),
+            url: urlDiagnosticoPortal(page.url()),
+          }
         );
       }
     },

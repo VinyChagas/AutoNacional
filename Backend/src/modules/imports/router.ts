@@ -20,6 +20,10 @@ router.post(
 );
 
 // Credenciais via planilha
+router.get(
+  '/credenciais/modelo',
+  asyncHandler(controller.downloadModeloCredenciais)
+);
 router.post(
   '/credenciais/preview',
   uploadSingle('arquivo'),

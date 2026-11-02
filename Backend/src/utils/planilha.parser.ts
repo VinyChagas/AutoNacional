@@ -10,13 +10,17 @@
 import * as XLSX from 'xlsx';
 import { normalizarDocumento } from './documento.utils';
 
-const HEADERS_ESPERADOS = [
-  'razao social',
-  'tipo de login',
-  'cnpj ou cpf',
-  'senha',
-  'regime tributario',
-];
+/** Cabeçalhos oficiais (linha 2 da planilha). Mantém sync com o modelo baixável. */
+export const CABECALHOS_PLANILHA_CREDENCIAIS = [
+  'Razão Social',
+  'Tipo de Login',
+  'CNPJ ou CPF',
+  'Senha',
+  'Regime Tributário',
+] as const;
+
+export const NOME_ARQUIVO_MODELO_CREDENCIAIS =
+  'modelo_importacao_credenciais.xlsx';
 
 function normalizarHeader(h: string): string {
   return String(h ?? '')
@@ -118,4 +122,53 @@ export function parsePlanilhaCredenciais(buffer: Buffer): LinhaCredencial[] {
     });
   }
   return resultado;
+}
+
+/**
+ * Gera o .xlsx oficial aceito por `parsePlanilhaCredenciais`.
+ * Linha 1 = instrução; linha 2 = cabeçalhos; linhas 3+ = exemplos (editáveis).
+ */
+export function gerarModeloPlanilhaCredenciais(): Buffer {
+  const instrucao =
+    'Modelo oficial AutoNacional — preencha a partir da linha 3. ' +
+    'Tipo de Login: CNPJ ou CPF. Regime Tributário é opcional.';
+
+  const exemplos: string[][] = [
+    [
+      'Empresa Exemplo LTDA',
+      'CNPJ',
+      '00.000.000/0001-91',
+      'sua_senha_aqui',
+      'Simples Nacional',
+    ],
+    [
+      'João da Silva',
+      'CPF',
+      '000.000.000-00',
+      'sua_senha_aqui',
+      '',
+    ],
+  ];
+
+  const aoa: string[][] = [
+    [instrucao],
+    [...CABECALHOS_PLANILHA_CREDENCIAIS],
+    ...exemplos,
+  ];
+
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  sheet['!cols'] = [
+    { wch: 36 },
+    { wch: 14 },
+    { wch: 22 },
+    { wch: 18 },
+    { wch: 20 },
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Credenciais');
+  return XLSX.write(workbook, {
+    type: 'buffer',
+    bookType: 'xlsx',
+  }) as Buffer;
 }

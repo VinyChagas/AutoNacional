@@ -51,6 +51,16 @@ amarelo "Ctrl+C encerra túnel, API e frontend juntos."
 amarelo "O túnel SSH pode pedir a passphrase da chave no terminal (1–2 vezes)."
 echo ""
 
+# Playwright: o Cursor/sandbox pode injetar PLAYWRIGHT_BROWSERS_PATH apontando
+# para um cache temporário vazio. Força o cache real do usuário no macOS/Linux.
+if [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" || "${PLAYWRIGHT_BROWSERS_PATH}" == *cursor-sandbox-cache* ]]; then
+  export PLAYWRIGHT_BROWSERS_PATH="${HOME}/Library/Caches/ms-playwright"
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    export PLAYWRIGHT_BROWSERS_PATH="${HOME}/.cache/ms-playwright"
+  fi
+fi
+verde "Playwright browsers: ${PLAYWRIGHT_BROWSERS_PATH}"
+
 # --handle-input: encaminha o teclado ao processo que pedir input (passphrase SSH).
 # -k: se um processo cair, encerra os demais (inclui o túnel SSH).
 exec npx concurrently \

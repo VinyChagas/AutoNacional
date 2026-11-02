@@ -23,18 +23,72 @@ export function urlNotasPortal(direcao: DirecaoDocumentoFiscal): string {
   return `${BASE_PORTAL_EMISSOR}/Notas/${DIRECAO_PARA_TIPO_NOTA_UI[direcao]}`;
 }
 
-export function seletoresMenuNotas(direcao: DirecaoDocumentoFiscal): string[] {
+/**
+ * Portal v1.6 — item "Consultas" na navbar.
+ * O dropdown abre principalmente por CSS :hover no <li> (passar o mouse);
+ * clique no <img> é interceptado pelo <li> da navbarMini.
+ *
+ * Preferir hover no <li>; clique no <a> só como fallback.
+ */
+export const SELETORES_HOVER_CONSULTAS_NFSE = [
+  '#navbar > ul > li:nth-child(3)',
+  'xpath=//*[@id="navbar"]/ul/li[3]',
+  '#navbar ul > li:nth-child(3)',
+] as const;
+
+export const SELETORES_TOGGLE_CONSULTAS_NFSE = [
+  ...SELETORES_HOVER_CONSULTAS_NFSE,
+  '#navbar > ul > li:nth-child(3) > a',
+  'xpath=//*[@id="navbar"]/ul/li[3]/a',
+  '#navbar ul li:nth-child(3) > a',
+  '#navbar ul li.open > a',
+  // img por último — interceptado pelo <li>
+  'xpath=//*[@id="navbar"]/ul/li[3]/a/div/img',
+  '#navbar > ul > li:nth-child(3) > a > div > img',
+] as const;
+
+/** Texto visível do temporizador de sessão (Portal v1.6) — só referência/detecção. */
+export const TEXTO_TEMPO_RESTANTE_SESSAO = 'Tempo restante da sessão';
+
+/**
+ * Submenus após abrir Consultas (Portal v1.6).
+ * Gravado: Emitidas = li[3]/ul/li[2]/a → /Notas/Emitidas
+ *          Recebidas = li[3]/ul/li[3]/a → /Notas/Recebidas
+ * Ordem do dropdown: [Consultas (rótulo)] [NFS-e Emitidas] [NFS-e Recebidas] [Rascunhos]
+ */
+export function seletoresSubmenuNotas(direcao: DirecaoDocumentoFiscal): string[] {
   const tipo = DIRECAO_PARA_TIPO_NOTA_UI[direcao];
+  const rotulo = `NFS-e ${tipo}`;
   const caminho = `/Notas/${tipo}`;
+  const porIndice =
+    direcao === 'EMITIDA'
+      ? [
+          'li.open li:nth-of-type(2) > a',
+          '#navbar > ul > li:nth-child(3) > ul > li:nth-child(2) > a',
+          'xpath=//*[@id="navbar"]/ul/li[3]/ul/li[2]/a',
+        ]
+      : [
+          'li.open > ul > li:nth-of-type(3) > a',
+          '#navbar > ul > li:nth-child(3) > ul > li:nth-child(3) > a',
+          'xpath=//*[@id="navbar"]/ul/li[3]/ul/li[3]/a',
+        ];
   return [
+    // Semânticos (Chrome Recorder: aria/text)
+    `a[aria-label="${rotulo}"]`,
+    `#navbar a:has-text("${rotulo}")`,
+    `li.open a:has-text("${rotulo}")`,
+    `text=${rotulo}`,
+    // Estrutura gravada + href
+    `#navbar > ul > li:nth-child(3) > ul a[href*="${caminho}"]`,
+    ...porIndice,
+    `#navbar a[href*="${caminho}"]`,
     `a[href*="${caminho}"]`,
-    `a[href*="${caminho.toLowerCase()}"]`,
-    `nav a:has-text("${tipo}")`,
-    `.sidebar a:has-text("${tipo}")`,
-    `li a:has-text("${tipo}")`,
-    // Fallback legado (ordem do menu do portal)
-    direcao === 'EMITIDA' ? 'li:nth-of-type(3) img' : 'li:nth-of-type(4) img',
   ];
+}
+
+/** @deprecated Preferir abrirConsultasNfseEAguardar — alias dos submenus v1.6. */
+export function seletoresMenuNotas(direcao: DirecaoDocumentoFiscal): string[] {
+  return seletoresSubmenuNotas(direcao);
 }
 
 /**

@@ -8,7 +8,12 @@
  * Restrição atendida: nenhum browser/Playwright real é acionado (fakes puros).
  */
 import { describe, expect, it, vi } from 'vitest';
-import { aguardarRotaOuSeletor, clicarMenuNotasEAguardar } from './playwright-nav';
+import {
+  aguardarRotaOuSeletor,
+  abrirConsultasNfseEAguardar,
+  clicarMenuNotasEAguardar,
+  navegarNotasPorUrl,
+} from './playwright-nav';
 import type { Locator, Page } from 'playwright';
 
 interface FakePageState {
@@ -184,6 +189,80 @@ function criarMenuFake(): Locator & { cliques: number } {
   } as unknown as Locator & { cliques: number };
   return menu;
 }
+
+describe('Portal v1.6 — navegarNotasPorUrl', () => {
+  it('ADMJ SUPERVISAO — após login vai direto para /Notas/Emitidas', async () => {
+    let urlAtual = DASH;
+    const gotos: string[] = [];
+    const { page: base, waitForTimeout } = criarFakePage({
+      url: () => urlAtual,
+      count: () => (urlAtual.includes('/Notas/Emitidas') ? 1 : 0),
+    });
+
+    const page = {
+      ...base,
+      url: () => urlAtual,
+      goto: async (url: string) => {
+        gotos.push(url);
+        urlAtual = url;
+        return null;
+      },
+      locator: (sel: string) => {
+        if (sel === '#datainicio') {
+          return {
+            first: () => ({
+              count: async () => (urlAtual.includes('/Notas/Emitidas') ? 1 : 0),
+            }),
+            count: async () => (urlAtual.includes('/Notas/Emitidas') ? 1 : 0),
+          } as unknown as Locator;
+        }
+        return {
+          first: () => ({ count: async () => 0, isVisible: async () => false }),
+          count: async () => 0,
+          isVisible: async () => false,
+        } as unknown as Locator;
+      },
+      waitForTimeout,
+      isClosed: () => false,
+      context: () => ({ browser: () => ({ isConnected: () => true }) }),
+    } as unknown as Page;
+
+    await navegarNotasPorUrl(page, 'Emitidas', { timeout: 5000 });
+    expect(gotos[0]).toContain('/Notas/Emitidas');
+    expect(urlAtual).toContain('/Notas/Emitidas');
+  });
+
+  it('abrirConsultasNfseEAguardar usa URL como estratégia principal', async () => {
+    let urlAtual = DASH;
+    const { page: base, waitForTimeout } = criarFakePage({
+      url: () => urlAtual,
+      count: () => (urlAtual.includes('/Notas/Recebidas') ? 1 : 0),
+    });
+    const page = {
+      ...base,
+      url: () => urlAtual,
+      goto: async (url: string) => {
+        urlAtual = url;
+        return null;
+      },
+      locator: (sel: string) => ({
+        first: () => ({
+          count: async () =>
+            sel === '#datainicio' && urlAtual.includes('/Notas/Recebidas') ? 1 : 0,
+        }),
+        count: async () =>
+          sel === '#datainicio' && urlAtual.includes('/Notas/Recebidas') ? 1 : 0,
+        isVisible: async () => false,
+      }),
+      waitForTimeout,
+      isClosed: () => false,
+      context: () => ({ browser: () => ({ isConnected: () => true }) }),
+    } as unknown as Page;
+
+    await abrirConsultasNfseEAguardar(page, 'Recebidas', { timeout: 5000 });
+    expect(urlAtual).toContain('/Notas/Recebidas');
+  });
+});
 
 describe('API-02Y — clicarMenuNotasEAguardar', () => {
   it('sucesso na 1ª tentativa clica o menu uma única vez', async () => {

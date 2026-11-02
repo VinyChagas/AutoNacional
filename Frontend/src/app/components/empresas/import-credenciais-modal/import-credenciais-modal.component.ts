@@ -56,6 +56,7 @@ export class ImportCredenciaisModalComponent implements OnInit {
   contabilidadePadraoId: number | null = null;
   updateExisting = false;
   fileName = '';
+  baixandoModelo = false;
 
   // Resumo após importação
   importacaoFinalizada = false;
@@ -146,6 +147,32 @@ export class ImportCredenciaisModalComponent implements OnInit {
     this.fileInput = input;
     input.value = '';
     input.click();
+  }
+
+  baixarModelo(): void {
+    if (this.baixandoModelo) return;
+    this.baixandoModelo = true;
+    this.cdr.markForCheck();
+
+    this.empresasService.baixarModeloCredenciais().subscribe({
+      next: ({ blob, filename }) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        this.baixandoModelo = false;
+        this.cdr.markForCheck();
+      },
+      error: (err) => {
+        this.toast.error(
+          (err as Error)?.message || 'Erro ao baixar modelo da planilha'
+        );
+        this.baixandoModelo = false;
+        this.cdr.markForCheck();
+      },
+    });
   }
 
   onFileSelected(event: Event): void {

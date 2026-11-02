@@ -5,6 +5,10 @@ import { Request, Response } from 'express';
 import { jsonSuccess, jsonError, jsonCreated } from '../../middleware/response';
 import * as certService from './import-certificados.service';
 import * as credService from './import-credenciais.service';
+import {
+  gerarModeloPlanilhaCredenciais,
+  NOME_ARQUIVO_MODELO_CREDENCIAIS,
+} from '../../utils/planilha.parser';
 
 // --- Certificados em lote ---
 
@@ -117,6 +121,22 @@ export async function confirmarCertificados(
 }
 
 // --- Credenciais via planilha ---
+
+export async function downloadModeloCredenciais(
+  _req: Request,
+  res: Response
+): Promise<void> {
+  const buffer = gerarModeloPlanilhaCredenciais();
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${NOME_ARQUIVO_MODELO_CREDENCIAIS}"`
+  );
+  res.send(buffer);
+}
 
 export async function previewCredenciais(
   req: Request,

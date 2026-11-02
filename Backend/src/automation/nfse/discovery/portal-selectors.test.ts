@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   SELETORES_BOTAO_FILTRAR_PORTAL,
+  SELETORES_HOVER_CONSULTAS_NFSE,
+  SELETORES_TOGGLE_CONSULTAS_NFSE,
   SELETOR_FORM_FILTRO_PORTAL,
   VIEWPORT_DESCOBERTA_PORTAL_SEFIN,
   seletoresMenuNotas,
+  seletoresSubmenuNotas,
   urlDiagnosticoPortal,
 } from './portal-selectors';
 
@@ -13,13 +16,27 @@ describe('portal-selectors (API-02M/02O)', () => {
     expect(VIEWPORT_DESCOBERTA_PORTAL_SEFIN.height).toBeGreaterThanOrEqual(900);
   });
 
-  it('menu Emitidas/Recebidas prioriza href estável antes do nth-of-type', () => {
-    const emitidas = seletoresMenuNotas('EMITIDA');
-    const recebidas = seletoresMenuNotas('RECEBIDA');
-    expect(emitidas[0]).toContain('/Notas/Emitidas');
-    expect(recebidas[0]).toContain('/Notas/Recebidas');
-    expect(emitidas[emitidas.length - 1]).toContain('nth-of-type(3)');
-    expect(recebidas[recebidas.length - 1]).toContain('nth-of-type(4)');
+  it('hover Consultas NFS-e prioriza o <li> (CSS :hover do Portal v1.6)', () => {
+    expect(SELETORES_HOVER_CONSULTAS_NFSE[0]).toBe('#navbar > ul > li:nth-child(3)');
+    expect(SELETORES_HOVER_CONSULTAS_NFSE[0]).not.toContain('img');
+  });
+
+  it('toggle Consultas NFS-e coloca <img> por último (evita intercept)', () => {
+    expect(SELETORES_TOGGLE_CONSULTAS_NFSE[0]).not.toContain('img');
+    const idxImg = SELETORES_TOGGLE_CONSULTAS_NFSE.findIndex((s) =>
+      s.includes('img')
+    );
+    expect(idxImg).toBeGreaterThan(0);
+  });
+
+  it('submenu v1.6 prioriza texto NFS-e Emitidas/Recebidas e índices do Recorder', () => {
+    const emitidas = seletoresSubmenuNotas('EMITIDA');
+    const recebidas = seletoresSubmenuNotas('RECEBIDA');
+    expect(emitidas.some((s) => s.includes('NFS-e Emitidas'))).toBe(true);
+    expect(recebidas.some((s) => s.includes('NFS-e Recebidas'))).toBe(true);
+    expect(emitidas.some((s) => s.includes('li:nth-child(2)') || s.includes('nth-of-type(2)'))).toBe(true);
+    expect(recebidas.some((s) => s.includes('li:nth-child(3)') || s.includes('nth-of-type(3)'))).toBe(true);
+    expect(seletoresMenuNotas('EMITIDA')).toEqual(emitidas);
   });
 
   it('botão filtrar prioriza name=executar antes de button.btn genérico', () => {

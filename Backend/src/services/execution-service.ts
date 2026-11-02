@@ -28,7 +28,11 @@ import {
 import { formatarMesExecucaoParaPasta } from '../automation/download-manager';
 import { resolveStoragePath } from '../utils/path-resolve';
 import { abrirDashboardNfseComCredencial } from '../automation/login-credencial-nfse';
-import { assertPageUsable, clicarMenuNotasEAguardar, isTargetClosedError } from '../automation/playwright-nav';
+import {
+  assertPageUsable,
+  navegarNotasPorUrl,
+  isTargetClosedError,
+} from '../automation/playwright-nav';
 import * as credenciaisRepo from '../repositories/credenciais';
 import { emitirEventoExecucao, emitirProgressoFiscalSeAssociado } from './execution-events.service';
 import { persistirExecution } from './automation-metrics.service';
@@ -2235,8 +2239,7 @@ async function executarFluxoCompleto(
       });
       info.mensagem = 'Acessando notas emitidas…';
       assertPageUsable(page);
-      const menuEmitidas = page.locator('li:nth-of-type(3) img').nth(0);
-      await clicarMenuNotasEAguardar(page, menuEmitidas, 'Emitidas', {
+      await navegarNotasPorUrl(page, 'Emitidas', {
         timeout: PLAYWRIGHT_TIMEOUT,
         log: adicionarLog,
       });
@@ -2312,8 +2315,7 @@ async function executarFluxoCompleto(
       });
       info.mensagem = 'Acessando notas recebidas…';
       assertPageUsable(page);
-      const menuRecebidas = page.locator('li:nth-of-type(4) img').nth(0);
-      await clicarMenuNotasEAguardar(page, menuRecebidas, 'Recebidas', {
+      await navegarNotasPorUrl(page, 'Recebidas', {
         timeout: PLAYWRIGHT_TIMEOUT,
         log: adicionarLog,
       });

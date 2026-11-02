@@ -212,6 +212,26 @@ export class EmpresasUnificadoService {
       );
   }
 
+  /** Baixa o .xlsx oficial aceito pela importação de credenciais. */
+  baixarModeloCredenciais(): Observable<{ blob: Blob; filename: string }> {
+    return this.http
+      .get(`${this.baseUrl}/imports/credenciais/modelo`, {
+        responseType: 'blob',
+        observe: 'response',
+      })
+      .pipe(
+        map((resp) => {
+          const disposition = resp.headers.get('Content-Disposition') ?? '';
+          const match = /filename="?([^";]+)"?/i.exec(disposition);
+          const filename =
+            match?.[1]?.trim() || 'modelo_importacao_credenciais.xlsx';
+          const blob = resp.body ?? new Blob();
+          return { blob, filename };
+        }),
+        catchError(this.handleError)
+      );
+  }
+
   previewCredenciais(file: File): Observable<PreviewCredenciaisResponse> {
     const form = new FormData();
     form.append('arquivo', file);

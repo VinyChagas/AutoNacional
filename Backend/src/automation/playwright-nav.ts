@@ -12,6 +12,13 @@ import {
   agoraMonotonicoMs,
   deltaMonotonicoMs,
 } from './nfse/orchestration/metricas-operacionais';
+import {
+  BASE_PORTAL_EMISSOR,
+  SELETORES_HOVER_CONSULTAS_NFSE,
+  SELETORES_TOGGLE_CONSULTAS_NFSE,
+  seletoresSubmenuNotas,
+} from './nfse/discovery/portal-selectors';
+import type { DirecaoDocumentoFiscal } from './nfse/contracts/documento-fiscal';
 
 const loggerTempos = getLogger('nfse-discovery-timing');
 
@@ -187,6 +194,280 @@ export async function aguardarRotaOuSeletor(
 }
 
 /**
+ * Clique resiliente na navbar do Portal v1.6.
+ * O <img> do menu é interceptado pelo <li> da navbarMini
+ * ("subtree intercepts pointer events") — retenta com force e, se preciso, JS click.
+ */
+export async function clicarNavbarResiliente(
+  locator: Locator,
+  options: { timeout?: number; log?: (msg: string) => void } = {}
+): Promise<void> {
+  const timeout = options.timeout ?? Math.min(15000, PLAYWRIGHT_TIMEOUT);
+  const log = options.log ?? (() => undefined);
+  try {
+    await locator.click({ timeout });
+    return;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const intercepta =
+      /intercepts pointer events/i.test(msg) ||
+      /Timeout .* exceeded/i.test(msg);
+    if (!intercepta) throw err;
+    log('Clique interceptado na navbar — retentando com force…');
+  }
+  try {
+    await locator.click({ timeout, force: true });
+    return;
+  } catch (err) {
+    log(
+      `Force click falhou (${err instanceof Error ? err.message.slice(0, 80) : String(err)}) — JS click`
+    );
+  }
+  await locator.evaluate((el: HTMLElement) => {
+    el.click();
+  });
+}
+
+/**
+ * Aguarda o submenu aparecer (curto). Retorna o locator ou null.
+ */
+async function aguardarSubmenuBreve(
+  tentar: () => Promise<Locator | null>,
+  page: Page,
+  maxMs: number
+): Promise<Locator | null> {
+  const inicio = agoraMonotonicoMs();
+  for (;;) {
+    assertPageUsable(page);
+    const submenu = await tentar();
+    if (submenu) return submenu;
+    if (deltaMonotonicoMs(inicio, agoraMonotonicoMs()) >= maxMs) return null;
+    await page.waitForTimeout(80);
+  }
+}
+
+/**
+ * Portal v1.6 — abre o dropdown "Consultas" (hover CSS) e retorna o submenu
+ * Emitidas/Recebidas já visível. Não navega; só prepara o alvo do clique.
+ *
+ * No portal o menu abre ao passar o mouse no <li>; clique sozinho muitas vezes
+ * não revela a lista (e o <img> ainda é interceptado pelo <li>).
+ */
+export async function localizarSubmenuConsultasNfse(
+  page: Page,
+  tipo: 'Emitidas' | 'Recebidas',
+  options: { timeout?: number; log?: (msg: string) => void } = {}
+): Promise<Locator> {
+  const timeout = options.timeout ?? PLAYWRIGHT_TIMEOUT;
+  const log = options.log ?? (() => undefined);
+  const direcao: DirecaoDocumentoFiscal =
+    tipo === 'Emitidas' ? 'EMITIDA' : 'RECEBIDA';
+  const clickTimeout = Math.min(15000, timeout);
+  const esperaAposAbertura = Math.min(3000, timeout);
+
+  const tentarSubmenuVisivel = async (): Promise<Locator | null> => {
+    if (typeof page.getByRole === 'function') {
+      const porRole = page.getByRole('link', { name: `NFS-e ${tipo}` });
+      if ((await porRole.count().catch(() => 0)) > 0) {
+        const primeiro = porRole.first();
+        if (await primeiro.isVisible().catch(() => false)) return primeiro;
+      }
+    }
+    for (const seletor of seletoresSubmenuNotas(direcao)) {
+      const loc = page.locator(seletor).first();
+      const n = await loc.count().catch(() => 0);
+      if (n === 0) continue;
+      const visivel = await loc.isVisible().catch(() => false);
+      if (visivel) return loc;
+    }
+    return null;
+  };
+
+  const jaAberto = await tentarSubmenuVisivel();
+  if (jaAberto) return jaAberto;
+
+  let ultimoErro: unknown;
+
+  // 1) Hover no <li> — comportamento real do Portal v1.6 (CSS :hover)
+  for (const seletor of SELETORES_HOVER_CONSULTAS_NFSE) {
+    const alvo = page.locator(seletor).first();
+    if ((await alvo.count().catch(() => 0)) === 0) continue;
+    if (!(await alvo.isVisible().catch(() => false))) continue;
+    log(`Abrindo Consultas NFS-e por hover (${seletor})…`);
+    try {
+      await alvo.hover({ timeout: clickTimeout });
+      const submenu = await aguardarSubmenuBreve(
+        tentarSubmenuVisivel,
+        page,
+        esperaAposAbertura
+      );
+      if (submenu) {
+        log(`Submenu NFS-e ${tipo} disponível após hover`);
+        return submenu;
+      }
+      // Reforço: mouseenter + classe open (Bootstrap)
+      await alvo
+        .evaluate((el: HTMLElement) => {
+          el.dispatchEvent(
+            new MouseEvent('mouseenter', { bubbles: true, cancelable: true })
+          );
+          el.dispatchEvent(
+            new MouseEvent('mouseover', { bubbles: true, cancelable: true })
+          );
+          el.classList.add('open', 'show');
+          const link = el.querySelector('a');
+          link?.classList.add('open', 'show');
+          const menu = el.querySelector('ul');
+          if (menu instanceof HTMLElement) {
+            menu.style.display = 'block';
+            menu.classList.add('show', 'in');
+          }
+        })
+        .catch(() => undefined);
+      const submenuJs = await aguardarSubmenuBreve(
+        tentarSubmenuVisivel,
+        page,
+        esperaAposAbertura
+      );
+      if (submenuJs) {
+        log(`Submenu NFS-e ${tipo} disponível após mouseenter/open`);
+        return submenuJs;
+      }
+    } catch (err) {
+      ultimoErro = err;
+      log(
+        `Hover falhou (${seletor}): ${
+          err instanceof Error ? err.message.slice(0, 120) : String(err)
+        }`
+      );
+    }
+  }
+
+  // 2) Fallback: clique no <a>/li (Recorder)
+  for (const seletor of SELETORES_TOGGLE_CONSULTAS_NFSE) {
+    const toggle = page.locator(seletor).first();
+    if ((await toggle.count().catch(() => 0)) === 0) continue;
+    if (!(await toggle.isVisible().catch(() => false))) continue;
+    log(`Abrindo Consultas NFS-e por clique (${seletor})…`);
+    try {
+      await clicarNavbarResiliente(toggle, { timeout: clickTimeout, log });
+      const submenu = await aguardarSubmenuBreve(
+        tentarSubmenuVisivel,
+        page,
+        esperaAposAbertura
+      );
+      if (submenu) {
+        log(`Submenu NFS-e ${tipo} disponível após clique`);
+        return submenu;
+      }
+    } catch (err) {
+      ultimoErro = err;
+      log(
+        `Clique falhou (${seletor}): ${
+          err instanceof Error ? err.message.slice(0, 120) : String(err)
+        }`
+      );
+    }
+  }
+
+  throw new Error(
+    `Botão Consultas NFS-e (navbar) não abriu o submenu ${tipo}. ${
+      ultimoErro instanceof Error ? ultimoErro.message : ''
+    }`.trim()
+  );
+}
+
+/**
+ * Portal v1.6 — abre Emitidas/Recebidas por URL direta (estratégia principal).
+ * Evita o dropdown da navbar (hover/CSS frágil no Playwright).
+ *
+ * Ex.: /EmissorNacional/ → /EmissorNacional/Notas/Emitidas
+ *      /EmissorNacional/ → /EmissorNacional/Notas/Recebidas
+ */
+export async function navegarNotasPorUrl(
+  page: Page,
+  tipo: 'Emitidas' | 'Recebidas',
+  options: { timeout?: number; log?: (msg: string) => void } = {}
+): Promise<void> {
+  const timeout = options.timeout ?? PLAYWRIGHT_TIMEOUT;
+  const log = options.log ?? (() => undefined);
+  const destino = `${BASE_PORTAL_EMISSOR}/Notas/${tipo}`;
+  const urlSubstring = `/Notas/${tipo}`;
+  const tipoOposto = tipo === 'Emitidas' ? 'Recebidas' : 'Emitidas';
+  const urlSubstringsProibidas = [`/Notas/${tipoOposto}`];
+
+  assertPageUsable(page);
+  // Já na rota correta com formulário: não re-navega.
+  if (
+    page.url().includes(urlSubstring) &&
+    (await page.locator('#datainicio').count().catch(() => 0)) > 0
+  ) {
+    log(`Já em Notas ${tipo}: ${page.url()}`);
+    return;
+  }
+
+  const inicio = agoraMonotonicoMs();
+  log(`Navegando para Notas ${tipo} via URL: ${destino}`);
+  await gotoWithRetry(page, destino, {
+    timeout,
+    waitUntil: 'domcontentloaded',
+    retries: 3,
+    log,
+  });
+
+  const r = await aguardarRotaOuSeletor(page, {
+    urlSubstring,
+    readySelector: '#datainicio',
+    timeout,
+    urlSubstringsProibidas,
+  });
+  loggerTempos.info(
+    {
+      op: 'abrir_menu',
+      tipo,
+      via: 'url',
+      esperaMs: r.ms,
+      gotoMs: deltaMonotonicoMs(inicio, agoraMonotonicoMs()),
+      rotaOk: r.rotaOk,
+      seletorOk: r.seletorOk,
+      timedOut: r.timedOut,
+    },
+    'Tempo: navegação direta Notas por URL'
+  );
+
+  if (!r.rotaOk && !r.seletorOk) {
+    throw new Error(
+      `Navegação por URL para Notas ${tipo} não confirmada (${destino}). URL atual: ${page.url()}`
+    );
+  }
+  log(`Tela de Notas ${tipo} pronta via URL: ${page.url()}`);
+}
+
+/**
+ * Abre listagem Emitidas/Recebidas.
+ * Estratégia v1.6: URL direta. Menu/hover só como último recurso.
+ */
+export async function abrirConsultasNfseEAguardar(
+  page: Page,
+  tipo: 'Emitidas' | 'Recebidas',
+  options: { timeout?: number; log?: (msg: string) => void } = {}
+): Promise<void> {
+  const log = options.log ?? (() => undefined);
+  try {
+    await navegarNotasPorUrl(page, tipo, options);
+    return;
+  } catch (errUrl) {
+    log(
+      `URL direta falhou (${
+        errUrl instanceof Error ? errUrl.message.slice(0, 120) : String(errUrl)
+      }) — tentando menu navbar`
+    );
+  }
+  const submenu = await localizarSubmenuConsultasNfse(page, tipo, options);
+  await clicarMenuNotasEAguardar(page, submenu, tipo, options);
+}
+
+/**
  * Clica no menu Emitidas/Recebidas e espera a tela de filtro (#datainicio).
  * Retenta o clique 1 vez se a navegação falhar sob carga.
  */
@@ -209,7 +490,10 @@ export async function clicarMenuNotasEAguardar(
     log(`Abrindo Notas ${tipo} (tentativa ${attempt}/${maxAttempts})…`);
 
     const inicioClick = agoraMonotonicoMs();
-    await menu.click({ timeout: Math.min(15000, timeout) });
+    await clicarNavbarResiliente(menu, {
+      timeout: Math.min(15000, timeout),
+      log,
+    });
     const clickMs = deltaMonotonicoMs(inicioClick, agoraMonotonicoMs());
 
     try {
